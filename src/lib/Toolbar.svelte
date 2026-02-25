@@ -369,7 +369,7 @@
     <i class="bi bi-stopwatch"></i>
   </button>
   <button
-    class="tool-btn !bg-blue-600 !text-white hover:!bg-blue-500"
+    class="tool-btn"
     onclick={() => onCapture()}
     disabled={isCapturing}
     aria-label="Capture new area"

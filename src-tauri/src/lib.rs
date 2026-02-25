@@ -377,12 +377,11 @@ pub fn run() {
         .run(|app, event| {
             match event {
                 tauri::RunEvent::Reopen { .. } => {
-                    // Dock アイコンクリック時
+                    // Dock アイコンクリック時: ウインドウを表示してフォーカスするだけ
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.show();
                         let _ = w.set_focus();
                     }
-                    let _ = app.emit("reactivate", ());
                 }
                 tauri::RunEvent::Opened { urls } => {
                     // ファイル関連付けや Dock へのドロップで開かれた場合
