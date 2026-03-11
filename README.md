@@ -12,11 +12,19 @@ A macOS screenshot capture & annotation app.
 - Timer capture (configurable delay: 3/5/10 seconds)
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
 - Mask tool (mosaic, blur, fill) with resize/move handles
+- OCR text recognition (macOS Vision Framework, Japanese/English)
 - Clipboard integration (copy path or image)
 - Drag & drop to external apps (e.g. Slack)
 - Configurable save location (tmp / macOS default / custom folder)
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation)
 - Preferences window (save location, timer delay)
+
+## CLI Options
+
+```bash
+# Headless OCR: capture region → OCR → copy text → notify → exit
+flashcap --capture-screen-text
+```
 
 ## Tech Stack
 
