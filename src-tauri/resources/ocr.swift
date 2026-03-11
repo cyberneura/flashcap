@@ -19,7 +19,16 @@ func parseRegion(_ arg: String, imgWidth: Int, imgHeight: Int) -> CGRect? {
     let normW = w / Double(imgWidth)
     let normH = h / Double(imgHeight)
 
-    return CGRect(x: normX, y: normY, width: normW, height: normH)
+    // regionOfInterest は [0, 1] 範囲内である必要があるためクランプ
+    let minX = max(0.0, min(1.0, normX))
+    let minY = max(0.0, min(1.0, normY))
+    let maxX = max(0.0, min(1.0, normX + normW))
+    let maxY = max(0.0, min(1.0, normY + normH))
+    let clampedW = maxX - minX
+    let clampedH = maxY - minY
+    guard clampedW > 0.0, clampedH > 0.0 else { return nil }
+
+    return CGRect(x: minX, y: minY, width: clampedW, height: clampedH)
 }
 
 // コマンドライン引数の解析

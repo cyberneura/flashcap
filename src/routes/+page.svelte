@@ -787,7 +787,7 @@
     invoke("show_notification", {
       title: "FlashCap",
       body: `Copied ${charCount} characters`,
-    });
+    }).catch(() => {});
   }
 
   async function ocrFullImage() {
