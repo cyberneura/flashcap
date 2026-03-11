@@ -46,6 +46,7 @@
   function handleWindowMouseUp() {
     if (!dragging) return;
     dragging = false;
+    if (!active) return; // キャンセル済みなら選択を無視
     const x = Math.min(startX, currentX);
     const y = Math.min(startY, currentY);
     const width = Math.abs(currentX - startX);

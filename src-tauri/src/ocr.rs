@@ -191,13 +191,22 @@ pub async fn run_headless_ocr(app: &tauri::AppHandle, exit_after: bool) {
     match screencapture_and_ocr(app).await {
         Ok(text) if !text.is_empty() => {
             let char_count = text.chars().count();
-            let _ = copy_to_clipboard(&text);
-            notify("FlashCap", &format!("Copied {} characters", char_count));
+            match copy_to_clipboard(&text) {
+                Ok(_) => {
+                    notify("FlashCap", &format!("Copied {} characters", char_count));
+                }
+                Err(e) => {
+                    notify("FlashCap", &format!("Failed to copy: {}", e));
+                }
+            }
         }
         Ok(_) => {
             notify("FlashCap", "No text recognized");
         }
-        Err(_) => {} // cancelled or error
+        Err(e) if e != "Screenshot was cancelled" => {
+            notify("FlashCap", &format!("OCR failed: {}", e));
+        }
+        _ => {}
     }
     if exit_after {
         std::process::exit(0);
