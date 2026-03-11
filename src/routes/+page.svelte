@@ -745,6 +745,7 @@
     maskToolActive = false;
     shapeToolActive = false;
     textToolActive = false;
+    ocrSelectionActive = false;
     arrowOverlayRef?.deselect();
     maskOverlayRef?.deselect();
     shapeOverlayRef?.deselect();
@@ -817,8 +818,8 @@
 
   async function ocrCaptureRegion() {
     const appWindow = getCurrentWindow();
-    await appWindow.hide();
     try {
+      await appWindow.hide();
       const result = await invoke<string>("ocr_capture_region");
       if (result) await ocrCopyAndNotify(result, "capture");
     } catch (e) {
@@ -929,7 +930,6 @@
           active={ocrSelectionActive}
           scale={displayScale}
           onRegionSelected={onOcrRegionSelected}
-          onCancel={() => (ocrSelectionActive = false)}
         />
       </div>
     {:else if isCapturing}

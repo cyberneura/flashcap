@@ -3,14 +3,13 @@
     active,
     scale,
     onRegionSelected,
-    onCancel,
   }: {
     active: boolean;
     scale: number;
     onRegionSelected: (region: { x: number; y: number; width: number; height: number }) => void;
-    onCancel: () => void;
   } = $props();
 
+  let svgEl = $state<SVGSVGElement | null>(null);
   let dragging = $state(false);
   let startX = $state(0);
   let startY = $state(0);
@@ -18,9 +17,8 @@
   let currentY = $state(0);
 
   function getSvgCoords(e: MouseEvent): { x: number; y: number } | null {
-    const svg = (e.currentTarget as SVGSVGElement) ?? (e.target as Element).closest("svg");
-    if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
+    if (!svgEl) return null;
+    const rect = svgEl.getBoundingClientRect();
     return { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
   }
 
@@ -35,7 +33,9 @@
     currentY = pt.y;
   }
 
-  function handleMouseMove(e: MouseEvent) {
+  // ドラッグ中の mousemove/mouseup はウィンドウレベルで処理し、
+  // SVG 外でマウスを離しても dragging が残らないようにする
+  function handleWindowMouseMove(e: MouseEvent) {
     if (!dragging) return;
     const pt = getSvgCoords(e);
     if (!pt) return;
@@ -43,7 +43,7 @@
     currentY = pt.y;
   }
 
-  function handleMouseUp() {
+  function handleWindowMouseUp() {
     if (!dragging) return;
     dragging = false;
     const x = Math.min(startX, currentX);
@@ -61,12 +61,13 @@
   let rectH = $derived(Math.abs(currentY - startY));
 </script>
 
+<svelte:window onmousemove={handleWindowMouseMove} onmouseup={handleWindowMouseUp} />
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svg
+  bind:this={svgEl}
   class="ocr-selection-overlay"
   onmousedown={handleMouseDown}
-  onmousemove={handleMouseMove}
-  onmouseup={handleMouseUp}
   style:pointer-events={active ? "auto" : "none"}
 >
   {#if active && dragging}

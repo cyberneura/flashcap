@@ -29,9 +29,12 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
             .write_all(text.as_bytes())
             .map_err(|e| format!("Failed to write to pbcopy: {}", e))?;
     }
-    child
+    let status = child
         .wait()
-        .map_err(|e| format!("pbcopy failed: {}", e))?;
+        .map_err(|e| format!("pbcopy failed to wait: {}", e))?;
+    if !status.success() {
+        return Err(format!("pbcopy exited with non-zero status: {:?}", status));
+    }
     Ok(())
 }
 
