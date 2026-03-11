@@ -32,6 +32,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "resources/ocr.swift"
+    ],
     "fileAssociations": [
       {
         "ext": ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif"],

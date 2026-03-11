@@ -28,6 +28,11 @@
     onCopyImage,
     onOpenFolder,
     onCapture,
+    ocrSuccessButton,
+    ocrSelectionActive,
+    onOcrFullImage,
+    onOcrRegionSelect,
+    onOcrCaptureRegion,
     onDragFile,
     onUpdateTextSetting,
   }: {
@@ -51,6 +56,11 @@
     onCopyPath: () => void;
     onCopyImage: () => void;
     onOpenFolder: () => void;
+    ocrSuccessButton: "full" | "region" | "capture" | null;
+    ocrSelectionActive: boolean;
+    onOcrFullImage: () => void;
+    onOcrRegionSelect: () => void;
+    onOcrCaptureRegion: () => void;
     onCapture: (command?: string) => void;
     onDragFile: () => void;
     onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K]) => void;
@@ -356,6 +366,48 @@
       <i class="bi bi-folder2-open"></i>
     </button>
   {/if}
+
+  <div class="toolbar-divider"></div>
+
+  {#if filePath}
+    <button
+      class="tool-btn"
+      onclick={onOcrFullImage}
+      aria-label="Copy text (OCR)"
+      data-tooltip="Copy text (OCR)"
+    >
+      {#if ocrSuccessButton === "full"}
+        <i class="bi bi-check-lg"></i>
+      {:else}
+        <i class="bi bi-body-text"></i>
+      {/if}
+    </button>
+    <button
+      class="tool-btn"
+      class:active={ocrSelectionActive}
+      onclick={onOcrRegionSelect}
+      aria-label="Select region & copy text"
+      data-tooltip="Select region & copy text"
+    >
+      {#if ocrSuccessButton === "region"}
+        <i class="bi bi-check-lg"></i>
+      {:else}
+        <i class="bi bi-textarea-t"></i>
+      {/if}
+    </button>
+  {/if}
+  <button
+    class="tool-btn"
+    onclick={onOcrCaptureRegion}
+    aria-label="Capture region & copy text"
+    data-tooltip="Capture region & copy text"
+  >
+    {#if ocrSuccessButton === "capture"}
+      <i class="bi bi-check-lg"></i>
+    {:else}
+      <i class="bi bi-type"></i>
+    {/if}
+  </button>
 
   <div class="toolbar-divider"></div>
 

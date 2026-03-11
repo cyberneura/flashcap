@@ -1,3 +1,5 @@
+mod ocr;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -288,6 +290,14 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // --capture-screen-text: 既存インスタンスでヘッドレス OCR 実行
+            if args.iter().any(|a| a == "--capture-screen-text") {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    ocr::run_headless_ocr(&handle, false).await;
+                });
+                return;
+            }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
@@ -369,9 +379,17 @@ pub fn run() {
                 }
             });
 
+            // --capture-screen-text: ヘッドレス OCR モード
+            if std::env::args().any(|a| a == "--capture-screen-text") {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    ocr::run_headless_ocr(&handle, true).await;
+                });
+            }
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file])
+        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

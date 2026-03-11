@@ -12,6 +12,7 @@
   import MaskOverlay from "$lib/MaskOverlay.svelte";
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
   import TextOverlay from "$lib/TextOverlay.svelte";
+  import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
   import Toolbar from "$lib/Toolbar.svelte";
 
   let arrowOverlayRef = $state<ReturnType<typeof ArrowOverlay> | null>(null);
@@ -36,6 +37,8 @@
   let filePath = $state<string | null>(null);
   let copyPathSuccess = $state(false);
   let copyImageSuccess = $state(false);
+  let ocrSuccessButton = $state<"full" | "region" | "capture" | null>(null);
+  let ocrSelectionActive = $state(false);
 
   // Arrow tool state
   let arrowToolActive = $state(false);
@@ -115,7 +118,7 @@
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
 
-  let noToolActive = $derived(!arrowToolActive && !maskToolActive && !shapeToolActive && !textToolActive);
+  let noToolActive = $derived(!arrowToolActive && !maskToolActive && !shapeToolActive && !textToolActive && !ocrSelectionActive);
 
   // CSS scale to fit the natural-size wrapper into the viewport
   let displayScale = $derived(
@@ -236,6 +239,10 @@
     function handleKeydown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
+        if (ocrSelectionActive) {
+          ocrSelectionActive = false;
+          return;
+        }
         getCurrentWindow().close();
       } else if (e.metaKey && e.shiftKey && e.key === "c") {
         e.preventDefault();
@@ -771,6 +778,59 @@
     textToolActive = !wasActive;
   }
 
+  async function ocrCopyAndNotify(text: string, button: "full" | "region" | "capture") {
+    await writeText(text);
+    ocrSuccessButton = button;
+    setTimeout(() => (ocrSuccessButton = null), 3000);
+    const charCount = [...text].length;
+    invoke("show_notification", {
+      title: "FlashCap",
+      body: `Copied ${charCount} characters`,
+    });
+  }
+
+  async function ocrFullImage() {
+    if (!imageBase64) return;
+    try {
+      const result = await invoke<string>("ocr_image", { dataBase64: imageBase64 });
+      if (result) await ocrCopyAndNotify(result, "full");
+    } catch (e) {
+      console.error("OCR failed:", e);
+    }
+  }
+
+  function ocrRegionSelect() {
+    deactivateAllTools();
+    ocrSelectionActive = true;
+  }
+
+  async function onOcrRegionSelected(region: { x: number; y: number; width: number; height: number }) {
+    ocrSelectionActive = false;
+    if (!imageBase64) return;
+    try {
+      const result = await invoke<string>("ocr_image", { dataBase64: imageBase64, region });
+      if (result) await ocrCopyAndNotify(result, "region");
+    } catch (e) {
+      console.error("OCR region failed:", e);
+    }
+  }
+
+  async function ocrCaptureRegion() {
+    const appWindow = getCurrentWindow();
+    await appWindow.hide();
+    try {
+      const result = await invoke<string>("ocr_capture_region");
+      if (result) await ocrCopyAndNotify(result, "capture");
+    } catch (e) {
+      const errorStr = String(e);
+      if (!errorStr.includes("cancelled")) {
+        console.error("OCR capture failed:", e);
+      }
+    } finally {
+      await appWindow.show();
+    }
+  }
+
   async function handleDragFile() {
     if (filePath) {
       await saveCompositeToFile();
@@ -801,6 +861,11 @@
     onCopyPath={copyPath}
     onCopyImage={copyImage}
     onOpenFolder={openFolder}
+    {ocrSuccessButton}
+    {ocrSelectionActive}
+    onOcrFullImage={ocrFullImage}
+    onOcrRegionSelect={ocrRegionSelect}
+    onOcrCaptureRegion={ocrCaptureRegion}
     onCapture={captureScreen}
     onDragFile={handleDragFile}
     onUpdateTextSetting={updateTextSetting}
@@ -859,6 +924,12 @@
           scale={displayScale}
           onBeforeMutate={pushUndo}
           onArrowsChange={(newArrows) => (arrows = newArrows)}
+        />
+        <OcrSelectionOverlay
+          active={ocrSelectionActive}
+          scale={displayScale}
+          onRegionSelected={onOcrRegionSelected}
+          onCancel={() => (ocrSelectionActive = false)}
         />
       </div>
     {:else if isCapturing}
