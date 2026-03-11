@@ -289,6 +289,7 @@ pub fn run() {
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // --capture-screen-text: 既存インスタンスでヘッドレス OCR 実行
             if args.iter().any(|a| a == "--capture-screen-text") {
@@ -402,6 +403,17 @@ pub fn run() {
                     }
                 }
                 tauri::RunEvent::Opened { urls } => {
+                    // flashcap:// URL scheme によるコマンド実行
+                    for url in &urls {
+                        if url.scheme() == "flashcap" && url.host_str() == Some("ocr") {
+                            let handle = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                ocr::run_headless_ocr(&handle, false).await;
+                            });
+                            return;
+                        }
+                    }
+
                     // ファイル関連付けや Dock へのドロップで開かれた場合
                     let file_paths: Vec<String> = urls.iter()
                         .filter_map(|url| {
