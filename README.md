@@ -26,6 +26,13 @@ A macOS screenshot capture & annotation app.
 flashcap --capture-screen-text
 ```
 
+## URL Scheme
+
+```bash
+# Headless OCR via URL scheme (for Alfred, Raycast, etc.)
+open "flashcap://ocr"
+```
+
 ## Tech Stack
 
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript
