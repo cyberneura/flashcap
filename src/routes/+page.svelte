@@ -217,6 +217,8 @@
     // アプリ再アクティブ時にキャプチャーボタンを点滅して目立たせる
     const unlisten = listen("reactivate", () => {
       highlightCapture = true;
+      // animationend が発火しない環境(prefers-reduced-motion等)へのフォールバック
+      setTimeout(() => { highlightCapture = false; }, 1500);
     });
 
     // ファイル関連付けや Dock ドロップで開かれた場合
