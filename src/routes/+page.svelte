@@ -28,7 +28,7 @@
     file_path: string;
   }
 
-  const SUPPORTED_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif"];
+  const SUPPORTED_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
 
   let isCapturing = $state(false);
   let timerDelay = $state(5);
@@ -39,6 +39,7 @@
   let copyImageSuccess = $state(false);
   let ocrSuccessButton = $state<"full" | "region" | "capture" | null>(null);
   let ocrSelectionActive = $state(false);
+  let highlightCapture = $state(false);
 
   // Arrow tool state
   let arrowToolActive = $state(false);
@@ -213,9 +214,11 @@
     const resizeObserver = new ResizeObserver(() => updateViewportSize());
     if (viewportEl) resizeObserver.observe(viewportEl);
 
-    // アプリ再アクティブ時にキャプチャーモードを開始
+    // アプリ再アクティブ時にキャプチャーボタンを点滅して目立たせる
     const unlisten = listen("reactivate", () => {
-      captureScreen();
+      highlightCapture = true;
+      // animationend が発火しない環境(prefers-reduced-motion等)へのフォールバック
+      setTimeout(() => { highlightCapture = false; }, 1500);
     });
 
     // ファイル関連付けや Dock ドロップで開かれた場合
@@ -870,6 +873,8 @@
     onCapture={captureScreen}
     onDragFile={handleDragFile}
     onUpdateTextSetting={updateTextSetting}
+    {highlightCapture}
+    onHighlightEnd={() => highlightCapture = false}
   />
 
   <div bind:this={viewportEl} class="flex-1 flex items-center justify-center overflow-hidden p-5">
