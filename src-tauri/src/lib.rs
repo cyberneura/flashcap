@@ -8,7 +8,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
-const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif"];
+const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScreenshotResult {
@@ -111,6 +111,36 @@ fn resize_window_for_image(app: &tauri::AppHandle, width: usize, height: usize) 
     }
 }
 
+/// HEIC/HEIF ファイルを macOS sips コマンドで PNG に変換してバイト列と寸法を返す
+fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp_png = std::env::temp_dir().join(format!("flashcap-heic-{}-{}.png", std::process::id(), ts));
+
+    let output = Command::new("sips")
+        .args(["-s", "format", "png", source_path, "--out"])
+        .arg(&temp_png)
+        .output()
+        .map_err(|e| format!("Failed to run sips: {}", e))?;
+
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&temp_png);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("sips conversion failed: {}", stderr));
+    }
+
+    let png_data = std::fs::read(&temp_png);
+    let _ = std::fs::remove_file(&temp_png);
+    let png_data = png_data.map_err(|e| format!("Failed to read converted PNG: {}", e))?;
+
+    let img = image::load_from_memory(&png_data)
+        .map_err(|e| format!("Failed to decode converted PNG: {}", e))?;
+
+    Ok((png_data, img.width(), img.height()))
+}
+
 /// 画像ファイルを読み込んで ScreenshotResult を生成
 fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
     if !std::path::Path::new(&file_path).exists() {
@@ -120,6 +150,23 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
     let absolute_path = std::fs::canonicalize(&file_path)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or(file_path);
+
+    // HEIC/HEIF は image crate が非対応のため macOS sips で PNG に変換
+    let ext = std::path::Path::new(&absolute_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    if ext == "heic" || ext == "heif" {
+        let (png_data, width, height) = convert_heic_to_png(&absolute_path)?;
+        return Ok(ScreenshotResult {
+            width: width as usize,
+            height: height as usize,
+            data: STANDARD.encode(&png_data),
+            file_path: absolute_path,
+        });
+    }
 
     let img_data = std::fs::read(&absolute_path)
         .map_err(|e| format!("Failed to read image: {}", e))?;
@@ -396,11 +443,13 @@ pub fn run() {
         .run(|app, event| {
             match event {
                 tauri::RunEvent::Reopen { .. } => {
-                    // Dock アイコンクリック時: ウインドウを表示してフォーカスするだけ
+                    // Dock アイコンクリック時: ウインドウを表示してフォーカス
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.show();
                         let _ = w.set_focus();
                     }
+                    // キャプチャーボタンを点滅させて目立たせる
+                    let _ = app.emit("reactivate", ());
                 }
                 tauri::RunEvent::Opened { urls } => {
                     // flashcap:// URL scheme によるコマンド実行

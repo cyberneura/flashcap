@@ -35,6 +35,8 @@
     onOcrCaptureRegion,
     onDragFile,
     onUpdateTextSetting,
+    highlightCapture,
+    onHighlightEnd,
   }: {
     arrowToolActive: boolean;
     maskToolActive: boolean;
@@ -64,6 +66,8 @@
     onCapture: (command?: string) => void;
     onDragFile: () => void;
     onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K]) => void;
+    highlightCapture: boolean;
+    onHighlightEnd: () => void;
   } = $props();
 </script>
 
@@ -422,7 +426,9 @@
   </button>
   <button
     class="tool-btn"
+    class:blink={highlightCapture}
     onclick={() => onCapture()}
+    onanimationend={onHighlightEnd}
     disabled={isCapturing}
     aria-label="Capture new area"
     data-tooltip="Capture new area"
@@ -459,6 +465,21 @@
 
   .tool-btn.active:hover:not(:disabled) {
     @apply bg-blue-500;
+  }
+
+  .tool-btn.blink {
+    animation: capture-blink 1.2s ease-in-out;
+  }
+
+  @keyframes capture-blink {
+    0%   { background: transparent; }
+    10%  { background: #3b82f6; color: #fff; }
+    23%  { background: transparent; color: #d4d4d4; }
+    36%  { background: #3b82f6; color: #fff; }
+    49%  { background: transparent; color: #d4d4d4; }
+    62%  { background: #3b82f6; color: #fff; }
+    75%  { background: transparent; color: #d4d4d4; }
+    100% { background: transparent; }
   }
 
   .toolbar-divider {
