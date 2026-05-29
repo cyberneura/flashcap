@@ -38,6 +38,22 @@ fn get_save_directory(app: &tauri::AppHandle) -> String {
     }
 }
 
+/// 保存先フォルダを Finder で開く（未キャプチャ時用。無ければ作成する）
+#[tauri::command]
+fn open_save_directory(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = get_save_directory(&app);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create save directory '{}': {}", dir, e))?;
+    let status = Command::new("open")
+        .arg(&dir)
+        .status()
+        .map_err(|e| format!("Failed to open save directory '{}': {}", dir, e))?;
+    if !status.success() {
+        return Err(format!("`open` exited with {} for '{}'", status, dir));
+    }
+    Ok(())
+}
+
 /// macOS の screencapture デフォルト保存先を取得
 fn get_macos_screenshot_dir() -> String {
     Command::new("defaults")
@@ -437,7 +453,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification])
+        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

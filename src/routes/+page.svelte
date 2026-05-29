@@ -737,9 +737,16 @@
   }
 
   async function openFolder() {
-    if (filePath) {
-      // ファイルを指定することでフォルダ内のファイル一覧が表示される
-      await revealItemInDir(filePath);
+    try {
+      if (filePath) {
+        // ファイルを指定することでフォルダ内のファイル一覧が表示される
+        await revealItemInDir(filePath);
+      } else {
+        // 未キャプチャ時は保存先フォルダを開く
+        await invoke("open_save_directory");
+      }
+    } catch (e) {
+      console.error("Failed to open folder:", e);
     }
   }
 
