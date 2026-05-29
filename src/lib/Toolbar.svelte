@@ -321,6 +321,15 @@
 
   <div class="toolbar-divider"></div>
 
+  <button
+    class="tool-btn"
+    onclick={onOpenFolder}
+    aria-label="Open save folder"
+    data-tooltip="Open save folder"
+  >
+    <i class="bi bi-folder2-open"></i>
+  </button>
+
   {#if filePath}
     <button
       class="tool-btn cursor-grab active:cursor-grabbing"
@@ -360,14 +369,6 @@
       {:else}
         <i class="bi bi-image"></i>
       {/if}
-    </button>
-    <button
-      class="tool-btn"
-      onclick={onOpenFolder}
-      aria-label="Open save folder"
-      data-tooltip="Open save folder"
-    >
-      <i class="bi bi-folder2-open"></i>
     </button>
   {/if}
 
