@@ -357,6 +357,16 @@ fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String)
     Ok(())
 }
 
+/// メインウインドウを表示・フォーカスして、フロントエンドにキャプチャー開始を通知する
+/// (--capture フラグ / flashcap://capture の共通処理)
+fn show_and_request_capture(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    let _ = app.emit("do-capture", ());
+}
+
 /// プリファレンスウィンドウを開く (既に開いていればフォーカス)
 fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("preferences") {
@@ -390,6 +400,11 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     ocr::run_headless_ocr(&handle, false).await;
                 });
+                return;
+            }
+            // --capture: 再起動時に点滅させず、そのままキャプチャーを開始する
+            if args.iter().any(|a| a == "--capture") {
+                show_and_request_capture(app);
                 return;
             }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
@@ -500,12 +515,24 @@ pub fn run() {
                 tauri::RunEvent::Opened { urls } => {
                     // flashcap:// URL scheme によるコマンド実行
                     for url in &urls {
-                        if url.scheme() == "flashcap" && url.host_str() == Some("ocr") {
-                            let handle = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                ocr::run_headless_ocr(&handle, false).await;
-                            });
-                            return;
+                        if url.scheme() != "flashcap" {
+                            continue;
+                        }
+                        match url.host_str() {
+                            // flashcap://ocr: ヘッドレス OCR を実行
+                            Some("ocr") => {
+                                let handle = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    ocr::run_headless_ocr(&handle, false).await;
+                                });
+                                return;
+                            }
+                            // flashcap://capture: ウインドウを表示してキャプチャーを開始
+                            Some("capture") => {
+                                show_and_request_capture(app);
+                                return;
+                            }
+                            _ => {}
                         }
                     }
 

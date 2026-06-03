@@ -24,6 +24,9 @@ A macOS screenshot capture & annotation app.
 ```bash
 # Headless OCR: capture region → OCR → copy text → notify → exit
 flashcap --capture-screen-text
+
+# Start capture directly on relaunch (instead of blinking the capture button)
+flashcap --capture
 ```
 
 ## URL Scheme
@@ -31,6 +34,9 @@ flashcap --capture-screen-text
 ```bash
 # Headless OCR via URL scheme (for Alfred, Raycast, etc.)
 open "flashcap://ocr"
+
+# Start capture via URL scheme
+open "flashcap://capture"
 ```
 
 ## Tech Stack
