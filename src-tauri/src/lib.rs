@@ -295,6 +295,36 @@ fn load_image_file(
     Ok(result)
 }
 
+/// クリップボードから貼り付けた画像を保存する
+#[tauri::command]
+fn save_pasted_image(
+    app: tauri::AppHandle,
+    data_base64: String,
+    width: usize,
+    height: usize,
+) -> Result<ScreenshotResult, String> {
+    let dir = std::path::PathBuf::from(get_save_directory(&app));
+    let _ = std::fs::create_dir_all(&dir);
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S");
+    let filename = format!("flashcap-paste-{}.png", timestamp);
+    let file_path = dir.join(&filename).to_string_lossy().to_string();
+
+    let bytes = STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+    std::fs::write(&file_path, &bytes)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    resize_window_for_image(&app, width, height);
+
+    Ok(ScreenshotResult {
+        width,
+        height,
+        data: data_base64,
+        file_path,
+    })
+}
+
 /// base64 PNG データをファイルに書き出す
 /// パスは保存先ディレクトリ内に制限する
 #[tauri::command]
@@ -453,7 +483,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification])
+        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

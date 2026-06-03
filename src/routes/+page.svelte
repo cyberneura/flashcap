@@ -3,7 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { load } from "@tauri-apps/plugin-store";
-  import { writeText, writeImage } from "@tauri-apps/plugin-clipboard-manager";
+  import { writeText, writeImage, readImage } from "@tauri-apps/plugin-clipboard-manager";
+  import { confirm } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { startDrag } from "@crabnebula/tauri-plugin-drag";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -250,6 +251,12 @@
       } else if (e.metaKey && e.shiftKey && e.key === "c") {
         e.preventDefault();
         copyImage();
+      } else if (e.metaKey && e.key === "v") {
+        const tag = (e.target as HTMLElement)?.tagName;
+        const isEditable = (e.target as HTMLElement)?.isContentEditable;
+        if (tag === "INPUT" || tag === "TEXTAREA" || isEditable) return;
+        e.preventDefault();
+        pasteImage();
       } else if (e.metaKey && e.key === "c") {
         e.preventDefault();
         copyPath();
@@ -298,21 +305,78 @@
     textOverlayRef?.updateActiveAttribute(key, value);
   }
 
+  // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
+  function applyScreenshotResult(result: ScreenshotResult) {
+    imageBase64 = result.data;
+    imageUrl = `data:image/png;base64,${result.data}`;
+    filePath = result.file_path;
+    arrows = [];
+    masks = [];
+    shapes = [];
+    textAnnotations = [];
+    undoHistory = [];
+    naturalWidth = 0;
+    naturalHeight = 0;
+  }
+
   async function loadImageFile(path: string) {
     try {
       const result = await invoke<ScreenshotResult>("load_image_file", { path });
-      imageBase64 = result.data;
-      imageUrl = `data:image/png;base64,${result.data}`;
-      filePath = result.file_path;
-      arrows = [];
-      masks = [];
-      shapes = [];
-      textAnnotations = [];
-      undoHistory = [];
-      naturalWidth = 0;
-      naturalHeight = 0;
+      applyScreenshotResult(result);
     } catch (e) {
       console.error("Failed to load image:", e);
+    }
+  }
+
+  async function pasteImage() {
+    let clipboardImage;
+    try {
+      clipboardImage = await readImage();
+    } catch {
+      return;
+    }
+
+    if (imageUrl) {
+      const confirmed = await confirm(
+        "現在の画像をクリップボードの画像に置き換えますか？",
+        { title: "Paste Image", kind: "warning" }
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      const [rgba, size] = await Promise.all([
+        clipboardImage.rgba(),
+        clipboardImage.size(),
+      ]);
+
+      // RGBA → PNG (Canvas 経由)
+      const canvas = document.createElement("canvas");
+      canvas.width = size.width;
+      canvas.height = size.height;
+      const ctx = canvas.getContext("2d")!;
+      const imageData = new ImageData(
+        new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+        size.width,
+        size.height
+      );
+      ctx.putImageData(imageData, 0, 0);
+
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((b) => resolve(b!), "image/png");
+      });
+      const pngBytes = new Uint8Array(await blob.arrayBuffer());
+      const base64 = uint8ToBase64(pngBytes);
+
+      const result = await invoke<ScreenshotResult>("save_pasted_image", {
+        dataBase64: base64,
+        width: size.width,
+        height: size.height,
+      });
+
+      applyScreenshotResult(result);
+    } catch (e) {
+      console.error("Failed to paste image:", e);
     }
   }
 
@@ -323,16 +387,7 @@
     await appWindow.hide();
     try {
       const result = await invoke<ScreenshotResult>(command);
-      imageBase64 = result.data;
-      imageUrl = `data:image/png;base64,${result.data}`;
-      filePath = result.file_path;
-      arrows = [];
-      masks = [];
-      shapes = [];
-      textAnnotations = [];
-      undoHistory = [];
-      naturalWidth = 0;
-      naturalHeight = 0;
+      applyScreenshotResult(result);
     } catch (e) {
       const errorStr = String(e);
       if (!errorStr.includes("cancelled")) {
