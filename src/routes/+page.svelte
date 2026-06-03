@@ -222,6 +222,11 @@
       setTimeout(() => { highlightCapture = false; }, 1500);
     });
 
+    // --capture フラグ付きで再起動された場合: 点滅させずに直接キャプチャー
+    const unlistenDoCapture = listen("do-capture", () => {
+      if (!isCapturing) captureScreen();
+    });
+
     // ファイル関連付けや Dock ドロップで開かれた場合
     const unlistenOpenFile = listen<string[]>("open-file", (event) => {
       if (event.payload.length > 0) {
@@ -269,6 +274,7 @@
     return () => {
       window.removeEventListener("keydown", handleKeydown);
       unlisten.then((fn) => fn());
+      unlistenDoCapture.then((fn) => fn());
       unlistenOpenFile.then((fn) => fn());
       unlistenDragDrop.then((fn) => fn());
       resizeObserver.disconnect();
