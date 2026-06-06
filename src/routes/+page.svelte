@@ -265,6 +265,9 @@
       } else if (e.metaKey && e.key === "c") {
         e.preventDefault();
         copyPath();
+      } else if (e.metaKey && e.key === "s") {
+        e.preventDefault();
+        saveImage();
       } else if (e.metaKey && e.key === "z") {
         e.preventDefault();
         undo();
@@ -795,6 +798,30 @@
     await writeImage(bytes);
     copyImageSuccess = true;
     setTimeout(() => (copyImageSuccess = false), 3000);
+  }
+
+  // 注釈をラスタライズして保存フォルダ(元ファイルパス)に書き出す
+  async function saveImage() {
+    if (!filePath || !imageBase64) return;
+    const hasAnnotations = arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0;
+    // 注釈がある場合のみ再レンダリング。無ければ元の base64 をそのまま渡し、
+    // base64 → Uint8Array → base64 の無駄な往復を避ける
+    const dataBase64 = hasAnnotations ? uint8ToBase64(await renderComposite()) : imageBase64;
+    try {
+      await invoke("write_image_to_file", { path: filePath, dataBase64 });
+      invoke("show_notification", {
+        title: "FlashCap",
+        body: "Saved",
+      }).catch(() => {});
+    } catch (e) {
+      // 保存先ディレクトリ外のファイル等で write が reject される場合がある。
+      // 無音だと「保存されたか不明」になるため、失敗理由を通知する
+      console.error("Failed to save image:", e);
+      invoke("show_notification", {
+        title: "FlashCap",
+        body: `Save failed: ${e}`,
+      }).catch(() => {});
+    }
   }
 
   async function openFolder() {
