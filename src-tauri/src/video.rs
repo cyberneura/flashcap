@@ -291,7 +291,9 @@ fn close_region_selectors(app: &tauri::AppHandle) {
 pub fn open_region_selector(app: tauri::AppHandle) -> Result<(), String> {
     let result = open_region_selector_impl(&app);
     if result.is_err() {
-        // 失敗時にメインウィンドウが隠れたままにならないよう復帰する
+        // 失敗時: 既に作成済みのオーバーレイを閉じ、メインウィンドウと
+        // activation policy を確実に復帰する (中途半端な状態を残さない)
+        close_region_selectors(&app);
         set_accessory_activation_policy(&app, false);
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.show();
@@ -623,7 +625,8 @@ pub async fn export_video(
         .map_err(|e| format!("Failed to create save directory '{}': {}", save_dir, e))?;
     let save_dir_canon = std::fs::canonicalize(&save_dir)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
-    let timestamp = Local::now().format("%Y%m%d-%H%M%S");
+    // ミリ秒まで含めて同一秒内の連続書き出しでも衝突しないようにする
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S-%3f");
     let ext = if format == "gif" { "gif" } else { "mp4" };
     let output_path = save_dir_canon
         .join(format!("flashcap-{}.{}", timestamp, ext))

@@ -36,6 +36,8 @@
   let drag = $state<DragKind>(null);
 
   let countdown = $state<number | null>(null);
+  // カウントダウン中に cancel された場合に録画開始を中断するフラグ
+  let aborted = false;
 
   // ウィンドウスナップモード
   interface CaptureWindow {
@@ -211,6 +213,9 @@
   }
 
   function selectFullscreen() {
+    // ウィンドウスナップモードを抜けて通常の選択状態にする
+    windowMode = false;
+    hoverWin = null;
     l = 0;
     t = 0;
     r = dispW;
@@ -221,10 +226,15 @@
 
   async function startRecording() {
     if (!hasSelection || rectW < MIN_SIZE || rectH < MIN_SIZE) return;
-    // 3-2-1 カウントダウン
+    // 3-2-1 カウントダウン。途中で cancel された場合は録画を始めない
+    aborted = false;
     for (let n = 3; n >= 1; n--) {
       countdown = n;
       await new Promise((res) => setTimeout(res, 700));
+      if (aborted) {
+        countdown = null;
+        return;
+      }
     }
     countdown = null;
     // ローカル CSS px (= ポイント) に Quartz 原点を足してグローバル Quartz 座標へ
@@ -237,6 +247,8 @@
   }
 
   function cancel() {
+    aborted = true;
+    countdown = null;
     invoke("cancel_region_selection").catch(() => {});
   }
 

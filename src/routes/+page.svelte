@@ -51,6 +51,7 @@
 
   // 録画中の状態
   let isRecording = $state(false);
+  let isStopping = $state(false);
   let recordElapsedMs = $state(0);
   let recordTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -473,11 +474,13 @@
     }
   }
 
-  // 録画停止 → finalize された動画をトリム画面へ
+  // 録画停止 → finalize された動画をトリム画面へ。
+  // finalize 完了までは isRecording を立てたままにして UI をビジー維持し、
+  // 停止処理中に別キャプチャーで状態が上書きされる race を防ぐ
   async function stopRecording() {
-    if (!isRecording) return;
+    if (!isRecording || isStopping) return;
+    isStopping = true;
     stopRecordTimer();
-    isRecording = false;
     try {
       const result = await invoke<{ file_path: string }>("stop_video_recording");
       // 画像状態をクリアして動画モードへ
@@ -496,6 +499,9 @@
     } catch (e) {
       console.error("Failed to stop recording:", e);
       notify("FlashCap", `Recording failed: ${e}`);
+    } finally {
+      isRecording = false;
+      isStopping = false;
     }
   }
 
@@ -1089,10 +1095,15 @@
           <span class="text-3xl font-semibold tabular-nums text-white">{recordElapsedLabel}</span>
         </div>
         <button
-          class="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm border-none cursor-pointer transition-colors"
+          class="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm border-none cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           onclick={stopRecording}
+          disabled={isStopping}
         >
-          <i class="bi bi-stop-fill text-lg"></i> 停止して書き出し
+          {#if isStopping}
+            <i class="bi bi-arrow-repeat animate-spin text-lg"></i> 停止中…
+          {:else}
+            <i class="bi bi-stop-fill text-lg"></i> 停止して書き出し
+          {/if}
         </button>
         <div class="text-neutral-500 text-xs">Esc でも停止できます</div>
       </div>

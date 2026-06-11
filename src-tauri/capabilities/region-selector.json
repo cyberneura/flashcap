@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "region-selector",
+  "description": "範囲選択オーバーレイ窓用の最小権限。clipboard/store/dialog/drag/opener は付与しない",
+  "windows": ["region-selector-*"],
+  "permissions": ["core:default"]
+}

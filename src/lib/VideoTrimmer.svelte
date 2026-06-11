@@ -47,6 +47,12 @@
   const FIXED_SIZES: VideoSizePreset[] = ["hd", "720p", "square512"];
   let isFixedSize = $derived(FIXED_SIZES.includes(sizePreset));
 
+  // 書き出しは偶数寸法を強制する (Rust の build_scale_filter と一致させる)
+  // 等倍: crop=trunc(iw/2)*2 → 切り下げて偶数化
+  const evenDown = (v: number) => v - (v % 2);
+  // 1/2: scale=trunc(iw/4)*2
+  const halfEven = (v: number) => Math.floor(v / 4) * 2;
+
   let dragging = $state<null | "start" | "end" | "seek">(null);
 
   function onLoadedMetadata() {
@@ -255,10 +261,10 @@
       <span class="text-neutral-400">Size</span>
       <select class="export-select" bind:value={sizePreset}>
         <option value="original">
-          Original{videoWidth ? ` (${videoWidth}×${videoHeight})` : ""}
+          Original{videoWidth ? ` (${evenDown(videoWidth)}×${evenDown(videoHeight)})` : ""}
         </option>
         <option value="half">
-          1/2{videoWidth ? ` (${Math.round(videoWidth / 2)}×${Math.round(videoHeight / 2)})` : ""}
+          1/2{videoWidth ? ` (${halfEven(videoWidth)}×${halfEven(videoHeight)})` : ""}
         </option>
         <option value="hd">HD (1920×1080)</option>
         <option value="720p">720p (1280×720)</option>
