@@ -80,3 +80,22 @@ export interface TextSettings {
   whiteStroke: boolean;
   dropShadow: boolean;
 }
+
+// --- Video capture / export ---
+
+export type VideoExportFormat = "mp4" | "gif";
+
+// 等倍 / 1/2 / HD(1920x1080) / 720p(1280x720) / 512x512
+export type VideoSizePreset = "original" | "half" | "hd" | "720p" | "square512";
+
+// fill: はみ出しを切り落とす (crop) / fit: 収まるようにリサイズ (pad)
+export type VideoResizeMode = "fill" | "fit";
+
+export interface VideoExportSettings {
+  format: VideoExportFormat;
+  sizePreset: VideoSizePreset;
+  resizeMode: VideoResizeMode;
+  pad: boolean;
+  padColor: string;
+  fps: number;
+}

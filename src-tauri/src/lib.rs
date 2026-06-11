@@ -1,4 +1,8 @@
+// objc 0.2 の msg_send! マクロ展開時に出る unexpected_cfgs(cargo-clippy)警告を抑制
+#![allow(unexpected_cfgs)]
+
 mod ocr;
+mod video;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
@@ -387,6 +391,7 @@ fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(video::RecordingState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
@@ -489,20 +494,39 @@ pub fn run() {
             });
 
             // --capture-screen-text: ヘッドレス OCR モード
-            if std::env::args().any(|a| a == "--capture-screen-text") {
+            let headless_ocr = std::env::args().any(|a| a == "--capture-screen-text");
+            if headless_ocr {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     ocr::run_headless_ocr(&handle, true).await;
                 });
             }
 
+            // 通常起動時はメインウィンドウを表示してアクティブにする
+            // (ウィンドウは visible:false で生成されるため、明示的に表示する)
+            // ヘッドレス OCR 時は表示しない
+            if !headless_ocr {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+                // --capture: 起動と同時にキャプチャーを開始する
+                if std::env::args().any(|a| a == "--capture") {
+                    show_and_request_capture(app.handle());
+                }
+            }
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification])
+        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             match event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    // 録画中にアプリ終了する場合、録画プロセスを停止して孤立を防ぐ
+                    video::abort_recording(app);
+                }
                 tauri::RunEvent::Reopen { .. } => {
                     // Dock アイコンクリック時: ウインドウを表示してフォーカス
                     if let Some(w) = app.get_webview_window("main") {
