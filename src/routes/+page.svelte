@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { load } from "@tauri-apps/plugin-store";
   import { writeText, writeImage, readImage } from "@tauri-apps/plugin-clipboard-manager";
@@ -15,6 +15,7 @@
   import TextOverlay from "$lib/TextOverlay.svelte";
   import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
   import Toolbar from "$lib/Toolbar.svelte";
+  import VideoTrimmer from "$lib/VideoTrimmer.svelte";
 
   let arrowOverlayRef = $state<ReturnType<typeof ArrowOverlay> | null>(null);
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
@@ -41,6 +42,24 @@
   let ocrSuccessButton = $state<"full" | "region" | "capture" | null>(null);
   let ocrSelectionActive = $state(false);
   let highlightCapture = $state(false);
+
+  // Video capture state
+  let videoMode = $state(false);
+  let videoUrl = $state<string | null>(null);
+  let videoPath = $state<string | null>(null);
+  let ffmpegAvailable = $state(true);
+
+  // 録画中の状態
+  let isRecording = $state(false);
+  let recordElapsedMs = $state(0);
+  let recordTimer: ReturnType<typeof setInterval> | null = null;
+
+  let recordElapsedLabel = $derived.by(() => {
+    const total = Math.floor(recordElapsedMs / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  });
 
   // Arrow tool state
   let arrowToolActive = $state(false);
@@ -144,6 +163,11 @@
   }
 
   onMount(() => {
+    // システム ffmpeg の有無を確認 (動画書き出しの可否判定)
+    invoke<boolean>("check_ffmpeg_available")
+      .then((available) => (ffmpegAvailable = available))
+      .catch(() => (ffmpegAvailable = false));
+
     // タイマー設定を読み込み
     load("settings.json").then(async (settingsStore) => {
       const applyStoreSettings = async () => {
@@ -209,7 +233,7 @@
       } catch { /* ignore invalid JSON */ }
     }
 
-    captureScreen();
+    // 起動時は自動キャプチャーしない (直接キャプチャーは --capture / do-capture で行う)
     updateViewportSize();
 
     const resizeObserver = new ResizeObserver(() => updateViewportSize());
@@ -225,6 +249,17 @@
     // --capture フラグ付きで再起動された場合: 点滅させずに直接キャプチャー
     const unlistenDoCapture = listen("do-capture", () => {
       if (!isCapturing) captureScreen();
+    });
+
+    // 範囲選択完了で録画が開始された: アプリ内タイマーを動かす
+    const unlistenRecStart = listen("recording-started", () => {
+      isRecording = true;
+      recordElapsedMs = 0;
+      const start = performance.now();
+      stopRecordTimer();
+      recordTimer = setInterval(() => {
+        recordElapsedMs = performance.now() - start;
+      }, 100);
     });
 
     // ファイル関連付けや Dock ドロップで開かれた場合
@@ -248,6 +283,11 @@
     function handleKeydown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
+        if (isRecording) {
+          // 録画中の Esc は停止 (アプリを閉じて録画プロセスを孤立させない)
+          stopRecording();
+          return;
+        }
         if (ocrSelectionActive) {
           ocrSelectionActive = false;
           return;
@@ -278,8 +318,10 @@
       window.removeEventListener("keydown", handleKeydown);
       unlisten.then((fn) => fn());
       unlistenDoCapture.then((fn) => fn());
+      unlistenRecStart.then((fn) => fn());
       unlistenOpenFile.then((fn) => fn());
       unlistenDragDrop.then((fn) => fn());
+      stopRecordTimer();
       resizeObserver.disconnect();
     };
   });
@@ -316,6 +358,10 @@
 
   // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
   function applyScreenshotResult(result: ScreenshotResult) {
+    // 画像を表示する際は動画モードを解除する
+    videoMode = false;
+    videoUrl = null;
+    videoPath = null;
     imageBase64 = result.data;
     imageUrl = `data:image/png;base64,${result.data}`;
     filePath = result.file_path;
@@ -407,6 +453,67 @@
       // キャプチャ完了・キャンセル後にウィンドウを再表示する
       await appWindow.show();
     }
+  }
+
+  // 動画録画開始: 範囲選択オーバーレイを開く
+  // (Rust が範囲選択ウィンドウを出し、選択完了で recording-started イベントが届く)
+  async function captureVideo() {
+    if (isCapturing || isRecording) return;
+    try {
+      await invoke("open_region_selector");
+    } catch (e) {
+      console.error("Failed to open region selector:", e);
+    }
+  }
+
+  function stopRecordTimer() {
+    if (recordTimer != null) {
+      clearInterval(recordTimer);
+      recordTimer = null;
+    }
+  }
+
+  // 録画停止 → finalize された動画をトリム画面へ
+  async function stopRecording() {
+    if (!isRecording) return;
+    stopRecordTimer();
+    isRecording = false;
+    try {
+      const result = await invoke<{ file_path: string }>("stop_video_recording");
+      // 画像状態をクリアして動画モードへ
+      imageUrl = null;
+      imageBase64 = null;
+      filePath = null;
+      arrows = [];
+      masks = [];
+      shapes = [];
+      textAnnotations = [];
+      undoHistory = [];
+      deactivateAllTools();
+      videoPath = result.file_path;
+      videoUrl = convertFileSrc(result.file_path);
+      videoMode = true;
+    } catch (e) {
+      console.error("Failed to stop recording:", e);
+      notify("FlashCap", `Recording failed: ${e}`);
+    }
+  }
+
+  // 動画書き出し完了: Finder で表示して通知
+  async function onVideoExported(outputPath: string) {
+    try {
+      await revealItemInDir(outputPath);
+    } catch (e) {
+      console.error("Failed to reveal exported video:", e);
+    }
+    invoke("show_notification", {
+      title: "FlashCap",
+      body: "Video exported",
+    }).catch(() => {});
+  }
+
+  function notify(title: string, body: string) {
+    invoke("show_notification", { title, body }).catch(() => {});
   }
 
   async function copyPath() {
@@ -951,7 +1058,7 @@
     {filePath}
     {copyPathSuccess}
     {copyImageSuccess}
-    {isCapturing}
+    isCapturing={isCapturing || isRecording}
     {timerDelay}
     onToggleArrowTool={toggleArrowTool}
     onToggleMaskTool={toggleMaskTool}
@@ -966,6 +1073,8 @@
     onOcrRegionSelect={ocrRegionSelect}
     onOcrCaptureRegion={ocrCaptureRegion}
     onCapture={captureScreen}
+    onCaptureVideo={captureVideo}
+    {videoMode}
     onDragFile={handleDragFile}
     onUpdateTextSetting={updateTextSetting}
     {highlightCapture}
@@ -973,7 +1082,29 @@
   />
 
   <div bind:this={viewportEl} class="flex-1 flex items-center justify-center overflow-hidden p-5">
-    {#if imageUrl}
+    {#if isRecording}
+      <div class="flex flex-col items-center gap-5">
+        <div class="flex items-center gap-3">
+          <span class="w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse"></span>
+          <span class="text-3xl font-semibold tabular-nums text-white">{recordElapsedLabel}</span>
+        </div>
+        <button
+          class="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm border-none cursor-pointer transition-colors"
+          onclick={stopRecording}
+        >
+          <i class="bi bi-stop-fill text-lg"></i> 停止して書き出し
+        </button>
+        <div class="text-neutral-500 text-xs">Esc でも停止できます</div>
+      </div>
+    {:else if videoMode && videoUrl && videoPath}
+      <VideoTrimmer
+        {videoUrl}
+        {videoPath}
+        {ffmpegAvailable}
+        onExported={onVideoExported}
+        onNotify={notify}
+      />
+    {:else if imageUrl}
       <div
         class="relative rounded shadow-[0_4px_20px_rgba(0,0,0,0.5)] overflow-hidden"
         style="width:{naturalWidth}px;height:{naturalHeight}px;transform:scale({displayScale});transform-origin:top left;margin-right:{naturalWidth * (displayScale - 1)}px;margin-bottom:{naturalHeight * (displayScale - 1)}px;"

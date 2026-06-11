@@ -28,6 +28,8 @@
     onCopyImage,
     onOpenFolder,
     onCapture,
+    onCaptureVideo,
+    videoMode,
     ocrSuccessButton,
     ocrSelectionActive,
     onOcrFullImage,
@@ -64,6 +66,8 @@
     onOcrRegionSelect: () => void;
     onOcrCaptureRegion: () => void;
     onCapture: (command?: string) => void;
+    onCaptureVideo: () => void;
+    videoMode: boolean;
     onDragFile: () => void;
     onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K]) => void;
     highlightCapture: boolean;
@@ -72,6 +76,7 @@
 </script>
 
 <div class="flex items-center gap-2 px-3 py-2 bg-neutral-800 border-b border-neutral-700 min-h-[40px]">
+  {#if !videoMode}
   <button
     class="tool-btn"
     class:active={arrowToolActive}
@@ -318,6 +323,7 @@
       {/if}
     </div>
   {/if}
+  {/if}
 
   <div class="toolbar-divider"></div>
 
@@ -374,6 +380,7 @@
 
   <div class="toolbar-divider"></div>
 
+  {#if !videoMode}
   {#if filePath}
     <button
       class="tool-btn"
@@ -413,6 +420,7 @@
       <i class="bi bi-type"></i>
     {/if}
   </button>
+  {/if}
 
   <div class="toolbar-divider"></div>
 
@@ -435,6 +443,15 @@
     data-tooltip="Capture new area"
   >
     <i class="bi bi-camera"></i>
+  </button>
+  <button
+    class="tool-btn"
+    onclick={onCaptureVideo}
+    disabled={isCapturing}
+    aria-label="Record video"
+    data-tooltip="Record video"
+  >
+    <i class="bi bi-record-circle"></i>
   </button>
 </div>
 
