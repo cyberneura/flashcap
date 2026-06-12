@@ -30,6 +30,21 @@ macOS screenshot capture & annotation app.
 - Clipboard copy support (image-png feature enabled)
 - Settings stored via `tauri-plugin-store` (`settings.json`)
 
+## Capture Start Handshake (src-tauri/src/lib.rs)
+
+キャプチャー開始は3経路 (`--capture` コールド起動 / single-instance 再起動 /
+`flashcap://capture` URL スキーム) あり、すべて `CaptureHandshake` に統一されている。
+
+- **経路は `show()` しない**。`request_capture()` で `do-capture` を emit するだけ。
+  ウィンドウ表示はフロント `captureScreen()` が撮影完了後の `show()` + `setFocus()` で行う。
+  → 経路側で `show()` を足すと show→hide の点滅が起きるので追加しないこと。
+- コールド起動は WebView 未ロードのため `do-capture` を取りこぼす。`CaptureHandshake`
+  (`Mutex<{frontend_ready, capture_pending}>`) が frontend-ready を待って emit する。
+  フロントは `do-capture` リスナー登録後に `frontend-ready` を一度だけ emit する。
+- `captureScreen()` の `finally` ではガードフラグ `isCapturing` を `show()`/`setFocus()` の
+  await が**全部終わった後**に false へ戻す。先に戻すと復元中の `do-capture` が新キャプチャーを
+  開始してインターリーブする。
+
 ## Rust Commands (src-tauri/src/lib.rs)
 
 - `take_screenshot_interactive` - Standard interactive capture (`screencapture -i`)
