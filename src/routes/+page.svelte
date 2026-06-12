@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { listen, emit } from "@tauri-apps/api/event";
   import { load } from "@tauri-apps/plugin-store";
   import { writeText, writeImage, readImage } from "@tauri-apps/plugin-clipboard-manager";
   import { confirm } from "@tauri-apps/plugin-dialog";
@@ -251,6 +251,9 @@
     const unlistenDoCapture = listen("do-capture", () => {
       if (!isCapturing) captureScreen();
     });
+    // do-capture リスナーの登録完了後にバックエンドへ準備完了を通知する。
+    // (--capture コールド起動時、setup での emit 取りこぼしを防ぐハンドシェイク)
+    unlistenDoCapture.then(() => { emit("frontend-ready"); });
 
     // 範囲選択完了で録画が開始された: アプリ内タイマーを動かす
     const unlistenRecStart = listen("recording-started", () => {
