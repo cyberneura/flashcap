@@ -9,7 +9,7 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
 const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
@@ -503,17 +503,51 @@ pub fn run() {
             }
 
             // 通常起動時はメインウィンドウを表示してアクティブにする
-            // (ウィンドウは visible:false で生成されるため、明示的に表示する)
+            // (ウィンドウは visible:false で生成される)
+            // setup 段階で show() すると WebView 未描画の白いウィンドウが
+            // 一瞬見えてしまうため、フロントの描画完了 (frontend-ready) を
+            // 待ってから表示する。frontend-ready は WebView の JS ロード後に
+            // 一度だけ emit される。
             // ヘッドレス OCR 時は表示しない
             if !headless_ocr {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-                // --capture: 起動と同時にキャプチャーを開始する
-                if std::env::args().any(|a| a == "--capture") {
-                    show_and_request_capture(app.handle());
-                }
+                use std::sync::atomic::{AtomicBool, Ordering};
+                use std::sync::Arc;
+
+                let handle = app.handle().clone();
+                let capture_mode = std::env::args().any(|a| a == "--capture");
+                let ready = Arc::new(AtomicBool::new(false));
+
+                let ready_cb = ready.clone();
+                let handle_cb = handle.clone();
+                app.once_any("frontend-ready", move |_| {
+                    ready_cb.store(true, Ordering::SeqCst);
+                    if capture_mode {
+                        // --capture: 起動と同時にキャプチャーを開始する。
+                        // captureScreen 側は撮影前に hide を呼ぶが、ウィンドウは
+                        // visible:false のままなので hide は no-op。撮影完了後に
+                        // show される。ここではウィンドウを表示せず
+                        // do-capture のみ送る。
+                        let _ = handle_cb.emit("do-capture", ());
+                    } else {
+                        if let Some(w) = handle_cb.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                });
+
+                // フェイルセーフ: frontend-ready が一定時間来ない場合
+                // (WebView の JS ロード失敗・onMount 到達前の例外等) は
+                // ウィンドウが永久に非表示のままになるため、強制的に表示する。
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if !ready.load(Ordering::SeqCst) {
+                        if let Some(w) = handle.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                });
             }
 
             Ok(())
