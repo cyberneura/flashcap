@@ -453,9 +453,16 @@
         console.error("Capture failed:", e);
       }
     } finally {
-      isCapturing = false;
-      // キャプチャ完了・キャンセル後にウィンドウを再表示する
+      // キャプチャ完了・キャンセル後にウィンドウを再表示する。
+      // show 直後に setFocus して最前面化する (--capture / single-instance /
+      // flashcap://capture いずれの経路でも結果ウィンドウを前面に出すため。
+      // Rust 側は do-capture を送るだけで show/focus しない)。
+      // isCapturing は show/setFocus 完了後に false へ戻す。先に戻すと、
+      // ウィンドウ復元の await 中に届いた do-capture が新キャプチャーを開始し、
+      // 旧 show() と新 hide() がインターリーブして撮影に写り込む恐れがある。
       await appWindow.show();
+      await appWindow.setFocus();
+      isCapturing = false;
     }
   }
 
@@ -1042,6 +1049,8 @@
         console.error("OCR capture failed:", e);
       }
     } finally {
+      // OCR はクリップボードへのコピーが主目的でウィンドウ操作を伴わないため、
+      // captureScreen() と異なり setFocus() でフォーカスを奪わず show のみ行う。
       await appWindow.show();
     }
   }

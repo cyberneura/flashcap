@@ -361,14 +361,80 @@ fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String)
     Ok(())
 }
 
-/// メインウインドウを表示・フォーカスして、フロントエンドにキャプチャー開始を通知する
-/// (--capture フラグ / flashcap://capture の共通処理)
-fn show_and_request_capture(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.set_focus();
+/// キャプチャー開始のハンドシェイク状態
+///
+/// キャプチャー開始経路 (--capture コールド / single-instance 再起動 /
+/// flashcap://capture) は、いずれも「ウィンドウは show せず do-capture のみ送り、
+/// 表示は captureScreen() の撮影完了後 show に一任する」設計に統一している。
+/// ただしコールド起動 (WebView 未ロード) では do-capture が登録前のリスナーに届かず
+/// 取りこぼすため、frontend-ready 受信を待ってから emit する必要がある。
+///
+/// frontend_ready と capture_pending を別々の AtomicBool で持つと
+/// 「request 側が ready=false を見る → mark_ready 側が ready=true にし pending=false を見る
+///  → request 側が pending=true を立てる」の順で do-capture が永久に飛ばない
+/// lost-wakeup が起きうるため、Mutex で原子的に判定する。
+#[derive(Default)]
+struct CaptureHandshake {
+    inner: std::sync::Mutex<HandshakeInner>,
+}
+
+#[derive(Default)]
+struct HandshakeInner {
+    frontend_ready: bool,
+    capture_pending: bool,
+}
+
+impl CaptureHandshake {
+    /// ロックを取得する。poison (ロック保持中の panic) しても回復して継続する。
+    /// GUI アプリではここで panic 連鎖させてプロセスを落とすより、状態を読めるだけ
+    /// 読んで進む方が被害が小さい。
+    fn lock(&self) -> std::sync::MutexGuard<'_, HandshakeInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
-    let _ = app.emit("do-capture", ());
+
+    /// frontend-ready 受信を記録する。受信前にキャプチャーが予約済みだった場合 true を返す
+    /// (= 呼び出し側が do-capture を emit すべき)。予約は consume して false に戻す。
+    fn mark_ready(&self) -> bool {
+        let mut s = self.lock();
+        s.frontend_ready = true;
+        let pending = s.capture_pending;
+        s.capture_pending = false;
+        pending
+    }
+
+    /// キャプチャーを要求する。frontend が ready 済みなら true (即 emit すべき)、
+    /// 未 ready なら予約だけして false を返す (frontend-ready 受信時に emit される)。
+    fn request(&self) -> bool {
+        let mut s = self.lock();
+        if s.frontend_ready {
+            true
+        } else {
+            s.capture_pending = true;
+            false
+        }
+    }
+
+    /// frontend-ready より前にキャプチャーを予約する (--capture コールド起動用)。
+    fn set_pending(&self) {
+        self.lock().capture_pending = true;
+    }
+
+    fn is_ready(&self) -> bool {
+        self.lock().frontend_ready
+    }
+
+    fn is_pending(&self) -> bool {
+        self.lock().capture_pending
+    }
+}
+
+/// フロントエンドにキャプチャー開始 (do-capture) を通知する。
+/// ウィンドウは show しない (撮影完了後に captureScreen() が show する)。
+/// frontend が未 ready の場合 (コールド起動) は予約だけ行い、frontend-ready 受信時に emit する。
+fn request_capture(app: &tauri::AppHandle) {
+    if app.state::<CaptureHandshake>().request() {
+        let _ = app.emit("do-capture", ());
+    }
 }
 
 /// プリファレンスウィンドウを開く (既に開いていればフォーカス)
@@ -392,6 +458,7 @@ fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .manage(video::RecordingState::default())
+        .manage(CaptureHandshake::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
@@ -409,7 +476,7 @@ pub fn run() {
             }
             // --capture: 再起動時に点滅させず、そのままキャプチャーを開始する
             if args.iter().any(|a| a == "--capture") {
-                show_and_request_capture(app);
+                request_capture(app);
                 return;
             }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
@@ -510,38 +577,42 @@ pub fn run() {
             // 一度だけ emit される。
             // ヘッドレス OCR 時は表示しない
             if !headless_ocr {
-                use std::sync::atomic::{AtomicBool, Ordering};
-                use std::sync::Arc;
-
                 let handle = app.handle().clone();
-                let capture_mode = std::env::args().any(|a| a == "--capture");
-                let ready = Arc::new(AtomicBool::new(false));
 
-                let ready_cb = ready.clone();
+                // --capture コールド起動: frontend-ready 受信前にキャプチャーを予約しておく。
+                // (URL スキーム capture のコールド起動は RunEvent::Opened → request_capture が
+                //  同じ予約を行う)
+                if std::env::args().any(|a| a == "--capture") {
+                    app.state::<CaptureHandshake>().set_pending();
+                }
+
                 let handle_cb = handle.clone();
                 app.once_any("frontend-ready", move |_| {
-                    ready_cb.store(true, Ordering::SeqCst);
-                    if capture_mode {
-                        // --capture: 起動と同時にキャプチャーを開始する。
+                    if handle_cb.state::<CaptureHandshake>().mark_ready() {
+                        // キャプチャーが予約済み: do-capture を送る。
                         // captureScreen 側は撮影前に hide を呼ぶが、ウィンドウは
                         // visible:false のままなので hide は no-op。撮影完了後に
-                        // show される。ここではウィンドウを表示せず
-                        // do-capture のみ送る。
+                        // show される。ここではウィンドウを表示しない。
                         let _ = handle_cb.emit("do-capture", ());
-                    } else {
-                        if let Some(w) = handle_cb.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
+                    } else if let Some(w) = handle_cb.get_webview_window("main") {
+                        // 通常起動: フロント描画完了を待って表示する。
+                        let _ = w.show();
+                        let _ = w.set_focus();
                     }
                 });
 
                 // フェイルセーフ: frontend-ready が一定時間来ない場合
                 // (WebView の JS ロード失敗・onMount 到達前の例外等) は
                 // ウィンドウが永久に非表示のままになるため、強制的に表示する。
+                // ただしキャプチャー予約中 (--capture / flashcap://capture のコールド起動)
+                // は表示しない。低速環境で frontend-ready が2秒を超えてから届くと
+                // show → captureScreen の hide で点滅するため。予約中に frontend が
+                // 永久に来ない場合はそもそも captureScreen が動かずキャプチャー不能なので、
+                // 空ウィンドウを出しても無意味。
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    if !ready.load(Ordering::SeqCst) {
+                    let handshake = handle.state::<CaptureHandshake>();
+                    if !handshake.is_ready() && !handshake.is_pending() {
                         if let Some(w) = handle.get_webview_window("main") {
                             let _ = w.show();
                             let _ = w.set_focus();
@@ -585,9 +656,11 @@ pub fn run() {
                                 });
                                 return;
                             }
-                            // flashcap://capture: ウインドウを表示してキャプチャーを開始
+                            // flashcap://capture: キャプチャーを開始する。
+                            // コールド起動時は frontend-ready を待ってから emit される
+                            // (request_capture 内のハンドシェイクで取りこぼしを防ぐ)。
                             Some("capture") => {
-                                show_and_request_capture(app);
+                                request_capture(app);
                                 return;
                             }
                             _ => {}
