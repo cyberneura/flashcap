@@ -443,8 +443,8 @@
     isCapturing = true;
     // キャプチャ完了までウィンドウを非表示にする
     const appWindow = getCurrentWindow();
-    await appWindow.hide();
     try {
+      await appWindow.hide();
       const result = await invoke<ScreenshotResult>(command);
       applyScreenshotResult(result);
     } catch (e) {
@@ -460,9 +460,14 @@
       // isCapturing は show/setFocus 完了後に false へ戻す。先に戻すと、
       // ウィンドウ復元の await 中に届いた do-capture が新キャプチャーを開始し、
       // 旧 show() と新 hide() がインターリーブして撮影に写り込む恐れがある。
-      await appWindow.show();
-      await appWindow.setFocus();
-      isCapturing = false;
+      try {
+        await appWindow.show();
+        await appWindow.setFocus();
+      } catch (e) {
+        console.error("Failed to restore window after capture:", e);
+      } finally {
+        isCapturing = false;
+      }
     }
   }
 
