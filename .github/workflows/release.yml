@@ -113,6 +113,15 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
+          # tauriScript を明示しないと、tauri-action は pnpm プロジェクトに対して
+          # `pnpm tauri build` を実行する (runner.ts: usesPnpm -> Runner('pnpm', ['tauri']))。
+          # それだと package.json の `tauri` スクリプトが走り、そこに書かれた
+          # インラインの APPLE_SIGNING_IDENTITY=... が上の env を上書きしてしまう
+          # (シェルのインライン代入は継承した env より優先される)。結果、CI が
+          # Secret ではなくローカル用にハードコードされた identity で署名しようとする。
+          # `pnpm exec tauri` は package.json のスクリプトを経由せず CLI を直接叩くので、
+          # Secret の値がそのまま効く。ローカルの `pnpm tauri build` は従来どおり。
+          tauriScript: pnpm exec tauri
           tagName: v__VERSION__
           releaseName: FlashCap v__VERSION__
           releaseDraft: true

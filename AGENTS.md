@@ -75,6 +75,11 @@ macOS screenshot capture & annotation app.
   失敗時は draft のまま残る。
 - **version は毎回インクリメント必須**。公開済みと同じ version で再実行すると tauri-action が
   draft 状態の不一致でエラーになる。`scripts/release.sh` が採番を自動化して bump 忘れを構造的に消す。
+- **`tauriScript: pnpm exec tauri` は消さない**。省略すると tauri-action は pnpm プロジェクトに
+  対して `pnpm tauri build` を実行し、`package.json` の `tauri` スクリプトが持つインラインの
+  `APPLE_SIGNING_IDENTITY=...` が workflow の env を上書きしてしまう (シェルのインライン代入は
+  継承 env より強い)。その結果 CI が Secret ではなくローカル用にハードコードした identity で
+  署名しようとする。`pnpm exec tauri` はスクリプトを経由しないので Secret が効く。
 - **`tauri.conf.json` の `signingIdentity: "-"` は消さない**。tauri-cli は
   `APPLE_SIGNING_IDENTITY` env があればそれを優先する (env > config)。CI は Secret の
   Developer ID で署名、env の無い素のローカルビルドは ad-hoc 署名、という両立のための設定。
