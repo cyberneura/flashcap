@@ -8,6 +8,7 @@ macOS screenshot capture & annotation app.
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
+- `pnpm release [patch|minor|major]` - Bump version and run the GitHub Actions release build
 
 ## Architecture
 
@@ -58,6 +59,44 @@ macOS screenshot capture & annotation app.
 - `pnpm check` for Svelte/TypeScript check
 - Run both before committing
 - Production build: `cargo build --release` in `src-tauri/` (run before push)
+
+## Release (.github/workflows/release.yml + scripts/release.sh)
+
+配布は GitHub Release。`pnpm release [patch|minor|major]` で version 採番 → main へ push →
+`workflow_dispatch` で Actions を起動 → 署名+公証済み universal dmg が公開される。
+
+- **`workflow_dispatch` のみ**。push では自動ビルドしない (無駄な CI を避ける)。
+- **macOS のみビルドする**。screencapture / Vision Framework 依存の macOS 専用アプリなので
+  Windows ビルドは作らない。成果物は `--target universal-apple-darwin --bundles dmg` の
+  `flashcap_<version>_universal.dmg` (x86_64 + arm64)。
+- **draft → publish の 2 ジョブ構成**。tauri-action はビルド前に Release を作るため、
+  `releaseDraft: false` だとビルド失敗時に空の Release が公開されてしまう。draft で作り、
+  build 成功後に publish ジョブが `gh release edit --draft=false --latest` で公開する。
+  失敗時は draft のまま残る。
+- **version は毎回インクリメント必須**。公開済みと同じ version で再実行すると tauri-action が
+  draft 状態の不一致でエラーになる。`scripts/release.sh` が採番を自動化して bump 忘れを構造的に消す。
+- **`tauri.conf.json` の `signingIdentity: "-"` は消さない**。tauri-cli は
+  `APPLE_SIGNING_IDENTITY` env があればそれを優先する (env > config)。CI は Secret の
+  Developer ID で署名、env の無い素のローカルビルドは ad-hoc 署名、という両立のための設定。
+  `pnpm tauri` スクリプトは env を渡しているのでローカルも Developer ID で署名される。
+- **`uses:` はすべて commit SHA 固定**。Apple の秘密鍵入り証明書を keychain に置くジョブなので、
+  可変タグ (`@v0` / `@v4` / `@stable`) だと差し替え1つで証明書を抜かれうる。tauri-action だけ
+  固定しても、先行ステップの action が改変されれば同じことなので全部固定する。更新時は行末の
+  `# v4` コメントを頼りに、新しい SHA を調べて置き換えること。
+- **checkout は `persist-credentials: false`**。write 権限の `GITHUB_TOKEN` を `.git/config` に
+  残さない。Release 操作に必要な token は各ステップに env で明示的に渡している。
+- **`cancel-in-progress` は付けない**。1 dispatch = 1 version なので、後発の run が先発を
+  キャンセルすると、その version の Release だけが永久に公開されない (bump コミットは main に
+  残ったまま) 状態になる。CI 分数より取りこぼし防止を優先する。
+- **`pnpm publish` は使えない** (pnpm 組み込みコマンドで scripts から上書き不可)。
+  コマンド名は必ず `release`。
+- **`package.json` の version は飾り**だが、見た目の一貫性のため release.sh が
+  `tauri.conf.json` と同期させている。tauri-action が読むのは `tauri.conf.json` の方。
+- **弱点**: `pnpm release` は main へ直接 push する。ブランチ保護 (PR 必須) を掛けると破綻する。
+  掛ける運用にするなら tag 駆動 (CI で version 注入) へ切り替えること。
+- 必要な GitHub Secrets (登録済み): `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` /
+  `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`。
+  `APPLE_PASSWORD` は App 用パスワード (通常の Apple ID パスワードでは公証が通らない)。
 
 ## Framework Note
 

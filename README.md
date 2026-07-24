@@ -6,6 +6,24 @@ A macOS screenshot capture & annotation app.
 
 ![](./documents/images/flashcap-20260130-104529.png)
 
+## Download
+
+Get the latest `flashcap_x.y.z_universal.dmg` from the
+[Releases](https://github.com/ytyng/flashcap/releases) page and drag the app into
+`/Applications`.
+
+The dmg is signed with a Developer ID certificate and notarized by Apple, so it
+passes Gatekeeper — no "unidentified developer" warning, and no
+`xattr -dr com.apple.quarantine` workaround. macOS still shows the usual
+"downloaded from the Internet, are you sure you want to open it?" confirmation
+on first launch. The binary is universal (Intel + Apple Silicon).
+
+macOS grants the app Screen Recording permission on first capture
+(System Settings → Privacy & Security → Screen Recording).
+
+OCR uses `/usr/bin/swift`, which ships with the Xcode Command Line Tools. If OCR
+fails, install them with `xcode-select --install`.
+
 ## Features
 
 - Screenshot capture (interactive area selection)
@@ -70,6 +88,20 @@ pnpm tauri build
 ```bash
 pnpm check
 ```
+
+## Release
+
+Bumps the version, pushes it to `main`, and runs the GitHub Actions release build
+(signed + notarized universal dmg) until the Release is published.
+
+```bash
+pnpm release           # 0.1.0 -> 0.1.1 (patch, default)
+pnpm release minor     # 0.1.0 -> 0.2.0
+pnpm release major     # 0.1.0 -> 1.0.0
+```
+
+Requires an authenticated `gh` CLI, and `main` must be clean and in sync with
+`origin/main`. See [AGENTS.md](./AGENTS.md) for how the workflow is put together.
 
 ## Project Structure
 

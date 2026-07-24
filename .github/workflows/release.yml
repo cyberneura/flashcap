@@ -1,0 +1,127 @@
+name: Release
+
+# 手動実行 (workflow_dispatch) のみ。push では自動ビルドしない。
+# ローカルからは `pnpm release` で起動する。
+on:
+  workflow_dispatch:
+
+# GitHub Release の作成とアセットアップロードに contents: write が必要。
+permissions:
+  contents: write
+
+# 同時に走らないよう直列化する。cancel-in-progress は付けない: 1 回の dispatch が
+# 1 つの version に対応するため、後発の run で先発をキャンセルすると、その version の
+# Release だけが (bump コミットは main に載ったまま) 永久に公開されない状態になる。
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # flashcap は macOS 専用アプリ (screencapture / Vision Framework 依存) なので
+  # macOS のみビルドする。Intel / Apple Silicon 両対応の universal dmg を配布する。
+  build:
+    runs-on: macos-latest
+    # Rust キャッシュが空の状態での universal (2 アーキ) ビルドに加えて、
+    # Apple の公証サービス待ちが読めないので長めに取る。ハングした時の
+    # 上限であって通常はここまで使わない (実測は 10〜20 分程度)。
+    timeout-minutes: 90
+
+    steps:
+      # persist-credentials: false — checkout が write 権限の GITHUB_TOKEN を
+      # .git/config に残さないようにする。以降のステップ (pnpm install の
+      # install script や third-party action) がそれを拾えないようにするため。
+      # Release 操作に必要な token は各ステップへ env で明示的に渡している。
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust (cargo + target)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Developer ID 証明書を一時 keychain にインポートする。tauri-action 自身は
+      # 証明書をインポートしないため、ビルド前にこのステップで用意しておく。
+      # keychain のパスワードは使い捨てなので Secret にせずその場で生成する。
+      - name: Import Apple Developer certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      # tauri.conf.json の version から v<version> タグの Release を作成し、
+      # ビルド成果物をアップロードする。ビルドが途中で失敗しても不完全な Release が
+      # 公開されないよう draft で作成し、成功後に publish ジョブで公開する。
+      # 注意: 公開済みバージョンと同じ version で再実行すると、tauri-action が
+      # draft 状態の不一致でエラーになる。必ず version を上げてから実行すること
+      # (`pnpm release` が自動で採番する)。
+      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う。
+      # このジョブは Apple の秘密鍵入り証明書を keychain に置くため、`uses:` は
+      # すべて可変タグではなく commit SHA に固定してある (タグが差し替えられると
+      # 証明書や secrets を抜かれるサプライチェーン攻撃が成立するため)。
+      # 更新するときも `# v0` 等のコメントを頼りに SHA で指定し直すこと。
+      - name: Build and upload to GitHub Release (draft)
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseName: FlashCap v__VERSION__
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin --bundles dmg
+
+  # ビルド・アップロードが成功した時のみ draft を公開する。
+  # 失敗した場合は draft のまま残る (不完全な Release は公開されない)。
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          gh release edit "v${VERSION}" --draft=false --latest
