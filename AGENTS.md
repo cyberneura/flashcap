@@ -85,6 +85,10 @@ macOS screenshot capture & annotation app.
   `# v4` コメントを頼りに、新しい SHA を調べて置き換えること。
 - **checkout は `persist-credentials: false`**。write 権限の `GITHUB_TOKEN` を `.git/config` に
   残さない。Release 操作に必要な token は各ステップに env で明示的に渡している。
+- **証明書は一時 keychain に import し、`list-keychains` で検索リストにも入れる**。codesign は
+  default keychain ではなく検索リストから identity を引く。直後の `find-identity | grep` は
+  「identity 0 件でも exit 0」という仕様を潰すためのアサーションで、証明書が引けない状態を
+  ビルドの奥ではなくこのステップで落とす。
 - **`cancel-in-progress` は付けない**。1 dispatch = 1 version なので、後発の run が先発を
   キャンセルすると、その version の Release だけが永久に公開されない (bump コミットは main に
   残ったまま) 状態になる。CI 分数より取りこぼし防止を優先する。

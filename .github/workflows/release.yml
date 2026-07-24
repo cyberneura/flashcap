@@ -78,7 +78,19 @@ jobs:
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security find-identity -v -p codesigning build.keychain
+          # 検索リストにも入れる。codesign は default keychain ではなく検索リストから
+          # identity を引くため。default-keychain だけでも実際には通る (arcvault の
+          # 同一手順で公証済み dmg がビルドできている) が、runner イメージの既定に
+          # 依存しないよう明示しておく。
+          security list-keychains -d user -s build.keychain
+          # 検索リスト経由で Developer ID が引けることをここで確認し、駄目なら即失敗させる
+          # (find-identity は identity が 0 件でも exit 0 なので grep で判定する)。
+          # ビルドの奥で「identity が無い」と落ちるより原因が分かりやすい。
+          security find-identity -v -p codesigning
+          security find-identity -v -p codesigning | grep -q "Developer ID Application" || {
+            echo "Error: no 'Developer ID Application' identity in the keychain search list" >&2
+            exit 1
+          }
           rm "$RUNNER_TEMP/certificate.p12"
 
       # tauri.conf.json の version から v<version> タグの Release を作成し、
