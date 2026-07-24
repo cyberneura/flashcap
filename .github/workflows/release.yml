@@ -9,12 +9,16 @@ on:
 permissions:
   contents: write
 
-# 同時に走らないよう直列化する。cancel-in-progress は付けない: 1 回の dispatch が
-# 1 つの version に対応するため、後発の run で先発をキャンセルすると、その version の
-# Release だけが (bump コミットは main に載ったまま) 永久に公開されない状態になる。
+# 同時に走らないよう直列化する。1 回の dispatch が 1 つの version に対応するため、
+# キャンセルされた run の version は (bump コミットは main に載ったまま) 永久に公開
+# されない状態になる。走行中を守る cancel-in-progress: false だけでは不十分で、
+# 既定の queue: single は pending を 1 件しか保持せず、新しい dispatch が既存 pending を
+# 置き換えてしまう (走行中 1 + dispatch 2 回で真ん中の version が消える)。queue: max は
+# pending を 100 件まで積む。queue: max と cancel-in-progress: true の併用は不可。
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # flashcap は macOS 専用アプリ (screencapture / Vision Framework 依存) なので
@@ -47,9 +51,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # SHA は master 履歴から選ぶ (master 先端)。`@stable` の指す SHA は生成ブランチ
+      # stable の先端で、それを pin すると stable が進んだ時に commit が GC され、
+      # 以降の run が Rust セットアップ前に落ちる。ref から toolchain を推測できない分、
+      # toolchain: stable を明示する。
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-16
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache Rust (cargo + target)

@@ -94,9 +94,15 @@ macOS screenshot capture & annotation app.
   default keychain ではなく検索リストから identity を引く。直後の `find-identity | grep` は
   「identity 0 件でも exit 0」という仕様を潰すためのアサーションで、証明書が引けない状態を
   ビルドの奥ではなくこのステップで落とす。
-- **`cancel-in-progress` は付けない**。1 dispatch = 1 version なので、後発の run が先発を
-  キャンセルすると、その version の Release だけが永久に公開されない (bump コミットは main に
-  残ったまま) 状態になる。CI 分数より取りこぼし防止を優先する。
+- **`cancel-in-progress: false` + `queue: max` の両方を書く**。1 dispatch = 1 version なので、
+  キャンセルされた run の version は (bump コミットは main に残ったまま) 永久に公開されない。
+  走行中を守る `cancel-in-progress: false` だけでは不十分で、既定の `queue: single` は pending を
+  1 件しか保持せず、新しい dispatch が既存 pending を置き換える (走行中 1 + dispatch 2 回で
+  真ん中の version が消える)。`queue: max` は pending を 100 件まで積む。CI 分数より取りこぼし防止。
+- **`dtolnay/rust-toolchain` の SHA は master 履歴から選ぶ**。`@stable` の指す SHA は生成ブランチ
+  stable の先端で、それを pin すると stable が進んだ時に commit が GC され、以降の run が Rust
+  セットアップ前に落ちる。master 履歴の SHA を pin し、ref から toolchain を推測できなくなる分
+  `toolchain: stable` を明示する。
 - **`pnpm publish` は使えない** (pnpm 組み込みコマンドで scripts から上書き不可)。
   コマンド名は必ず `release`。
 - **`package.json` の version は飾り**だが、見た目の一貫性のため release.sh が
