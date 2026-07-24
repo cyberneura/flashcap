@@ -60,6 +60,32 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Secret が欠けていると署名・公証が「失敗」ではなく**黙ってスキップ**される。
+      # APPLE_SIGNING_IDENTITY が空だと tauri.conf.json の signingIdentity "-" に
+      # フォールバックして ad-hoc 署名になり、APPLE_ID 等が空だと公証も行われないまま
+      # Release が公開されてしまう (見た目は成功する)。ここで先に落とす。
+      - name: Verify signing secrets are present
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}. Signing and notarization would be silently skipped."
+            exit 1
+          fi
+          echo "All signing and notarization secrets are present."
+
       # Developer ID 証明書を一時 keychain にインポートする。tauri-action 自身は
       # 証明書をインポートしないため、ビルド前にこのステップで用意しておく。
       # keychain のパスワードは使い捨てなので Secret にせずその場で生成する。
