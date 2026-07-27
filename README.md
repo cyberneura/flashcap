@@ -9,7 +9,7 @@ A macOS screenshot capture & annotation app.
 ## Download
 
 Get the latest `flashcap_x.y.z_universal.dmg` from the
-[Releases](https://github.com/ytyng/flashcap/releases) page and drag the app into
+[Releases](https://github.com/cyberneura/flashcap/releases) page and drag the app into
 `/Applications`.
 
 The dmg is signed with a Developer ID certificate and notarized by Apple, so it
