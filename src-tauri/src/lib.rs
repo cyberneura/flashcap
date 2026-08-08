@@ -361,6 +361,22 @@ fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String)
     Ok(())
 }
 
+/// flashcap://ocr でヘッドレス OCR が要求されたか。
+///
+/// URL は setup の後に `RunEvent::Opened` で届くため、コールド起動では「フロントの
+/// 描画完了を待ってウィンドウを表示する」通常の初期化と OCR が並走する。撮影中に
+/// ウィンドウが出てくると、それがそのまま撮影範囲に写り込む。
+///
+/// 起動中に届いた場合の隠す処理 (Opened 側の hide) と対になっていて、こちらは
+/// 「これから出てくるのを止める」役割。CaptureHandshake と違って読むだけなので、
+/// 状態管理を足さず static で持つ。
+static HEADLESS_OCR_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn headless_ocr_requested() -> bool {
+    HEADLESS_OCR_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// キャプチャー開始のハンドシェイク状態
 ///
 /// キャプチャー開始経路 (--capture コールド / single-instance 再起動 /
@@ -594,10 +610,13 @@ pub fn run() {
                         // visible:false のままなので hide は no-op。撮影完了後に
                         // show される。ここではウィンドウを表示しない。
                         let _ = handle_cb.emit("do-capture", ());
-                    } else if let Some(w) = handle_cb.get_webview_window("main") {
+                    } else if !headless_ocr_requested() {
                         // 通常起動: フロント描画完了を待って表示する。
-                        let _ = w.show();
-                        let _ = w.set_focus();
+                        // ヘッドレス OCR 中は出さない (撮影に写り込むため)。
+                        if let Some(w) = handle_cb.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
                     }
                 });
 
@@ -609,10 +628,15 @@ pub fn run() {
                 // show → captureScreen の hide で点滅するため。予約中に frontend が
                 // 永久に来ない場合はそもそも captureScreen が動かずキャプチャー不能なので、
                 // 空ウィンドウを出しても無意味。
+                // ヘッドレス OCR 中も同様に表示しない (撮影に写り込むため。OCR は
+                // フロントを使わないので、ウィンドウが出ないままでも困らない)。
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let handshake = handle.state::<CaptureHandshake>();
-                    if !handshake.is_ready() && !handshake.is_pending() {
+                    if !handshake.is_ready()
+                        && !handshake.is_pending()
+                        && !headless_ocr_requested()
+                    {
                         if let Some(w) = handle.get_webview_window("main") {
                             let _ = w.show();
                             let _ = w.set_focus();
@@ -650,6 +674,19 @@ pub fn run() {
                         match url.host_str() {
                             // flashcap://ocr: ヘッドレス OCR を実行
                             Some("ocr") => {
+                                // ヘッドレス OCR は画面を撮るので、メインウィンドウが
+                                // 出ていると撮影範囲に自分が写り込む。出さないための
+                                // 経路が 2 つあり、両方要る:
+                                // - 既に起動している場合、URL を開くと macOS がアプリを
+                                //   前面に出すので、今出ているものを hide する
+                                // - コールド起動の場合、ウィンドウはまだ visible:false
+                                //   なので hide は no-op。代わりにフラグを立てて、
+                                //   frontend-ready 側の show を止める
+                                HEADLESS_OCR_REQUESTED
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                if let Some(w) = app.get_webview_window("main") {
+                                    let _ = w.hide();
+                                }
                                 let handle = app.clone();
                                 tauri::async_runtime::spawn(async move {
                                     ocr::run_headless_ocr(&handle, false).await;
