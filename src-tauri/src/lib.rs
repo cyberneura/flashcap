@@ -128,14 +128,33 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
 /// **既存フォルダの権限には触らない** — 意図して共有しているフォルダを、
 /// こちらの都合で締めないため。
 pub(crate) fn prepare_save_directory(app: &tauri::AppHandle) -> Result<String, String> {
+    let managed = |e: std::io::Error, dir: &str| format!("Failed to prepare save directory '{}': {}", dir, e);
+
     let dir = get_save_directory(app);
     if Path::new(&dir) == flashcap_temp_dir() {
         return ensure_private_flashcap_dir()
             .map(|p| p.to_string_lossy().to_string())
-            .map_err(|e| format!("Failed to prepare save directory '{}': {}", dir, e));
+            .map_err(|e| managed(e, &dir));
     }
+
     create_private_dir(&dir)
         .map_err(|e| format!("Failed to create save directory '{}': {}", dir, e))?;
+
+    // 上の比較は字句比較なので、custom: が symlink や .. 越しに作業ディレクトリを
+    // 指している場合をすり抜ける。すり抜けると「既存の権限に触らない」側へ回り、
+    // 旧版が残した 0755 のディレクトリにスクリーンショットを置き続けることになる。
+    // 実体で突き合わせて拾い直す (canonicalize は実在しないパスに失敗するので、
+    // 作った後に呼ぶ)。解決できなければ字句比較の結果をそのまま採る。
+    if let (Ok(resolved), Ok(temp)) = (
+        std::fs::canonicalize(&dir),
+        std::fs::canonicalize(flashcap_temp_dir()),
+    ) {
+        if resolved == temp {
+            return ensure_private_flashcap_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .map_err(|e| managed(e, &dir));
+        }
+    }
     Ok(dir)
 }
 
