@@ -55,6 +55,42 @@ pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> 
         .create(dir)
 }
 
+/// dir とその祖先に、自分以外のアカウントが手を出せる要素が無いことを確かめる
+///
+/// **dir 自身の mode だけでは足りない。** 0700 のディレクトリでも、その**エントリ**が
+/// 誰でも書ける親の下にあれば、中を辿らずに丸ごと rename して差し替えられる。
+/// パス名で辿り直す以上、道中のどの要素にも割り込まれてはいけない。
+///
+/// 見るのは group と other の書き込みビット。**sticky を例外にはしない。**
+/// sticky なら他人のエントリを消せないので rename による差し替えは防げるが、
+/// それを許すと /tmp (1777) が通ってしまう。macOS の $TMPDIR の祖先
+/// (/var/folders/... と /private/var、/) はどれも他人に書けないので、例外を
+/// 設ける実利が無いまま /tmp を招き入れることになる。
+///
+/// 限界: 見ているのは Unix の mode だけ。macOS の拡張 ACL は検査していないので、
+/// ACL で他ユーザーに開かれた要素はここを通る。また、この検査と実際の書き込みの間で
+/// パスを完全に固定しているわけではない (それには openat/O_NOFOLLOW でハンドルを
+/// 握り続ける必要がある)。いずれも残存リスクであって、この関数が塞いだ範囲ではない。
+fn reject_if_others_can_meddle(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for ancestor in dir.ancestors() {
+        let mode = std::fs::metadata(ancestor)?.permissions().mode();
+        if mode & 0o022 != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} is writable by other accounts, so {} cannot be trusted; refusing to \
+                     store screen captures there (is TMPDIR set?)",
+                    ancestor.display(),
+                    dir.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// flashcap 専用の作業ディレクトリを、所有者だけが触れる状態にして返す
 ///
 /// **既に在るディレクトリを締め直すのがこの関数の要点。** $TMPDIR/flashcap は
@@ -75,29 +111,16 @@ pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> 
 pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
 
-    // 親が自分以外にも書ける場所なら、この先の検査は意味を持たない。
-    // 「stat して chmod して使う」はパス名を辿り直す 3 手なので、その間に
-    // ディレクトリを symlink と差し替えられると、検査した対象と実際に書く先が
-    // 別物になる (TOCTOU)。誰も割り込めない場所であることを先に確かめる。
-    //
-    // **group とother の両方を見る。** /tmp の 1777 だけでなく、0770 のように
-    // 同じグループの別アカウントが書ける場所でも、エントリを差し替える隙は同じだけある。
+    // 置き場に至る道のどこかが自分以外にも書けるなら、この先の検査は意味を持たない。
+    // 「stat して chmod して使う」はパス名を辿り直す 3 手なので、その間にどこかの
+    // 要素を差し替えられると、検査した対象と実際に書く先が別物になる (TOCTOU)。
+    // 誰も割り込めないことを先に確かめる。
     //
     // macOS の GUI プロセスは launchd がユーザー専用の TMPDIR (0700) を必ず渡すので、
-    // ここに引っかかるのは TMPDIR を落とした異常な起動だけ。その時は /tmp へ
-    // 黙って落ちるより、撮らずに止まる方がこのアプリには正しい。
+    // ここに引っかかるのは TMPDIR を落とした異常な起動か、/var 以下が壊れている
+    // マシンだけ。その場合は /tmp へ黙って落ちるより、撮らずに止まる方が正しい。
     let parent = std::env::temp_dir();
-    let parent_meta = std::fs::metadata(&parent)?;
-    if parent_meta.permissions().mode() & 0o022 != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            format!(
-                "temp directory {} is writable by other accounts; refusing to store screen \
-                 captures there (is TMPDIR set?)",
-                parent.display()
-            ),
-        ));
-    }
+    reject_if_others_can_meddle(&parent)?;
 
     let dir = flashcap_temp_dir();
     create_private_dir(&dir)?;
