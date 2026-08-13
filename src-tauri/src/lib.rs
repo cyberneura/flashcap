@@ -7,6 +7,7 @@ mod video;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -22,8 +23,121 @@ pub struct ScreenshotResult {
     pub file_path: String, // saved file path
 }
 
+/// flashcap が一時ファイルと既定の保存先に使うディレクトリ ($TMPDIR/flashcap)
+///
+/// **/tmp を直接使わないこと。** macOS の /tmp (= /private/tmp) は mode 1777 の
+/// 共有領域で、同じ Mac の別ユーザーアカウントから中身を読める。このアプリが扱うのは
+/// 画面に映っていたものそのもの (パスワード入力画面・社内資料・メール) なので、
+/// 既定の置き場が他人から読めてよいものではない。
+///
+/// std::env::temp_dir() は macOS では通常 $TMPDIR (/var/folders/.../T/) を返し、
+/// これはユーザー専用。ただし **TMPDIR が未設定の実行環境では /tmp に落ちる**ので、
+/// 「temp_dir() だから安全」と考えてはいけない。実際の権限は
+/// ensure_private_flashcap_dir() が確かめて締める。
+pub(crate) fn flashcap_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("flashcap")
+}
+
+/// 所有者だけが読み書きできるディレクトリを作る (無ければ、親ごと)
+///
+/// std::fs::create_dir_all は mode を指定しないため umask 依存で 0755 になりうる。
+/// スクリーンショットの置き場としてはそれでは広すぎるので、mode を明示して作る。
+/// mkdir(2) の mode は umask で削られるだけなので、0700 より広くなることはない。
+///
+/// **既に在るディレクトリの mode は変えない。** ユーザーが custom: で指定した
+/// 既存フォルダの権限を、こちらの都合で締めてしまわないため。flashcap 自身の
+/// 作業ディレクトリを締め直したい場合は ensure_private_flashcap_dir() を使う。
+pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+/// flashcap 専用の作業ディレクトリを、所有者だけが触れる状態にして返す
+///
+/// **既に在るディレクトリを締め直すのがこの関数の要点。** $TMPDIR/flashcap は
+/// 以前のバージョンの video_temp_dir() が create_dir_all で作っており、umask 次第で
+/// 0755 のまま残っている。新規作成時に mode を渡すだけでは、既に一度でも録画した
+/// ユーザーの環境が直らない (そして直らないまま、そこへスクリーンショットを
+/// 置き始めることになる)。
+///
+/// 所有者の確認に uid を引く必要はない。**chmod は所有者にしか通らない**ので、
+/// 他人が作ったディレクトリならここが EPERM で落ちる。その場合は奪い返さず、
+/// エラーを返して書き込みをやめる。だから chmod は**現在の mode に関わらず毎回**
+/// 呼ぶ。既に 0700 の時に省くと、他人所有の 0700 ディレクトリが素通りしてしまう
+/// (所有者確認がこの呼び出しそのものなので、省いた瞬間に確認も消える)。
+///
+/// **保証しているのは Unix の mode だけ。** macOS の拡張 ACL は見ていないので、
+/// ACL で他ユーザーに開かれたディレクトリはここを通る。これは残存リスクであって
+/// この関数が塞いだ範囲ではない。塞ぐなら chmod -N まで踏み込むこと。
+pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // 親が誰でも書ける場所 (/tmp の 1777 など) なら、この先の検査は意味を持たない。
+    // 「stat して chmod して使う」はパス名を辿り直す 3 手なので、その間に
+    // ディレクトリを symlink と差し替えられると、検査した対象と実際に書く先が
+    // 別物になる (TOCTOU)。誰も割り込めない場所であることを先に確かめる。
+    //
+    // macOS の GUI プロセスは launchd がユーザー専用の TMPDIR を必ず渡すので、
+    // ここに引っかかるのは TMPDIR を落とした異常な起動だけ。その時は /tmp へ
+    // 黙って落ちるより、撮らずに止まる方がこのアプリには正しい。
+    let parent = std::env::temp_dir();
+    let parent_meta = std::fs::metadata(&parent)?;
+    if parent_meta.permissions().mode() & 0o002 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "temp directory {} is world-writable; refusing to store screen captures there \
+                 (is TMPDIR set?)",
+                parent.display()
+            ),
+        ));
+    }
+
+    let dir = flashcap_temp_dir();
+    create_private_dir(&dir)?;
+
+    // symlink 越しに書かせない。作業ディレクトリの実体が別の場所を指していると、
+    // 以降の書き込みも削除もそちらへ向く。symlink_metadata はリンクを辿らないので、
+    // 「リンクではなく本物のディレクトリか」をここで判定できる。
+    let meta = std::fs::symlink_metadata(&dir)?;
+    if !meta.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a real directory", dir.display()),
+        ));
+    }
+
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    Ok(dir)
+}
+
+/// 保存先を書き込める状態にして返す
+///
+/// **設定の種別ではなく、解決後のパスで振り分ける。** 解決先が flashcap の作業
+/// ディレクトリそのものなら、既存でも所有者専用まで締め直す — custom: でそこを
+/// 名指ししていた場合も同じ扱いになるが、flashcap が管理する場所であることに
+/// 変わりはないので、それでよい。
+///
+/// それ以外 (ユーザーが選んだ任意のフォルダ) は無ければ 0700 で作るだけで、
+/// **既存フォルダの権限には触らない** — 意図して共有しているフォルダを、
+/// こちらの都合で締めないため。
+pub(crate) fn prepare_save_directory(app: &tauri::AppHandle) -> Result<String, String> {
+    let dir = get_save_directory(app);
+    if Path::new(&dir) == flashcap_temp_dir() {
+        return ensure_private_flashcap_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .map_err(|e| format!("Failed to prepare save directory '{}': {}", dir, e));
+    }
+    create_private_dir(&dir)
+        .map_err(|e| format!("Failed to create save directory '{}': {}", dir, e))?;
+    Ok(dir)
+}
+
 /// 設定から保存先ディレクトリを取得する
-/// "tmp" -> /tmp/flashcap/
+/// "tmp" -> $TMPDIR/flashcap/
 /// "macos_default" -> macOS のスクリーンショット保存先
 /// "custom:<path>" -> カスタムパス
 fn get_save_directory(app: &tauri::AppHandle) -> String {
@@ -35,19 +149,29 @@ fn get_save_directory(app: &tauri::AppHandle) -> String {
         .unwrap_or_else(|| "tmp".to_string());
 
     match setting.as_str() {
-        "tmp" => "/tmp/flashcap".to_string(),
+        "tmp" => default_save_directory(),
         "macos_default" => get_macos_screenshot_dir(),
         s if s.starts_with("custom:") => s.strip_prefix("custom:").unwrap().to_string(),
-        _ => "/tmp/flashcap".to_string(),
+        _ => default_save_directory(),
     }
+}
+
+/// 設定値 "tmp" が指す実際のパス。設定値の文字列は互換のため "tmp" のまま残している
+fn default_save_directory() -> String {
+    flashcap_temp_dir().to_string_lossy().to_string()
+}
+
+/// 既定の保存先の実パスを返す (Preferences の表示用)
+/// 環境によって変わるパスなので、画面にハードコードせずここから引く
+#[tauri::command]
+fn get_default_save_directory() -> String {
+    default_save_directory()
 }
 
 /// 保存先フォルダを Finder で開く（未キャプチャ時用。無ければ作成する）
 #[tauri::command]
 fn open_save_directory(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = get_save_directory(&app);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create save directory '{}': {}", dir, e))?;
+    let dir = prepare_save_directory(&app)?;
     let status = Command::new("open")
         .arg(&dir)
         .status()
@@ -76,16 +200,20 @@ fn get_macos_screenshot_dir() -> String {
         .unwrap_or_else(|| {
             dirs::desktop_dir()
                 .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "/tmp/flashcap".to_string())
+                .unwrap_or_else(default_save_directory)
         })
 }
 
-fn get_screenshot_path(app: &tauri::AppHandle) -> String {
-    let dir = std::path::PathBuf::from(get_save_directory(app));
-    let _ = std::fs::create_dir_all(&dir);
+/// 撮影結果の保存先パスを組み立てる
+///
+/// 保存先を用意できなかった場合はエラーを返して撮影を始めない。以前はここで
+/// 作成失敗を握り潰していたが、この関数は「所有者しか読めない場所に置く」という
+/// 保証を兼ねるようになったので、握り潰すと保証のないまま撮り続けることになる。
+fn get_screenshot_path(app: &tauri::AppHandle) -> Result<String, String> {
+    let dir = PathBuf::from(prepare_save_directory(app)?);
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
     let filename = format!("flashcap-{}.png", timestamp);
-    dir.join(filename).to_string_lossy().to_string()
+    Ok(dir.join(filename).to_string_lossy().to_string())
 }
 
 /// スクリーンショットの画像サイズに合わせてメインウインドウを拡大する
@@ -216,7 +344,7 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
 async fn take_screenshot_interactive(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
-    let file_path = get_screenshot_path(&app);
+    let file_path = get_screenshot_path(&app)?;
 
     let mut args = vec!["-i".to_string()];
     if get_exclude_shadow(&app) {
@@ -264,7 +392,7 @@ fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
 async fn take_screenshot_timer(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
-    let file_path = get_screenshot_path(&app);
+    let file_path = get_screenshot_path(&app)?;
     let delay = get_timer_delay(&app).to_string();
 
     let mut args = vec!["-i".to_string()];
@@ -307,8 +435,7 @@ fn save_pasted_image(
     width: usize,
     height: usize,
 ) -> Result<ScreenshotResult, String> {
-    let dir = std::path::PathBuf::from(get_save_directory(&app));
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = PathBuf::from(prepare_save_directory(&app)?);
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
     let filename = format!("flashcap-paste-{}.png", timestamp);
     let file_path = dir.join(&filename).to_string_lossy().to_string();
@@ -333,7 +460,9 @@ fn save_pasted_image(
 /// パスは保存先ディレクトリ内に制限する
 #[tauri::command]
 fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String) -> Result<(), String> {
-    let save_dir = std::fs::canonicalize(get_save_directory(&app))
+    // 注釈済み画像もスクリーンショットと同じ中身なので、撮影と同じ経路で用意する。
+    // 併せて、保存先がまだ無い場合に canonicalize が失敗して書き出せない問題も消える
+    let save_dir = std::fs::canonicalize(prepare_save_directory(&app)?)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
     let target = std::fs::canonicalize(&path)
         .or_else(|_| {
@@ -647,7 +776,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
