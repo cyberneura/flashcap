@@ -75,22 +75,25 @@ pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> 
 pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
 
-    // 親が誰でも書ける場所 (/tmp の 1777 など) なら、この先の検査は意味を持たない。
+    // 親が自分以外にも書ける場所なら、この先の検査は意味を持たない。
     // 「stat して chmod して使う」はパス名を辿り直す 3 手なので、その間に
     // ディレクトリを symlink と差し替えられると、検査した対象と実際に書く先が
     // 別物になる (TOCTOU)。誰も割り込めない場所であることを先に確かめる。
     //
-    // macOS の GUI プロセスは launchd がユーザー専用の TMPDIR を必ず渡すので、
+    // **group とother の両方を見る。** /tmp の 1777 だけでなく、0770 のように
+    // 同じグループの別アカウントが書ける場所でも、エントリを差し替える隙は同じだけある。
+    //
+    // macOS の GUI プロセスは launchd がユーザー専用の TMPDIR (0700) を必ず渡すので、
     // ここに引っかかるのは TMPDIR を落とした異常な起動だけ。その時は /tmp へ
     // 黙って落ちるより、撮らずに止まる方がこのアプリには正しい。
     let parent = std::env::temp_dir();
     let parent_meta = std::fs::metadata(&parent)?;
-    if parent_meta.permissions().mode() & 0o002 != 0 {
+    if parent_meta.permissions().mode() & 0o022 != 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             format!(
-                "temp directory {} is world-writable; refusing to store screen captures there \
-                 (is TMPDIR set?)",
+                "temp directory {} is writable by other accounts; refusing to store screen \
+                 captures there (is TMPDIR set?)",
                 parent.display()
             ),
         ));
