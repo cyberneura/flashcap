@@ -23,7 +23,11 @@ macOS screenshot capture & annotation app.
 
 ## Key Details
 
-- Screenshots are saved to `/tmp/flashcap/` (configurable in Preferences)
+- Screenshots are saved to `$TMPDIR/flashcap/` (configurable in Preferences).
+  **Not `/tmp`** — that is mode 1777 and readable by every account on the Mac, and
+  what this app writes is whatever was on screen. `flashcap_temp_dir()` /
+  `create_private_dir()` in `src-tauri/src/lib.rs` are the only way to build and
+  create these directories; `create_dir_all` alone is umask-dependent (0755).
 - ESC key exits the app
 - Arrow tool for annotation (with white stroke, drop shadow options)
 - Mask tool: mosaic, blur, fill modes with 8-direction resize handles

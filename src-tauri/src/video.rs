@@ -21,12 +21,15 @@ pub struct Recording {
     pub path: String,
 }
 
-/// 録画の生データを置く作業ディレクトリ ($TEMP/flashcap)
+/// 録画の生データを置く作業ディレクトリ ($TEMP/flashcap) を、
+/// 所有者専用にしたうえで返す
 /// asset protocol の scope ($TEMP/**) に含まれるためプレビュー可能
-fn video_temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("flashcap");
-    let _ = std::fs::create_dir_all(&dir);
-    dir
+///
+/// 以前は作成失敗を握り潰していたが、この呼び出しは「録画の生データを他ユーザーから
+/// 読まれない場所に置く」という保証を兼ねるようになったので、失敗したら録画を始めない。
+fn video_temp_dir() -> Result<PathBuf, String> {
+    crate::ensure_private_flashcap_dir()
+        .map_err(|e| format!("Failed to prepare the working directory: {}", e))
 }
 
 /// 過去の録画生データ (rec-*.mov) を削除する (best-effort)
@@ -429,7 +432,7 @@ pub fn start_video_recording(
         return Err("Invalid recording region".to_string());
     }
 
-    let dir = video_temp_dir();
+    let dir = video_temp_dir()?;
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
     let path = dir
         .join(format!("rec-{}.mov", timestamp))
@@ -493,7 +496,11 @@ pub async fn stop_video_recording(
         return Err("Recording file was not created".to_string());
     }
 
-    cleanup_old_recordings(&video_temp_dir(), Path::new(&path));
+    // 片付けは best-effort。ここで失敗しても録画自体は成功しているので、
+    // 結果を捨てずに掃除だけ諦める
+    if let Ok(dir) = video_temp_dir() {
+        cleanup_old_recordings(&dir, Path::new(&path));
+    }
 
     Ok(VideoResult { file_path: path })
 }
@@ -603,7 +610,7 @@ pub async fn export_video(
     let duration = end_sec - start_sec;
 
     // 入力は temp 作業ディレクトリ内に制限する
-    let temp_dir = std::fs::canonicalize(video_temp_dir())
+    let temp_dir = std::fs::canonicalize(video_temp_dir()?)
         .map_err(|e| format!("Failed to resolve temp dir: {}", e))?;
     let input_canon = std::fs::canonicalize(&input)
         .map_err(|e| format!("Failed to resolve input '{}': {}", input, e))?;
@@ -620,9 +627,9 @@ pub async fn export_video(
     );
 
     // 出力先 (保存ディレクトリ内)
-    let save_dir = crate::get_save_directory(&app);
-    std::fs::create_dir_all(&save_dir)
-        .map_err(|e| format!("Failed to create save directory '{}': {}", save_dir, e))?;
+    // 書き出し先も撮影と同じ経路で用意する。ここだけ get_save_directory() を直接
+    // 使うと、旧版が 0755 で作った作業ディレクトリを締め直さないまま動画を置くことになる
+    let save_dir = crate::prepare_save_directory(&app)?;
     let save_dir_canon = std::fs::canonicalize(&save_dir)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
     // ミリ秒まで含めて同一秒内の連続書き出しでも衝突しないようにする

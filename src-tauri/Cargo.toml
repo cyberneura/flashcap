@@ -34,6 +34,10 @@ dirs = "6"
 tokio = { version = "1", features = ["process", "time"] }
 tauri-plugin-deep-link = "2.4.7"
 
+[target.'cfg(unix)'.dependencies]
+# 一時ディレクトリの祖先の所有者検査 (getuid)。std には現在の uid を取る API が無い
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # 範囲選択オーバーレイをフルスクリーンアプリの Space 上にも出すため、
 # NSWindow の collectionBehavior / level を直接設定する

@@ -155,24 +155,92 @@ pub async fn ocr_image(
     recognize_text(&app, &png_data, region, img.width(), img.height()).await
 }
 
+/// OCR 1 回分の作業ディレクトリを排他的に作り、その中の出力先パスと共に返す
+///
+/// **予測可能なパスに撮らせてはいけない。** 以前は /tmp/flashcap-ocr-<pid>.png 固定で、
+/// /tmp は全ユーザー共有だったため、先回りして同名のシンボリックリンクを置かれると
+/// screencapture の出力先がリンク先に化け (任意ファイルの上書き)、逆に読ませたい
+/// ファイルへ向けられればその内容が OCR されてクリップボードに入った。
+///
+/// 他ユーザーからの攻撃を実際に塞いでいるのは ensure_private_flashcap_dir() の方で、
+/// 親が 0700 かつ自分の所有だと確かめられている以上、そこへリンクを仕込む余地は無い
+/// (TMPDIR が無くて /tmp に落ちた場合も、そのディレクトリ自体を締めてから使う)。
+///
+/// ここで確保するのは**名前**の方。ファイルではなくディレクトリを mkdir で作る。
+/// mkdir は既存の名前に対して必ず失敗する (= O_EXCL 相当) ので、通れば
+/// 「この名前は自分が取った」ことが確定し、しかも**中のファイル名を使い終わるまで
+/// 予約したままにできる**。ファイルを O_EXCL で作って消す方式だと、消した瞬間から
+/// screencapture が作るまでの間が空いてしまい、予約になっていなかった。
+/// 出力ファイル自体はまだ存在しないので、screencapture が既存ファイルを上書き
+/// できるかどうかにも依存しない。
+///
+/// 戻り値の OcrWorkdir は drop 時に中身ごと消える。
+///
+/// 撮った画像を残さないための後始末は、途中で抜ける経路が多く手で書くと必ず漏れる
+/// (特に **Future がキャンセルされた場合は、以降の行が 1 行も動かない**)。
+/// drop に載せておけば、キャンセルでも早期 return でも同じように消える。
+struct OcrWorkdir {
+    dir: std::path::PathBuf,
+    /// screencapture に渡す出力先 (dir の中の固定名)
+    path: String,
+}
+
+impl Drop for OcrWorkdir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn create_ocr_workdir() -> Result<OcrWorkdir, String> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let base = crate::ensure_private_flashcap_dir()
+        .map_err(|e| format!("Failed to prepare the temp directory: {}", e))?;
+
+    // 名前は PID + ナノ秒。PID だけだと同一プロセス内の同時 OCR が衝突する。
+    // 衝突しても mkdir が弾くので、取り違えではなく取り直しになる。
+    for _ in 0..16 {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = base.join(format!("ocr-{}-{}", std::process::id(), ts));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {
+                let path = dir.join("capture.png").to_string_lossy().to_string();
+                return Ok(OcrWorkdir { dir, path });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Failed to create the temp directory: {}", e)),
+        }
+    }
+    Err("Failed to reserve a temp directory for OCR".to_string())
+}
+
 /// screencapture -i → 一時ファイル → OCR の共通処理
 async fn screencapture_and_ocr(app: &tauri::AppHandle) -> Result<String, String> {
-    let tmp_path = format!("/tmp/flashcap-ocr-{}.png", std::process::id());
+    // work が生きている間だけ一時ディレクトリが存在する。以降どこで抜けても
+    // (キャンセル含む) drop が撮影結果ごと消すので、明示的な後始末は書かない
+    let work = create_ocr_workdir()?;
 
     let status = tokio::process::Command::new("screencapture")
-        .args(["-i", &tmp_path])
+        .args(["-i", &work.path])
+        // キャンセルでこの Future が捨てられた時、screencapture を生かしたままにすると
+        // 消した後のディレクトリへ書き込もうとし続ける。道連れに終了させる
+        .kill_on_drop(true)
         .status()
         .await
         .map_err(|e| format!("Failed to run screencapture: {}", e))?;
 
     if !status.success() {
-        let _ = std::fs::remove_file(&tmp_path);
         return Err("Screenshot was cancelled".to_string());
     }
 
     let png_data =
-        std::fs::read(&tmp_path).map_err(|e| format!("Failed to read screenshot: {}", e))?;
-    let _ = std::fs::remove_file(&tmp_path);
+        std::fs::read(&work.path).map_err(|e| format!("Failed to read screenshot: {}", e))?;
+    // 以降はメモリ上のバイト列だけで足りる。OCR (数秒かかる) の間、画面の中身を
+    // ディスクに置いたままにしない
+    drop(work);
 
     let img = image::load_from_memory(&png_data)
         .map_err(|e| format!("Failed to decode image: {}", e))?;
