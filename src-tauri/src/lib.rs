@@ -161,8 +161,67 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
         ));
     }
 
+    // 締め直す前に他人が置いていったものを片付ける。
+    //
+    // **mode を直すだけでは足りない。** 以前のバージョンが 0755 / 0775 で作った
+    // ディレクトリには、締める前に他人が作れたエントリが残っている。特に
+    // `flashcap-paste-<timestamp>.png` は名前が予測できるので、symlink を
+    // 先置きされていると、締め直した後の書き込みがそのリンク先へ抜ける。
+    let had_foreign_entries = purge_foreign_entries(&dir)?;
+    if had_foreign_entries {
+        eprintln!(
+            "[flashcap] {} contained entries owned by other accounts or symlinks; removed them",
+            dir.display()
+        );
+    }
+
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     Ok(dir)
+}
+
+/// 作業ディレクトリから「自分が所有する通常のファイル / ディレクトリ」以外を消す
+///
+/// 消すのは symlink と、自分以外が所有するエントリ。**symlink は中身を見ずに消す**
+/// (辿ると判定そのものがリンク先の情報になる)。1 件でも消したら true を返す。
+///
+/// ここは flashcap が自分で作る一時ファイルしか置かない場所なので、消して困る
+/// ものは無い。逆に残すと、締め直した後の書き込みが他人の仕掛けを踏む。
+fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    // SAFETY: getuid は常に成功し、シグナル安全で副作用を持たない
+    let self_uid = unsafe { libc::getuid() };
+    let mut removed_any = false;
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        // symlink_metadata はリンクを辿らない
+        let meta = std::fs::symlink_metadata(&path)?;
+        let is_symlink = meta.file_type().is_symlink();
+        if !is_symlink && meta.uid() == self_uid {
+            continue;
+        }
+        let removed = if !is_symlink && meta.file_type().is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match removed {
+            Ok(()) => removed_any = true,
+            Err(e) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "{} could not be removed ({e}); refusing to use {} for screen captures",
+                        path.display(),
+                        dir.display()
+                    ),
+                ))
+            }
+        }
+    }
+    Ok(removed_any)
 }
 
 /// 保存先を書き込める状態にして返す
@@ -497,6 +556,23 @@ fn load_image_file(
     Ok(result)
 }
 
+/// symlink を辿らずにファイルを書く
+///
+/// `std::fs::write` は symlink を辿るので、書き込み先の名前が予測できる場所では
+/// 使えない。`O_NOFOLLOW` を付けると、対象が symlink だった時点で ELOOP になる。
+fn write_without_following_symlinks(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(bytes)
+}
+
 /// クリップボードから貼り付けた画像を保存する
 #[tauri::command]
 fn save_pasted_image(
@@ -513,7 +589,10 @@ fn save_pasted_image(
     let bytes = STANDARD
         .decode(&data_base64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
-    std::fs::write(&file_path, &bytes)
+    // O_NOFOLLOW で書く。名前が予測できる (`flashcap-paste-<秒>.png`) ので、
+    // 先置きされた symlink を辿ると別のファイルへ書かされる。
+    // truncate は残す — 同じ秒に 2 回貼ると同名になるため、上書きは正常系。
+    write_without_following_symlinks(Path::new(&file_path), &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
     resize_window_for_image(&app, width, height);
@@ -969,6 +1048,62 @@ mod tests {
     fn chmod(path: &Path, mode: u32) {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
             .expect("chmod failed");
+    }
+
+    #[test]
+    fn purge_removes_symlinks_and_foreign_entries() {
+        let tmp = TempDir::new("purge");
+        // 自分が置いた通常ファイルは残す
+        std::fs::write(tmp.path().join("mine.png"), b"x").unwrap();
+        // 先置きされた symlink は、リンク先を見ずに消す
+        std::os::unix::fs::symlink("/etc/passwd", tmp.path().join("evil.png")).unwrap();
+
+        let removed = purge_foreign_entries(tmp.path()).unwrap();
+        assert!(removed, "symlink があるのに消していない");
+        assert!(tmp.path().join("mine.png").exists());
+        assert!(
+            std::fs::symlink_metadata(tmp.path().join("evil.png")).is_err(),
+            "symlink が残っている"
+        );
+        // リンク先は消していない
+        assert!(Path::new("/etc/passwd").exists());
+    }
+
+    #[test]
+    fn purge_reports_false_when_nothing_to_remove() {
+        let tmp = TempDir::new("purge-clean");
+        std::fs::write(tmp.path().join("mine.png"), b"x").unwrap();
+        assert!(!purge_foreign_entries(tmp.path()).unwrap());
+        assert!(tmp.path().join("mine.png").exists());
+    }
+
+    #[test]
+    fn write_refuses_to_follow_a_symlink() {
+        let tmp = TempDir::new("nofollow");
+        let victim = tmp.path().join("victim.txt");
+        std::fs::write(&victim, b"original").unwrap();
+        let link = tmp.path().join("link.png");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+
+        let err = write_without_following_symlinks(&link, b"attacker").unwrap_err();
+        // O_NOFOLLOW は symlink に当たると ELOOP を返す
+        assert!(
+            matches!(err.raw_os_error(), Some(libc::ELOOP)),
+            "unexpected error: {err:?}"
+        );
+        // リンク先は書き換わっていない
+        assert_eq!(std::fs::read(&victim).unwrap(), b"original");
+    }
+
+    #[test]
+    fn write_creates_and_overwrites_regular_files() {
+        // 同じ秒に 2 回貼ると同名になるので、上書きは正常系として通す必要がある
+        let tmp = TempDir::new("overwrite");
+        let path = tmp.path().join("shot.png");
+        write_without_following_symlinks(&path, b"first").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        write_without_following_symlinks(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
     }
 
     #[test]
