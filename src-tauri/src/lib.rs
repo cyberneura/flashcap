@@ -7,6 +7,7 @@ mod video;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -22,8 +23,258 @@ pub struct ScreenshotResult {
     pub file_path: String, // saved file path
 }
 
+/// flashcap が一時ファイルと既定の保存先に使うディレクトリ ($TMPDIR/flashcap)
+///
+/// **/tmp を直接使わないこと。** macOS の /tmp (= /private/tmp) は mode 1777 の
+/// 共有領域で、同じ Mac の別ユーザーアカウントから中身を読める。このアプリが扱うのは
+/// 画面に映っていたものそのもの (パスワード入力画面・社内資料・メール) なので、
+/// 既定の置き場が他人から読めてよいものではない。
+///
+/// std::env::temp_dir() は macOS では通常 $TMPDIR (/var/folders/.../T/) を返し、
+/// これはユーザー専用。ただし **TMPDIR が未設定の実行環境では /tmp に落ちる**ので、
+/// 「temp_dir() だから安全」と考えてはいけない。実際の権限は
+/// ensure_private_flashcap_dir() が確かめて締める。
+pub(crate) fn flashcap_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("flashcap")
+}
+
+/// 所有者だけが読み書きできるディレクトリを作る (無ければ、親ごと)
+///
+/// std::fs::create_dir_all は mode を指定しないため umask 依存で 0755 になりうる。
+/// スクリーンショットの置き場としてはそれでは広すぎるので、mode を明示して作る。
+/// mkdir(2) の mode は umask で削られるだけなので、0700 より広くなることはない。
+///
+/// **既に在るディレクトリの mode は変えない。** ユーザーが custom: で指定した
+/// 既存フォルダの権限を、こちらの都合で締めてしまわないため。flashcap 自身の
+/// 作業ディレクトリを締め直したい場合は ensure_private_flashcap_dir() を使う。
+pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+/// dir とその祖先に、自分以外のアカウントが手を出せる要素が無いことを確かめる
+///
+/// **dir 自身の mode だけでは足りない。** 0700 のディレクトリでも、その**エントリ**が
+/// 誰でも書ける親の下にあれば、中を辿らずに丸ごと rename して差し替えられる。
+/// パス名で辿り直す以上、道中のどの要素にも割り込まれてはいけない。
+///
+/// 見るのは group と other の書き込みビット。**sticky を例外にはしない。**
+/// sticky なら他人のエントリを消せないので rename による差し替えは防げるが、
+/// それを許すと /tmp (1777) が通ってしまう。macOS の $TMPDIR の祖先
+/// (/var/folders/... と /private/var、/) はどれも他人に書けないので、例外を
+/// 設ける実利が無いまま /tmp を招き入れることになる。
+///
+/// **所有者も見る。** mode だけでは足りない: 他人が所有する 0755 のディレクトリは
+/// group/other の書き込みビットが立っていないので mode の検査は通るが、**その所有者
+/// 自身は書ける**ので、検査から書き込みまでの間に次の要素を rename して差し替えられる。
+/// 最後の chmod が所有を証明するのは `flashcap` ディレクトリだけなので、道中は
+/// ここで見るしかない。許すのは root と自分だけ (root を許さないと `/` や `/var` で
+/// 落ちる)。
+///
+/// 限界: 見ているのは Unix の mode と uid だけ。macOS の拡張 ACL は検査していないので、
+/// ACL で他ユーザーに開かれた要素はここを通る。また、この検査と実際の書き込みの間で
+/// パスを完全に固定しているわけではない (それには openat/O_NOFOLLOW でハンドルを
+/// 握り続ける必要がある)。いずれも残存リスクであって、この関数が塞いだ範囲ではない。
+fn reject_if_others_can_meddle(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    // SAFETY: getuid は常に成功し、シグナル安全で副作用を持たない
+    let self_uid = unsafe { libc::getuid() };
+
+    for ancestor in dir.ancestors() {
+        let meta = std::fs::metadata(ancestor)?;
+        let mode = meta.permissions().mode();
+        if mode & 0o022 != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} is writable by other accounts, so {} cannot be trusted; refusing to \
+                     store screen captures there (is TMPDIR set?)",
+                    ancestor.display(),
+                    dir.display()
+                ),
+            ));
+        }
+        let owner = meta.uid();
+        if owner != 0 && owner != self_uid {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} is owned by uid {} (neither root nor the current user), so {} cannot \
+                     be trusted; refusing to store screen captures there (is TMPDIR set?)",
+                    ancestor.display(),
+                    owner,
+                    dir.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// flashcap 専用の作業ディレクトリを、所有者だけが触れる状態にして返す
+///
+/// **既に在るディレクトリを締め直すのがこの関数の要点。** $TMPDIR/flashcap は
+/// 以前のバージョンの video_temp_dir() が create_dir_all で作っており、umask 次第で
+/// 0755 のまま残っている。新規作成時に mode を渡すだけでは、既に一度でも録画した
+/// ユーザーの環境が直らない (そして直らないまま、そこへスクリーンショットを
+/// 置き始めることになる)。
+///
+/// 所有者の確認に uid を引く必要はない。**chmod は所有者にしか通らない**ので、
+/// 他人が作ったディレクトリならここが EPERM で落ちる。その場合は奪い返さず、
+/// エラーを返して書き込みをやめる。だから chmod は**現在の mode に関わらず毎回**
+/// 呼ぶ。既に 0700 の時に省くと、他人所有の 0700 ディレクトリが素通りしてしまう
+/// (所有者確認がこの呼び出しそのものなので、省いた瞬間に確認も消える)。
+///
+/// **保証しているのは Unix の mode だけ。** macOS の拡張 ACL は見ていないので、
+/// ACL で他ユーザーに開かれたディレクトリはここを通る。これは残存リスクであって
+/// この関数が塞いだ範囲ではない。塞ぐなら chmod -N まで踏み込むこと。
+pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // 置き場に至る道のどこかが自分以外にも書けるなら、この先の検査は意味を持たない。
+    // 「stat して chmod して使う」はパス名を辿り直す 3 手なので、その間にどこかの
+    // 要素を差し替えられると、検査した対象と実際に書く先が別物になる (TOCTOU)。
+    // 誰も割り込めないことを先に確かめる。
+    //
+    // macOS の GUI プロセスは launchd がユーザー専用の TMPDIR (0700) を必ず渡すので、
+    // ここに引っかかるのは TMPDIR を落とした異常な起動か、/var 以下が壊れている
+    // マシンだけ。その場合は /tmp へ黙って落ちるより、撮らずに止まる方が正しい。
+    let parent = std::env::temp_dir();
+    reject_if_others_can_meddle(&parent)?;
+
+    let dir = flashcap_temp_dir();
+    create_private_dir(&dir)?;
+
+    // symlink 越しに書かせない。作業ディレクトリの実体が別の場所を指していると、
+    // 以降の書き込みも削除もそちらへ向く。symlink_metadata はリンクを辿らないので、
+    // 「リンクではなく本物のディレクトリか」をここで判定できる。
+    let meta = std::fs::symlink_metadata(&dir)?;
+    if !meta.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a real directory", dir.display()),
+        ));
+    }
+
+    // **先に締めてから片付ける。順序が逆だと意味が無い。**
+    //
+    // 片付けを先にすると、片付け終わってから chmod が効くまでの隙に、まだ
+    // 書ける状態のディレクトリへ新しい symlink を置かれる。それは「掃除済みの
+    // 信頼できるディレクトリ」の中に残り、以降の書き込みがそのリンク先へ抜ける。
+    // 先に 0700 にしてしまえば他人はもうエントリを追加できないので、その後の
+    // 片付けが取りこぼしなく終わる。
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+
+    // 締める前に他人が置いていったものを片付ける。
+    //
+    // **mode を直すだけでは足りない。** 以前のバージョンが 0755 / 0775 で作った
+    // ディレクトリには、締める前に他人が作れたエントリが残っている。特に
+    // `flashcap-paste-<timestamp>.png` は名前が予測できるので、symlink を
+    // 先置きされていると、締め直した後の書き込みがそのリンク先へ抜ける。
+    let had_foreign_entries = purge_foreign_entries(&dir)?;
+    if had_foreign_entries {
+        eprintln!(
+            "[flashcap] {} contained entries owned by other accounts or symlinks; removed them",
+            dir.display()
+        );
+    }
+
+    Ok(dir)
+}
+
+/// 作業ディレクトリから「自分が所有する通常のファイル / ディレクトリ」以外を消す
+///
+/// 消すのは symlink と、自分以外が所有するエントリ。**symlink は中身を見ずに消す**
+/// (辿ると判定そのものがリンク先の情報になる)。1 件でも消したら true を返す。
+///
+/// ここは flashcap が自分で作る一時ファイルしか置かない場所なので、消して困る
+/// ものは無い。逆に残すと、締め直した後の書き込みが他人の仕掛けを踏む。
+fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    // SAFETY: getuid は常に成功し、シグナル安全で副作用を持たない
+    let self_uid = unsafe { libc::getuid() };
+    let mut removed_any = false;
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        // symlink_metadata はリンクを辿らない
+        let meta = std::fs::symlink_metadata(&path)?;
+        let is_symlink = meta.file_type().is_symlink();
+        if !is_symlink && meta.uid() == self_uid {
+            continue;
+        }
+        let removed = if !is_symlink && meta.file_type().is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match removed {
+            Ok(()) => removed_any = true,
+            Err(e) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "{} could not be removed ({e}); refusing to use {} for screen captures",
+                        path.display(),
+                        dir.display()
+                    ),
+                ))
+            }
+        }
+    }
+    Ok(removed_any)
+}
+
+/// 保存先を書き込める状態にして返す
+///
+/// **設定の種別ではなく、解決後のパスで振り分ける。** 解決先が flashcap の作業
+/// ディレクトリそのものなら、既存でも所有者専用まで締め直す — custom: でそこを
+/// 名指ししていた場合も同じ扱いになるが、flashcap が管理する場所であることに
+/// 変わりはないので、それでよい。
+///
+/// それ以外 (ユーザーが選んだ任意のフォルダ) は無ければ 0700 で作るだけで、
+/// **既存フォルダの権限には触らない** — 意図して共有しているフォルダを、
+/// こちらの都合で締めないため。
+pub(crate) fn prepare_save_directory(app: &tauri::AppHandle) -> Result<String, String> {
+    let managed = |e: std::io::Error, dir: &str| format!("Failed to prepare save directory '{}': {}", dir, e);
+
+    let dir = get_save_directory(app);
+    if Path::new(&dir) == flashcap_temp_dir() {
+        return ensure_private_flashcap_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .map_err(|e| managed(e, &dir));
+    }
+
+    create_private_dir(&dir)
+        .map_err(|e| format!("Failed to create save directory '{}': {}", dir, e))?;
+
+    // 上の比較は字句比較なので、custom: が symlink や .. 越しに作業ディレクトリを
+    // 指している場合をすり抜ける。すり抜けると「既存の権限に触らない」側へ回り、
+    // 旧版が残した 0755 のディレクトリにスクリーンショットを置き続けることになる。
+    // 実体で突き合わせて拾い直す (canonicalize は実在しないパスに失敗するので、
+    // 作った後に呼ぶ)。解決できなければ字句比較の結果をそのまま採る。
+    if let (Ok(resolved), Ok(temp)) = (
+        std::fs::canonicalize(&dir),
+        std::fs::canonicalize(flashcap_temp_dir()),
+    ) {
+        if resolved == temp {
+            return ensure_private_flashcap_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .map_err(|e| managed(e, &dir));
+        }
+    }
+    Ok(dir)
+}
+
 /// 設定から保存先ディレクトリを取得する
-/// "tmp" -> /tmp/flashcap/
+/// "tmp" -> $TMPDIR/flashcap/
 /// "macos_default" -> macOS のスクリーンショット保存先
 /// "custom:<path>" -> カスタムパス
 fn get_save_directory(app: &tauri::AppHandle) -> String {
@@ -35,19 +286,29 @@ fn get_save_directory(app: &tauri::AppHandle) -> String {
         .unwrap_or_else(|| "tmp".to_string());
 
     match setting.as_str() {
-        "tmp" => "/tmp/flashcap".to_string(),
+        "tmp" => default_save_directory(),
         "macos_default" => get_macos_screenshot_dir(),
         s if s.starts_with("custom:") => s.strip_prefix("custom:").unwrap().to_string(),
-        _ => "/tmp/flashcap".to_string(),
+        _ => default_save_directory(),
     }
+}
+
+/// 設定値 "tmp" が指す実際のパス。設定値の文字列は互換のため "tmp" のまま残している
+fn default_save_directory() -> String {
+    flashcap_temp_dir().to_string_lossy().to_string()
+}
+
+/// 既定の保存先の実パスを返す (Preferences の表示用)
+/// 環境によって変わるパスなので、画面にハードコードせずここから引く
+#[tauri::command]
+fn get_default_save_directory() -> String {
+    default_save_directory()
 }
 
 /// 保存先フォルダを Finder で開く（未キャプチャ時用。無ければ作成する）
 #[tauri::command]
 fn open_save_directory(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = get_save_directory(&app);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create save directory '{}': {}", dir, e))?;
+    let dir = prepare_save_directory(&app)?;
     let status = Command::new("open")
         .arg(&dir)
         .status()
@@ -76,16 +337,20 @@ fn get_macos_screenshot_dir() -> String {
         .unwrap_or_else(|| {
             dirs::desktop_dir()
                 .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "/tmp/flashcap".to_string())
+                .unwrap_or_else(default_save_directory)
         })
 }
 
-fn get_screenshot_path(app: &tauri::AppHandle) -> String {
-    let dir = std::path::PathBuf::from(get_save_directory(app));
-    let _ = std::fs::create_dir_all(&dir);
+/// 撮影結果の保存先パスを組み立てる
+///
+/// 保存先を用意できなかった場合はエラーを返して撮影を始めない。以前はここで
+/// 作成失敗を握り潰していたが、この関数は「所有者しか読めない場所に置く」という
+/// 保証を兼ねるようになったので、握り潰すと保証のないまま撮り続けることになる。
+fn get_screenshot_path(app: &tauri::AppHandle) -> Result<String, String> {
+    let dir = PathBuf::from(prepare_save_directory(app)?);
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
     let filename = format!("flashcap-{}.png", timestamp);
-    dir.join(filename).to_string_lossy().to_string()
+    Ok(dir.join(filename).to_string_lossy().to_string())
 }
 
 /// スクリーンショットの画像サイズに合わせてメインウインドウを拡大する
@@ -216,7 +481,7 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
 async fn take_screenshot_interactive(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
-    let file_path = get_screenshot_path(&app);
+    let file_path = get_screenshot_path(&app)?;
 
     let mut args = vec!["-i".to_string()];
     if get_exclude_shadow(&app) {
@@ -264,7 +529,7 @@ fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
 async fn take_screenshot_timer(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
-    let file_path = get_screenshot_path(&app);
+    let file_path = get_screenshot_path(&app)?;
     let delay = get_timer_delay(&app).to_string();
 
     let mut args = vec!["-i".to_string()];
@@ -299,6 +564,23 @@ fn load_image_file(
     Ok(result)
 }
 
+/// symlink を辿らずにファイルを書く
+///
+/// `std::fs::write` は symlink を辿るので、書き込み先の名前が予測できる場所では
+/// 使えない。`O_NOFOLLOW` を付けると、対象が symlink だった時点で ELOOP になる。
+fn write_without_following_symlinks(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(bytes)
+}
+
 /// クリップボードから貼り付けた画像を保存する
 #[tauri::command]
 fn save_pasted_image(
@@ -307,8 +589,7 @@ fn save_pasted_image(
     width: usize,
     height: usize,
 ) -> Result<ScreenshotResult, String> {
-    let dir = std::path::PathBuf::from(get_save_directory(&app));
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = PathBuf::from(prepare_save_directory(&app)?);
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
     let filename = format!("flashcap-paste-{}.png", timestamp);
     let file_path = dir.join(&filename).to_string_lossy().to_string();
@@ -316,7 +597,10 @@ fn save_pasted_image(
     let bytes = STANDARD
         .decode(&data_base64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
-    std::fs::write(&file_path, &bytes)
+    // O_NOFOLLOW で書く。名前が予測できる (`flashcap-paste-<秒>.png`) ので、
+    // 先置きされた symlink を辿ると別のファイルへ書かされる。
+    // truncate は残す — 同じ秒に 2 回貼ると同名になるため、上書きは正常系。
+    write_without_following_symlinks(Path::new(&file_path), &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
     resize_window_for_image(&app, width, height);
@@ -333,7 +617,9 @@ fn save_pasted_image(
 /// パスは保存先ディレクトリ内に制限する
 #[tauri::command]
 fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String) -> Result<(), String> {
-    let save_dir = std::fs::canonicalize(get_save_directory(&app))
+    // 注釈済み画像もスクリーンショットと同じ中身なので、撮影と同じ経路で用意する。
+    // 併せて、保存先がまだ無い場合に canonicalize が失敗して書き出せない問題も消える
+    let save_dir = std::fs::canonicalize(prepare_save_directory(&app)?)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
     let target = std::fs::canonicalize(&path)
         .or_else(|_| {
@@ -647,7 +933,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -731,4 +1017,172 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// テスト用の一時ディレクトリ。Drop で消す。
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            // 同時実行しても衝突しないよう、プロセス id とタグで分ける
+            let base = std::env::temp_dir().join(format!(
+                "flashcap-test-{}-{}-{tag}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            create_private_dir(&base).expect("failed to create test dir");
+            Self(base)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn chmod(path: &Path, mode: u32) {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .expect("chmod failed");
+    }
+
+    #[test]
+    fn purge_removes_symlinks_and_foreign_entries() {
+        let tmp = TempDir::new("purge");
+        // 自分が置いた通常ファイルは残す
+        std::fs::write(tmp.path().join("mine.png"), b"x").unwrap();
+        // 先置きされた symlink は、リンク先を見ずに消す
+        std::os::unix::fs::symlink("/etc/passwd", tmp.path().join("evil.png")).unwrap();
+
+        let removed = purge_foreign_entries(tmp.path()).unwrap();
+        assert!(removed, "symlink があるのに消していない");
+        assert!(tmp.path().join("mine.png").exists());
+        assert!(
+            std::fs::symlink_metadata(tmp.path().join("evil.png")).is_err(),
+            "symlink が残っている"
+        );
+        // リンク先は消していない
+        assert!(Path::new("/etc/passwd").exists());
+    }
+
+    #[test]
+    fn purge_reports_false_when_nothing_to_remove() {
+        let tmp = TempDir::new("purge-clean");
+        std::fs::write(tmp.path().join("mine.png"), b"x").unwrap();
+        assert!(!purge_foreign_entries(tmp.path()).unwrap());
+        assert!(tmp.path().join("mine.png").exists());
+    }
+
+    #[test]
+    fn write_refuses_to_follow_a_symlink() {
+        let tmp = TempDir::new("nofollow");
+        let victim = tmp.path().join("victim.txt");
+        std::fs::write(&victim, b"original").unwrap();
+        let link = tmp.path().join("link.png");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+
+        let err = write_without_following_symlinks(&link, b"attacker").unwrap_err();
+        // O_NOFOLLOW は symlink に当たると ELOOP を返す
+        assert!(
+            matches!(err.raw_os_error(), Some(libc::ELOOP)),
+            "unexpected error: {err:?}"
+        );
+        // リンク先は書き換わっていない
+        assert_eq!(std::fs::read(&victim).unwrap(), b"original");
+    }
+
+    #[test]
+    fn write_creates_and_overwrites_regular_files() {
+        // 同じ秒に 2 回貼ると同名になるので、上書きは正常系として通す必要がある
+        let tmp = TempDir::new("overwrite");
+        let path = tmp.path().join("shot.png");
+        write_without_following_symlinks(&path, b"first").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        write_without_following_symlinks(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+    }
+
+    #[test]
+    fn create_private_dir_is_0700_regardless_of_umask() {
+        let tmp = TempDir::new("mode");
+        let nested = tmp.path().join("a/b");
+        create_private_dir(&nested).unwrap();
+        for dir in [tmp.path().join("a"), nested] {
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "{} は 0700 でない", dir.display());
+        }
+    }
+
+    #[test]
+    fn accepts_a_private_directory() {
+        let tmp = TempDir::new("ok");
+        // 祖先 (std::env::temp_dir() = 多くの環境で /tmp) が 1777 だと落ちるので、
+        // ここでは自分が作った側だけを対象にする。
+        if reject_if_others_can_meddle(tmp.path()).is_err() {
+            // /tmp が誰でも書ける環境ではこの検査自体が正しく拒否する。
+            // その場合は「拒否されること」が期待動作なので、ここで終わる。
+            return;
+        }
+        assert!(reject_if_others_can_meddle(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_group_or_other_writable_ancestor() {
+        let tmp = TempDir::new("writable");
+        let child = tmp.path().join("child");
+        create_private_dir(&child).unwrap();
+
+        chmod(tmp.path(), 0o777);
+        let err = reject_if_others_can_meddle(&child).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(
+            err.to_string().contains("writable by other accounts"),
+            "unexpected message: {err}"
+        );
+
+        // 後始末できるように戻す
+        chmod(tmp.path(), 0o700);
+    }
+
+    #[test]
+    fn rejects_a_group_writable_ancestor_even_without_other_bit() {
+        // 0o020 だけでも拒否する (0o022 のうち片方しか立っていないケース)
+        let tmp = TempDir::new("group");
+        let child = tmp.path().join("child");
+        create_private_dir(&child).unwrap();
+
+        chmod(tmp.path(), 0o770);
+        let err = reject_if_others_can_meddle(&child).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+
+        chmod(tmp.path(), 0o700);
+    }
+
+    #[test]
+    fn accepts_root_owned_ancestors() {
+        // `/` は root 所有で 0755。所有者検査で root を許していないと、
+        // どんなパスでも必ず落ちる (= 機能が完全に死ぬ) ことの回帰テスト。
+        let root = Path::new("/");
+        let meta = std::fs::metadata(root).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(meta.uid(), 0, "前提: / は root 所有");
+        assert_eq!(
+            meta.permissions().mode() & 0o022,
+            0,
+            "前提: / は他人に書けない"
+        );
+        assert!(reject_if_others_can_meddle(root).is_ok());
+    }
 }

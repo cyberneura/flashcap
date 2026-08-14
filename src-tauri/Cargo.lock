@@ -1315,6 +1315,7 @@ dependencies = [
  "core-foundation",
  "dirs",
  "image",
+ "libc",
  "objc",
  "serde",
  "serde_json",

@@ -1,11 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { load, type Store } from "@tauri-apps/plugin-store";
   import { open } from "@tauri-apps/plugin-dialog";
 
   type SaveMode = "tmp" | "macos_default" | "custom";
 
   let saveMode = $state<SaveMode>("tmp");
+  // 既定の保存先は $TMPDIR 配下でユーザーごとに異なるため、
+  // ここに書かずバックエンドが解決したパスを表示する
+  let defaultSavePath = $state("");
   let customPath = $state("");
   let timerDelay = $state(5);
   let excludeShadow = $state(true);
@@ -14,6 +18,7 @@
   let store = $state<Store | null>(null);
 
   onMount(async () => {
+    defaultSavePath = await invoke<string>("get_default_save_directory");
     store = await load("settings.json");
     const saved = await store.get<string>("save_directory");
     if (saved) {
@@ -116,7 +121,9 @@
         class="mt-0.5 accent-blue-600"
       />
       <div>
-        <div class="text-sm font-medium">/tmp/flashcap/</div>
+        <div class="text-sm font-medium break-all">
+          {defaultSavePath || "Temporary directory"}
+        </div>
         <div class="text-xs text-gray-500 mt-0.5">Temporary directory (default)</div>
       </div>
     </label>
