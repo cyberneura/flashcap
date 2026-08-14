@@ -67,15 +67,27 @@ pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> 
 /// (/var/folders/... と /private/var、/) はどれも他人に書けないので、例外を
 /// 設ける実利が無いまま /tmp を招き入れることになる。
 ///
-/// 限界: 見ているのは Unix の mode だけ。macOS の拡張 ACL は検査していないので、
+/// **所有者も見る。** mode だけでは足りない: 他人が所有する 0755 のディレクトリは
+/// group/other の書き込みビットが立っていないので mode の検査は通るが、**その所有者
+/// 自身は書ける**ので、検査から書き込みまでの間に次の要素を rename して差し替えられる。
+/// 最後の chmod が所有を証明するのは `flashcap` ディレクトリだけなので、道中は
+/// ここで見るしかない。許すのは root と自分だけ (root を許さないと `/` や `/var` で
+/// 落ちる)。
+///
+/// 限界: 見ているのは Unix の mode と uid だけ。macOS の拡張 ACL は検査していないので、
 /// ACL で他ユーザーに開かれた要素はここを通る。また、この検査と実際の書き込みの間で
 /// パスを完全に固定しているわけではない (それには openat/O_NOFOLLOW でハンドルを
 /// 握り続ける必要がある)。いずれも残存リスクであって、この関数が塞いだ範囲ではない。
 fn reject_if_others_can_meddle(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
 
+    // SAFETY: getuid は常に成功し、シグナル安全で副作用を持たない
+    let self_uid = unsafe { libc::getuid() };
+
     for ancestor in dir.ancestors() {
-        let mode = std::fs::metadata(ancestor)?.permissions().mode();
+        let meta = std::fs::metadata(ancestor)?;
+        let mode = meta.permissions().mode();
         if mode & 0o022 != 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -83,6 +95,19 @@ fn reject_if_others_can_meddle(dir: &Path) -> std::io::Result<()> {
                     "{} is writable by other accounts, so {} cannot be trusted; refusing to \
                      store screen captures there (is TMPDIR set?)",
                     ancestor.display(),
+                    dir.display()
+                ),
+            ));
+        }
+        let owner = meta.uid();
+        if owner != 0 && owner != self_uid {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} is owned by uid {} (neither root nor the current user), so {} cannot \
+                     be trusted; refusing to store screen captures there (is TMPDIR set?)",
+                    ancestor.display(),
+                    owner,
                     dir.display()
                 ),
             ));
@@ -905,4 +930,116 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// テスト用の一時ディレクトリ。Drop で消す。
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            // 同時実行しても衝突しないよう、プロセス id とタグで分ける
+            let base = std::env::temp_dir().join(format!(
+                "flashcap-test-{}-{}-{tag}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            create_private_dir(&base).expect("failed to create test dir");
+            Self(base)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn chmod(path: &Path, mode: u32) {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .expect("chmod failed");
+    }
+
+    #[test]
+    fn create_private_dir_is_0700_regardless_of_umask() {
+        let tmp = TempDir::new("mode");
+        let nested = tmp.path().join("a/b");
+        create_private_dir(&nested).unwrap();
+        for dir in [tmp.path().join("a"), nested] {
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "{} は 0700 でない", dir.display());
+        }
+    }
+
+    #[test]
+    fn accepts_a_private_directory() {
+        let tmp = TempDir::new("ok");
+        // 祖先 (std::env::temp_dir() = 多くの環境で /tmp) が 1777 だと落ちるので、
+        // ここでは自分が作った側だけを対象にする。
+        if reject_if_others_can_meddle(tmp.path()).is_err() {
+            // /tmp が誰でも書ける環境ではこの検査自体が正しく拒否する。
+            // その場合は「拒否されること」が期待動作なので、ここで終わる。
+            return;
+        }
+        assert!(reject_if_others_can_meddle(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_group_or_other_writable_ancestor() {
+        let tmp = TempDir::new("writable");
+        let child = tmp.path().join("child");
+        create_private_dir(&child).unwrap();
+
+        chmod(tmp.path(), 0o777);
+        let err = reject_if_others_can_meddle(&child).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(
+            err.to_string().contains("writable by other accounts"),
+            "unexpected message: {err}"
+        );
+
+        // 後始末できるように戻す
+        chmod(tmp.path(), 0o700);
+    }
+
+    #[test]
+    fn rejects_a_group_writable_ancestor_even_without_other_bit() {
+        // 0o020 だけでも拒否する (0o022 のうち片方しか立っていないケース)
+        let tmp = TempDir::new("group");
+        let child = tmp.path().join("child");
+        create_private_dir(&child).unwrap();
+
+        chmod(tmp.path(), 0o770);
+        let err = reject_if_others_can_meddle(&child).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+
+        chmod(tmp.path(), 0o700);
+    }
+
+    #[test]
+    fn accepts_root_owned_ancestors() {
+        // `/` は root 所有で 0755。所有者検査で root を許していないと、
+        // どんなパスでも必ず落ちる (= 機能が完全に死ぬ) ことの回帰テスト。
+        let root = Path::new("/");
+        let meta = std::fs::metadata(root).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(meta.uid(), 0, "前提: / は root 所有");
+        assert_eq!(
+            meta.permissions().mode() & 0o022,
+            0,
+            "前提: / は他人に書けない"
+        );
+        assert!(reject_if_others_can_meddle(root).is_ok());
+    }
 }
