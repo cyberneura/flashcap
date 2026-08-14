@@ -161,7 +161,16 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
         ));
     }
 
-    // 締め直す前に他人が置いていったものを片付ける。
+    // **先に締めてから片付ける。順序が逆だと意味が無い。**
+    //
+    // 片付けを先にすると、片付け終わってから chmod が効くまでの隙に、まだ
+    // 書ける状態のディレクトリへ新しい symlink を置かれる。それは「掃除済みの
+    // 信頼できるディレクトリ」の中に残り、以降の書き込みがそのリンク先へ抜ける。
+    // 先に 0700 にしてしまえば他人はもうエントリを追加できないので、その後の
+    // 片付けが取りこぼしなく終わる。
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+
+    // 締める前に他人が置いていったものを片付ける。
     //
     // **mode を直すだけでは足りない。** 以前のバージョンが 0755 / 0775 で作った
     // ディレクトリには、締める前に他人が作れたエントリが残っている。特に
@@ -175,7 +184,6 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
         );
     }
 
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     Ok(dir)
 }
 
