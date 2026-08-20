@@ -400,18 +400,18 @@
       >
         <div class="text-sm">
           {windowMode
-            ? "録画するウィンドウをクリック"
-            : "ドラッグして録画範囲を選択"} ・ Esc でキャンセル
+            ? "Click a window to record"
+            : "Drag to select the recording area"} · Press Esc to cancel
         </div>
         <div class="flex items-center gap-2">
           <button class="hint-btn" class:active={windowMode} onclick={enterWindowMode}>
-            <i class="bi bi-window"></i> ウィンドウ
+            <i class="bi bi-window"></i> Window
           </button>
           <button class="hint-btn" onclick={selectFullscreen}>
-            <i class="bi bi-fullscreen"></i> 全画面
+            <i class="bi bi-fullscreen"></i> Full screen
           </button>
           <button class="hint-btn" onclick={cancel}>
-            <i class="bi bi-x-lg"></i> キャンセル
+            <i class="bi bi-x-lg"></i> Cancel
           </button>
         </div>
       </div>
