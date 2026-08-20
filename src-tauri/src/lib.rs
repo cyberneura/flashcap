@@ -628,13 +628,61 @@ async fn take_screenshot_timer(
     Ok(result)
 }
 
+/// ユーザーが自分で開いた画像ファイルの実パス
+///
+/// 保存先ディレクトリの外にある画像でも、**ユーザー自身が開いたもの**は Cmd+S で
+/// 元ファイルを上書きできる必要がある。保存先の封じ込め (write_image_within) は
+/// 「予測できる名前で書き出す撮影画像」を守るための仕組みで、ユーザーがパスを
+/// 指定して開いたファイルまで書けなくする意図は無い。
+///
+/// 記録するのは canonicalize 済みのパスだけ。symlink やリダイレクトを解決した後の
+/// 実体で突き合わせるので、後から同名の symlink を置かれても許可対象は増えない。
+#[derive(Default)]
+struct OpenedImages {
+    inner: std::sync::Mutex<std::collections::VecDeque<PathBuf>>,
+}
+
+/// 覚えておく件数の上限。上書き許可を無制限に溜め込まないための蓋で、
+/// 「開いた画像を保存する」という使い方には十分な数。
+const OPENED_IMAGES_LIMIT: usize = 64;
+
+impl OpenedImages {
+    fn remember(&self, path: &Path) {
+        // load_image_result は canonicalize に失敗した場合だけ元のパスを返すので、
+        // ここでも解決を試みる。実体で突き合わせないと write 側の canonicalize 済み
+        // パスと一致せず、上書きが許可されない
+        let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let Ok(mut paths) = self.inner.lock() else {
+            return;
+        };
+        if paths.iter().any(|p| p == path) {
+            return;
+        }
+        if paths.len() >= OPENED_IMAGES_LIMIT {
+            paths.pop_front();
+        }
+        paths.push_back(path.to_path_buf());
+    }
+
+    fn snapshot(&self) -> Vec<PathBuf> {
+        self.inner
+            .lock()
+            .map(|paths| paths.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
 /// 外部からの画像ファイルを開く
 #[tauri::command]
 fn load_image_file(
     app: tauri::AppHandle,
+    opened: tauri::State<'_, OpenedImages>,
     path: String,
 ) -> Result<ScreenshotResult, String> {
     let result = load_image_result(path)?;
+    // load_image_result が返す file_path は canonicalize 済み。これを覚えておくと
+    // 保存先の外にあるファイルでも Cmd+S で上書きできる
+    opened.remember(Path::new(&result.file_path));
     resize_window_for_image(&app, result.width, result.height);
     Ok(result)
 }
@@ -689,22 +737,32 @@ fn save_pasted_image(
 }
 
 /// base64 PNG データをファイルに書き出す
-/// パスは保存先ディレクトリ内に制限する
+/// パスは保存先ディレクトリ内か、ユーザーが自分で開いた画像に制限する
 #[tauri::command]
-fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String) -> Result<(), String> {
+fn write_image_to_file(
+    app: tauri::AppHandle,
+    opened: tauri::State<'_, OpenedImages>,
+    path: String,
+    data_base64: String,
+) -> Result<(), String> {
     // 注釈済み画像もスクリーンショットと同じ中身なので、撮影と同じ経路で用意する。
     // 併せて、保存先がまだ無い場合に canonicalize が失敗して書き出せない問題も消える
     let save_dir = std::fs::canonicalize(prepare_save_directory(&app)?)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
-    write_image_within(&save_dir, &path, &data_base64)
+    write_image_within(&save_dir, &opened.snapshot(), &path, &data_base64)
 }
 
-/// 保存先ディレクトリの中に限って base64 の画像を書き出す
+/// 保存先ディレクトリの中、またはユーザーが開いた画像に限って base64 の画像を書き出す
 ///
-/// save_dir を引数に取るのは、この判定と書き込みだけを AppHandle から切り離して
-/// テストできるようにするため。実際の呼び出しは write_image_to_file から。
-/// save_dir は canonicalize 済みであることが前提 (呼び出し側で解決する)。
-fn write_image_within(save_dir: &Path, path: &str, data_base64: &str) -> Result<(), String> {
+/// save_dir と opened を引数に取るのは、この判定と書き込みだけを AppHandle から
+/// 切り離してテストできるようにするため。実際の呼び出しは write_image_to_file から。
+/// save_dir と opened の各要素は canonicalize 済みであることが前提 (呼び出し側で解決する)。
+fn write_image_within(
+    save_dir: &Path,
+    opened: &[PathBuf],
+    path: &str,
+    data_base64: &str,
+) -> Result<(), String> {
     let target = std::fs::canonicalize(path)
         .or_else(|_| {
             // ファイルが未作成の場合、親ディレクトリで検証
@@ -716,7 +774,10 @@ fn write_image_within(save_dir: &Path, path: &str, data_base64: &str) -> Result<
         })
         .map_err(|e| format!("Failed to resolve path: {}", e))?;
 
-    if !target.starts_with(save_dir) {
+    // 保存先の外でも、ユーザーが自分で開いた画像そのものへの上書きは許す
+    // (「開いて注釈して Cmd+S で元ファイルを更新する」が使い方の 1 つのため)。
+    // 許すのは実体が一致する 1 ファイルだけで、そのディレクトリは開放しない。
+    if !target.starts_with(save_dir) && !opened.iter().any(|p| p == &target) {
         return Err(format!(
             "Path '{}' is outside the save directory '{}'",
             target.display(),
@@ -727,6 +788,9 @@ fn write_image_within(save_dir: &Path, path: &str, data_base64: &str) -> Result<
     let bytes = STANDARD
         .decode(data_base64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
+    // 元ファイルを上書きする場合、中身は PNG のままだと拡張子と食い違う。
+    // 拡張子に合わせて詰め直してから書く
+    let bytes = encode_for_target_format(&target, bytes)?;
     // O_NOFOLLOW で書く。上の封じ込め検査は **リンク先が存在しない symlink
     // (dangling symlink) をすり抜ける**: canonicalize は ENOENT で失敗し、
     // フォールバックの「親を canonicalize してファイル名を join」がリンクを
@@ -738,6 +802,84 @@ fn write_image_within(save_dir: &Path, path: &str, data_base64: &str) -> Result<
     write_without_following_symlinks(&target, &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
     Ok(())
+}
+
+/// JPEG で書き戻す時の品質 (image crate の既定は 75)
+///
+/// 上書き保存なので、開いて保存するたびに劣化が積み上がる。写真の上に注釈を載せる
+/// 使い方では輪郭のリンギングが目に見えるため、既定より高めに取る。
+const JPEG_QUALITY: u8 = 92;
+
+/// PNG バイト列を、上書き先の拡張子に合わせた形式へ詰め直す
+///
+/// フロントが渡してくるのは常に PNG だが、上書き先はユーザーが開いた画像
+/// (JPEG / HEIC など) でもありうる。中身と拡張子が食い違うファイルを作らないよう、
+/// 書く直前にここで揃える。
+///
+/// **変換できない拡張子では書かずにエラーにする。** PNG のまま書くと、拡張子は
+/// 元のままで中身だけ差し替わった開けないファイルが残り、しかも上書きなので原本が
+/// 戻せない。FlashCap が開ける形式 (SUPPORTED_IMAGE_EXTENSIONS) はすべて変換先が
+/// あるので、この分岐に来るのは想定外の拡張子だけ。
+fn encode_for_target_format(target: &Path, png_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    let ext = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "png" | "" => Ok(png_bytes),
+        // image crate は HEIC を書けないので、読み込みと同じく sips に任せる
+        // (sips のフォーマット名は .heif に対しても "heic")
+        "heic" | "heif" => convert_png_to_heic(&png_bytes),
+        _ => {
+            let format = image::ImageFormat::from_extension(&ext)
+                .filter(image::ImageFormat::writing_enabled)
+                .ok_or_else(|| {
+                    format!("Saving as '{}' is not supported (copy the image or save it as PNG instead)", ext)
+                })?;
+            let img = image::load_from_memory(&png_bytes)
+                .map_err(|e| format!("Failed to decode image: {}", e))?;
+            // 色深度・チャンネル数をエンコーダーが必ず扱える形に揃える。
+            // 元画像がグレースケールや 16bit のまま来ることがあり、渡す形式によっては
+            // Unsupported で落ちる。JPEG だけはアルファを扱えないので RGB8 にする
+            let mut out = std::io::Cursor::new(Vec::new());
+            if format == image::ImageFormat::Jpeg {
+                // 既定の品質 (75) だと、上書きのたびに写真と注釈の輪郭が目に見えて劣化する
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
+                    .encode_image(&image::DynamicImage::ImageRgb8(img.to_rgb8()))
+                    .map_err(|e| format!("Failed to encode {}: {}", ext, e))?;
+            } else {
+                image::DynamicImage::ImageRgba8(img.to_rgba8())
+                    .write_to(&mut out, format)
+                    .map_err(|e| format!("Failed to encode {}: {}", ext, e))?;
+            }
+            Ok(out.into_inner())
+        }
+    }
+}
+
+/// sips で PNG を HEIC へ変換する (macOS 専用。convert_heic_to_png の逆方向)
+fn convert_png_to_heic(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let work = create_private_workdir("encode", "source.png")?;
+    std::fs::write(&work.path, png_bytes)
+        .map_err(|e| format!("Failed to write the temporary PNG: {}", e))?;
+
+    let converted = work.path.with_file_name("converted.heic");
+    let output = Command::new("sips")
+        .args(["-s", "format", "heic"])
+        .arg(&work.path)
+        .arg("--out")
+        .arg(&converted)
+        .output()
+        .map_err(|e| format!("Failed to run sips: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("sips conversion failed: {}", stderr));
+    }
+
+    std::fs::read(&converted).map_err(|e| format!("Failed to read the converted image: {}", e))
 }
 
 /// flashcap://ocr でヘッドレス OCR が要求されたか。
@@ -854,6 +996,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(video::RecordingState::default())
         .manage(CaptureHandshake::default())
+        .manage(OpenedImages::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
@@ -1035,6 +1178,7 @@ pub fn run() {
                     // 録画中にアプリ終了する場合、録画プロセスを停止して孤立を防ぐ
                     video::abort_recording(app);
                 }
+                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
                     // Dock アイコンクリック時: ウインドウを表示してフォーカス
                     if let Some(w) = app.get_webview_window("main") {
@@ -1044,6 +1188,7 @@ pub fn run() {
                     // キャプチャーボタンを点滅させて目立たせる
                     let _ = app.emit("reactivate", ());
                 }
+                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     // flashcap:// URL scheme によるコマンド実行
                     for url in &urls {
@@ -1338,8 +1483,9 @@ mod tests {
         let link = save_dir.join("flashcap-20260820-000000.png");
         std::os::unix::fs::symlink(&victim, &link).unwrap();
 
-        let err = write_image_within(&save_dir, link.to_str().unwrap(), &STANDARD.encode(b"png"))
-            .unwrap_err();
+        let err =
+            write_image_within(&save_dir, &[], link.to_str().unwrap(), &STANDARD.encode(b"png"))
+                .unwrap_err();
         assert!(err.contains("Failed to write file"), "{}", err);
         assert!(
             !victim.exists(),
@@ -1360,8 +1506,9 @@ mod tests {
         let inner = save_dir.join("inner");
         create_private_dir(&inner).unwrap();
 
-        let err = write_image_within(&inner, outside.to_str().unwrap(), &STANDARD.encode(b"png"))
-            .unwrap_err();
+        let err =
+            write_image_within(&inner, &[], outside.to_str().unwrap(), &STANDARD.encode(b"png"))
+                .unwrap_err();
         assert!(err.contains("outside the save directory"), "{}", err);
         assert!(!outside.exists());
     }
@@ -1375,6 +1522,7 @@ mod tests {
         // 未作成のファイル (canonicalize が失敗し、親で検証される経路)
         write_image_within(
             &save_dir,
+            &[],
             target.to_str().unwrap(),
             &STANDARD.encode(b"first"),
         )
@@ -1384,10 +1532,176 @@ mod tests {
         // 注釈済み画像で元ファイルを上書きするのは正常系
         write_image_within(
             &save_dir,
+            &[],
             target.to_str().unwrap(),
             &STANDARD.encode(b"second"),
         )
         .unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"second");
+    }
+
+    #[test]
+    fn write_image_overwrites_a_file_the_user_opened_outside_the_save_dir() {
+        // 開いた画像に注釈して Cmd+S で元ファイルを上書きする経路。
+        // 保存先の外にあっても、開いたファイルそのものなら書ける
+        let tmp = TempDir::new("write-opened");
+        let save_dir = std::fs::canonicalize(tmp.path()).unwrap().join("save");
+        create_private_dir(&save_dir).unwrap();
+
+        let elsewhere = std::fs::canonicalize(tmp.path()).unwrap().join("pictures");
+        create_private_dir(&elsewhere).unwrap();
+        let opened = elsewhere.join("photo.png");
+        std::fs::write(&opened, b"original").unwrap();
+
+        write_image_within(
+            &save_dir,
+            std::slice::from_ref(&opened),
+            opened.to_str().unwrap(),
+            &STANDARD.encode(b"annotated"),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&opened).unwrap(), b"annotated");
+    }
+
+    #[test]
+    fn write_image_does_not_open_the_directory_of_an_opened_file() {
+        // 許可されるのは開いたファイル 1 つだけ。同じフォルダの別ファイルは書けない
+        let tmp = TempDir::new("write-opened-sibling");
+        let save_dir = std::fs::canonicalize(tmp.path()).unwrap().join("save");
+        create_private_dir(&save_dir).unwrap();
+
+        let elsewhere = std::fs::canonicalize(tmp.path()).unwrap().join("pictures");
+        create_private_dir(&elsewhere).unwrap();
+        let opened = elsewhere.join("photo.png");
+        std::fs::write(&opened, b"original").unwrap();
+        let sibling = elsewhere.join("other.png");
+
+        let err = write_image_within(
+            &save_dir,
+            &[opened],
+            sibling.to_str().unwrap(),
+            &STANDARD.encode(b"annotated"),
+        )
+        .unwrap_err();
+        assert!(err.contains("outside the save directory"), "{}", err);
+        assert!(!sibling.exists());
+    }
+
+    /// 1x1 の PNG を作る (エンコード経路のテスト用)
+    fn tiny_png() -> Vec<u8> {
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([1, 2, 3, 255]),
+        ));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn saving_to_a_jpeg_path_writes_jpeg_bytes() {
+        // JPEG を開いて上書きした時に、中身が PNG のままにならないこと
+        // (注釈済み画像は RGBA なので、アルファを落とさないと encode に失敗する)
+        let tmp = TempDir::new("encode-jpeg");
+        let target = std::fs::canonicalize(tmp.path()).unwrap().join("photo.jpg");
+
+        let bytes = encode_for_target_format(&target, tiny_png()).unwrap();
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+    }
+
+    #[test]
+    fn saving_to_a_png_path_keeps_the_bytes_untouched() {
+        let tmp = TempDir::new("encode-png");
+        let target = std::fs::canonicalize(tmp.path()).unwrap().join("shot.png");
+
+        let png = tiny_png();
+        assert_eq!(
+            encode_for_target_format(&target, png.clone()).unwrap(),
+            png,
+            "PNG は詰め直さずそのまま書く"
+        );
+    }
+
+    #[test]
+    fn every_openable_extension_can_be_encoded() {
+        // 開ける形式はすべて書き戻せること。ここが崩れると、その形式のファイルは
+        // 「開けるが保存できない」になる (HEIC は sips 任せなので macOS でしか通らない)
+        let tmp = TempDir::new("encode-openable");
+        let dir = std::fs::canonicalize(tmp.path()).unwrap();
+
+        for ext in SUPPORTED_IMAGE_EXTENSIONS {
+            if *ext == "heic" || *ext == "heif" {
+                continue;
+            }
+            let target = dir.join(format!("photo.{}", ext));
+            let bytes = encode_for_target_format(&target, tiny_png())
+                .unwrap_or_else(|e| panic!("{} を書き戻せない: {}", ext, e));
+            let expected = image::ImageFormat::from_extension(ext).unwrap();
+            assert_eq!(
+                image::guess_format(&bytes).unwrap(),
+                expected,
+                "{} の中身が拡張子と食い違う",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn saving_to_an_unknown_extension_is_refused() {
+        // PNG のまま書くと、拡張子はそのままで開けないファイルに変わり、
+        // 上書きなので原本も戻せない。書かずに失敗させる
+        let tmp = TempDir::new("encode-unknown");
+        let target = std::fs::canonicalize(tmp.path()).unwrap().join("image.xyz");
+
+        let err = encode_for_target_format(&target, tiny_png()).unwrap_err();
+        assert!(err.contains("not supported"), "{}", err);
+    }
+
+    #[test]
+    fn saving_a_grayscale_image_to_a_lossless_format_succeeds() {
+        // 注釈が無い保存では、開いた画像の色形式 (グレースケール等) のまま渡ってくる
+        let tmp = TempDir::new("encode-gray");
+        let target = std::fs::canonicalize(tmp.path())
+            .unwrap()
+            .join("photo.webp");
+
+        let gray =
+            image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(1, 1, image::Luma([128])));
+        let mut png = std::io::Cursor::new(Vec::new());
+        gray.write_to(&mut png, image::ImageFormat::Png).unwrap();
+
+        let bytes = encode_for_target_format(&target, png.into_inner()).unwrap();
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::WebP
+        );
+    }
+
+    #[test]
+    fn opened_images_dedupes_and_keeps_the_newest_within_the_limit() {
+        let tmp = TempDir::new("opened-images");
+        let dir = std::fs::canonicalize(tmp.path()).unwrap();
+
+        let opened = OpenedImages::default();
+        // canonicalize できないパス (未作成) はそのまま覚える
+        let first = dir.join("first.png");
+        opened.remember(&first);
+        opened.remember(&first);
+        assert_eq!(opened.snapshot(), vec![first.clone()]);
+
+        for i in 0..OPENED_IMAGES_LIMIT {
+            opened.remember(&dir.join(format!("f{}.png", i)));
+        }
+        let snapshot = opened.snapshot();
+        assert_eq!(snapshot.len(), OPENED_IMAGES_LIMIT);
+        assert!(
+            !snapshot.contains(&first),
+            "上限を超えた分は古い方から落ちる"
+        );
+        assert!(snapshot.contains(&dir.join(format!("f{}.png", OPENED_IMAGES_LIMIT - 1))));
     }
 }
