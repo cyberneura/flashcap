@@ -54,7 +54,13 @@ macOS screenshot capture & annotation app.
 
 - `take_screenshot_interactive` - Standard interactive capture (`screencapture -i`)
 - `take_screenshot_timer` - Timer capture (`screencapture -i -T <N>`, async to avoid UI freeze)
-- `write_image_to_file` - Save annotated image (path restricted to save directory)
+- `write_image_to_file` - Save annotated image (path restricted to the save directory, plus the
+  files the user opened themselves in this session). `load_image_file` records each opened file's
+  canonical path in `OpenedImages`, which is what allows Cmd+S to overwrite an image that lives
+  outside the save directory. 許可されるのは実体が一致するそのファイルだけで、
+  そのフォルダは開放しない。書き込み直前に `encode_for_target_format` が上書き先の拡張子へ
+  合わせて詰め直す (JPEG などは image crate、HEIC は sips)。変換先が無い拡張子は
+  **書かずにエラー** — PNG のまま書くと拡張子と中身が食い違い、上書きなので原本も戻せない
 - Common result loading: `load_screenshot_result()` shared by both capture commands
 
 ## Build & Check
