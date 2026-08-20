@@ -696,18 +696,27 @@ fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String)
     // 併せて、保存先がまだ無い場合に canonicalize が失敗して書き出せない問題も消える
     let save_dir = std::fs::canonicalize(prepare_save_directory(&app)?)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
-    let target = std::fs::canonicalize(&path)
+    write_image_within(&save_dir, &path, &data_base64)
+}
+
+/// 保存先ディレクトリの中に限って base64 の画像を書き出す
+///
+/// save_dir を引数に取るのは、この判定と書き込みだけを AppHandle から切り離して
+/// テストできるようにするため。実際の呼び出しは write_image_to_file から。
+/// save_dir は canonicalize 済みであることが前提 (呼び出し側で解決する)。
+fn write_image_within(save_dir: &Path, path: &str, data_base64: &str) -> Result<(), String> {
+    let target = std::fs::canonicalize(path)
         .or_else(|_| {
             // ファイルが未作成の場合、親ディレクトリで検証
-            std::path::Path::new(&path)
+            std::path::Path::new(path)
                 .parent()
                 .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))
                 .and_then(std::fs::canonicalize)
-                .map(|p| p.join(std::path::Path::new(&path).file_name().unwrap()))
+                .map(|p| p.join(std::path::Path::new(path).file_name().unwrap()))
         })
         .map_err(|e| format!("Failed to resolve path: {}", e))?;
 
-    if !target.starts_with(&save_dir) {
+    if !target.starts_with(save_dir) {
         return Err(format!(
             "Path '{}' is outside the save directory '{}'",
             target.display(),
@@ -716,9 +725,18 @@ fn write_image_to_file(app: tauri::AppHandle, path: String, data_base64: String)
     }
 
     let bytes = STANDARD
-        .decode(&data_base64)
+        .decode(data_base64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
-    std::fs::write(&target, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
+    // O_NOFOLLOW で書く。上の封じ込め検査は **リンク先が存在しない symlink
+    // (dangling symlink) をすり抜ける**: canonicalize は ENOENT で失敗し、
+    // フォールバックの「親を canonicalize してファイル名を join」がリンクを
+    // 解決しないまま save_dir 内のパスを組み立てるため。そこへ std::fs::write を
+    // 使うと、リンクを辿って save_dir の外にファイルが作られる。
+    // 名前は flashcap-<秒>.png で予測できるので、保存先に書ける相手なら先置きできる
+    // (既定の作業ディレクトリは purge されるが、custom: の任意フォルダは締め直さない)。
+    // truncate は残す — 注釈済み画像で元ファイルを上書きするのは正常系。
+    write_without_following_symlinks(&target, &bytes)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
     Ok(())
 }
 
@@ -1301,5 +1319,75 @@ mod tests {
 
         drop(work);
         assert!(!dir.exists(), "drop で中身ごと消えていない");
+    }
+
+    #[test]
+    fn write_image_refuses_a_dangling_symlink_planted_in_the_save_dir() {
+        // 攻撃の形: 保存先に書ける相手が、予測できる出力名
+        // (flashcap-<秒>.png) で外向きの symlink を先に置く。リンク先が
+        // **存在しない**ので canonicalize は失敗し、封じ込め検査は
+        // 「親を canonicalize してファイル名を join」した save_dir 内のパスを見る。
+        // 検査だけでは止まらないので、書き込み側 (O_NOFOLLOW) が最後の砦になる。
+        let tmp = TempDir::new("write-dangling");
+        let save_dir = std::fs::canonicalize(tmp.path()).unwrap();
+
+        let outside = save_dir.join("outside");
+        create_private_dir(&outside).unwrap();
+        let victim = outside.join("planted.png");
+
+        let link = save_dir.join("flashcap-20260820-000000.png");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+
+        let err = write_image_within(&save_dir, link.to_str().unwrap(), &STANDARD.encode(b"png"))
+            .unwrap_err();
+        assert!(err.contains("Failed to write file"), "{}", err);
+        assert!(
+            !victim.exists(),
+            "symlink を辿ってリンク先に書いてしまっている"
+        );
+    }
+
+    #[test]
+    fn write_image_rejects_paths_outside_the_save_dir() {
+        let tmp = TempDir::new("write-outside");
+        let save_dir = std::fs::canonicalize(tmp.path()).unwrap();
+
+        let other = tmp.path().join("other");
+        create_private_dir(&other).unwrap();
+        let outside = std::fs::canonicalize(&other).unwrap().join("x.png");
+
+        // save_dir を 1 階層深くして、outside がその外側になるようにする
+        let inner = save_dir.join("inner");
+        create_private_dir(&inner).unwrap();
+
+        let err = write_image_within(&inner, outside.to_str().unwrap(), &STANDARD.encode(b"png"))
+            .unwrap_err();
+        assert!(err.contains("outside the save directory"), "{}", err);
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn write_image_writes_and_overwrites_inside_the_save_dir() {
+        let tmp = TempDir::new("write-inside");
+        let save_dir = std::fs::canonicalize(tmp.path()).unwrap();
+        let target = save_dir.join("flashcap-20260820-000001.png");
+
+        // 未作成のファイル (canonicalize が失敗し、親で検証される経路)
+        write_image_within(
+            &save_dir,
+            target.to_str().unwrap(),
+            &STANDARD.encode(b"first"),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"first");
+
+        // 注釈済み画像で元ファイルを上書きするのは正常系
+        write_image_within(
+            &save_dir,
+            target.to_str().unwrap(),
+            &STANDARD.encode(b"second"),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"second");
     }
 }
