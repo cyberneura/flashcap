@@ -397,7 +397,7 @@
 
     if (imageUrl) {
       const confirmed = await confirm(
-        "現在の画像をクリップボードの画像に置き換えますか？",
+        "Replace the current image with the one on the clipboard?",
         { title: "Paste Image", kind: "warning" }
       );
       if (!confirmed) return;
@@ -1117,12 +1117,12 @@
           disabled={isStopping}
         >
           {#if isStopping}
-            <i class="bi bi-arrow-repeat animate-spin text-lg"></i> 停止中…
+            <i class="bi bi-arrow-repeat animate-spin text-lg"></i> Stopping…
           {:else}
-            <i class="bi bi-stop-fill text-lg"></i> 停止して書き出し
+            <i class="bi bi-stop-fill text-lg"></i> Stop and export
           {/if}
         </button>
-        <div class="text-neutral-500 text-xs">Esc でも停止できます</div>
+        <div class="text-neutral-500 text-xs">You can also press Esc to stop</div>
       </div>
     {:else if videoMode && videoUrl && videoPath}
       <VideoTrimmer
