@@ -166,55 +166,9 @@ pub async fn ocr_image(
 /// 親が 0700 かつ自分の所有だと確かめられている以上、そこへリンクを仕込む余地は無い
 /// (TMPDIR が無くて /tmp に落ちた場合も、そのディレクトリ自体を締めてから使う)。
 ///
-/// ここで確保するのは**名前**の方。ファイルではなくディレクトリを mkdir で作る。
-/// mkdir は既存の名前に対して必ず失敗する (= O_EXCL 相当) ので、通れば
-/// 「この名前は自分が取った」ことが確定し、しかも**中のファイル名を使い終わるまで
-/// 予約したままにできる**。ファイルを O_EXCL で作って消す方式だと、消した瞬間から
-/// screencapture が作るまでの間が空いてしまい、予約になっていなかった。
-/// 出力ファイル自体はまだ存在しないので、screencapture が既存ファイルを上書き
-/// できるかどうかにも依存しない。
-///
-/// 戻り値の OcrWorkdir は drop 時に中身ごと消える。
-///
-/// 撮った画像を残さないための後始末は、途中で抜ける経路が多く手で書くと必ず漏れる
-/// (特に **Future がキャンセルされた場合は、以降の行が 1 行も動かない**)。
-/// drop に載せておけば、キャンセルでも早期 return でも同じように消える。
-struct OcrWorkdir {
-    dir: std::path::PathBuf,
-    /// screencapture に渡す出力先 (dir の中の固定名)
-    path: String,
-}
-
-impl Drop for OcrWorkdir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-fn create_ocr_workdir() -> Result<OcrWorkdir, String> {
-    use std::os::unix::fs::DirBuilderExt;
-
-    let base = crate::ensure_private_flashcap_dir()
-        .map_err(|e| format!("Failed to prepare the temp directory: {}", e))?;
-
-    // 名前は PID + ナノ秒。PID だけだと同一プロセス内の同時 OCR が衝突する。
-    // 衝突しても mkdir が弾くので、取り違えではなく取り直しになる。
-    for _ in 0..16 {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let dir = base.join(format!("ocr-{}-{}", std::process::id(), ts));
-        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
-            Ok(()) => {
-                let path = dir.join("capture.png").to_string_lossy().to_string();
-                return Ok(OcrWorkdir { dir, path });
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("Failed to create the temp directory: {}", e)),
-        }
-    }
-    Err("Failed to reserve a temp directory for OCR".to_string())
+/// 名前の確保のしかたと後始末 (drop) の詳細は crate::create_private_workdir を参照。
+fn create_ocr_workdir() -> Result<crate::PrivateWorkdir, String> {
+    crate::create_private_workdir("ocr", "capture.png")
 }
 
 /// screencapture -i → 一時ファイル → OCR の共通処理
@@ -224,7 +178,8 @@ async fn screencapture_and_ocr(app: &tauri::AppHandle) -> Result<String, String>
     let work = create_ocr_workdir()?;
 
     let status = tokio::process::Command::new("screencapture")
-        .args(["-i", &work.path])
+        .arg("-i")
+        .arg(&work.path)
         // キャンセルでこの Future が捨てられた時、screencapture を生かしたままにすると
         // 消した後のディレクトリへ書き込もうとし続ける。道連れに終了させる
         .kill_on_drop(true)

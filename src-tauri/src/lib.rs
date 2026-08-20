@@ -232,6 +232,83 @@ fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
     Ok(removed_any)
 }
 
+/// 外部コマンドの出力先に使う、使い捨ての専用サブディレクトリ
+///
+/// ここで確保するのは**名前**の方。ファイルではなくディレクトリを mkdir で作る。
+/// mkdir は既存の名前に対して必ず失敗する (= O_EXCL 相当) ので、通れば
+/// 「この名前は自分が取った」ことが確定し、しかも**中のファイル名を使い終わるまで
+/// 予約したままにできる**。ファイルを O_EXCL で作って消す方式だと、消した瞬間から
+/// 外部コマンドが作るまでの間が空いてしまい、予約になっていなかった。
+/// 出力ファイル自体はまだ存在しないので、外部コマンドが既存ファイルを上書き
+/// できるかどうかにも依存しない。
+///
+/// 画面に映っていたものを残さないための後始末は、途中で抜ける経路が多く手で書くと
+/// 必ず漏れる (特に **Future がキャンセルされた場合は、以降の行が 1 行も動かない**)。
+/// drop に載せておけば、キャンセルでも早期 return でも同じように消える。
+pub(crate) struct PrivateWorkdir {
+    dir: PathBuf,
+    /// 外部コマンドに渡す出力先 (dir の中の固定名)
+    ///
+    /// **String に落とさない。** Unix のパスはバイト列で UTF-8 とは限らず、
+    /// to_string_lossy() は不正なバイトを U+FFFD に置換する。TMPDIR に非 UTF-8 の
+    /// バイトが含まれていると、実際に作ったディレクトリとは別の (存在しない)
+    /// パスを外部コマンドに渡すことになる。
+    pub(crate) path: PathBuf,
+}
+
+impl Drop for PrivateWorkdir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// flashcap の作業ディレクトリの下に PrivateWorkdir を 1 つ確保する
+///
+/// 基底には ensure_private_flashcap_dir() を使う。**std::env::temp_dir() を直接
+/// 使わないこと。** TMPDIR が未設定の実行環境では /tmp (mode 1777) に落ち、
+/// 画面に映っていたものが同じ Mac の別アカウントから読める状態になる。
+/// 基底の用意に失敗したら、書き込まずにエラーを返す (撮らずに止まる方が正しい)。
+pub(crate) fn create_private_workdir(
+    prefix: &str,
+    file_name: &str,
+) -> Result<PrivateWorkdir, String> {
+    let base = ensure_private_flashcap_dir()
+        .map_err(|e| format!("Failed to prepare the temp directory: {}", e))?;
+    reserve_private_workdir(&base, prefix, file_name)
+}
+
+/// base の下に mode 0700 のサブディレクトリを 1 つ確保する
+///
+/// base を引数に取るのは、この予約ロジックだけを基底の用意から切り離して
+/// テストできるようにするため。実際の呼び出しでは create_private_workdir を使う。
+///
+/// 名前は PID + ナノ秒。PID だけだと同一プロセス内の同時実行が衝突する。
+/// 衝突しても mkdir が弾くので、取り違えではなく取り直しになる。
+fn reserve_private_workdir(
+    base: &Path,
+    prefix: &str,
+    file_name: &str,
+) -> Result<PrivateWorkdir, String> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    for _ in 0..16 {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = base.join(format!("{}-{}-{}", prefix, std::process::id(), ts));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {
+                let path = dir.join(file_name);
+                return Ok(PrivateWorkdir { dir, path });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Failed to create the temp directory: {}", e)),
+        }
+    }
+    Err(format!("Failed to reserve a temp directory for {}", prefix))
+}
+
 /// 保存先を書き込める状態にして返す
 ///
 /// **設定の種別ではなく、解決後のパスで振り分ける。** 解決先が flashcap の作業
@@ -397,28 +474,26 @@ fn resize_window_for_image(app: &tauri::AppHandle, width: usize, height: usize) 
 }
 
 /// HEIC/HEIF ファイルを macOS sips コマンドで PNG に変換してバイト列と寸法を返す
+///
+/// 中間 PNG は変換元の画像そのものなので、他アカウントから読める場所に置かない。
+/// work が生きている間だけ作業ディレクトリが存在し、以降どこで抜けても drop が
+/// 中間 PNG ごと消すので、明示的な後始末は書かない。
 fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temp_png = std::env::temp_dir().join(format!("flashcap-heic-{}-{}.png", std::process::id(), ts));
+    let work = create_private_workdir("heic", "converted.png")?;
 
     let output = Command::new("sips")
         .args(["-s", "format", "png", source_path, "--out"])
-        .arg(&temp_png)
+        .arg(&work.path)
         .output()
         .map_err(|e| format!("Failed to run sips: {}", e))?;
 
     if !output.status.success() {
-        let _ = std::fs::remove_file(&temp_png);
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("sips conversion failed: {}", stderr));
     }
 
-    let png_data = std::fs::read(&temp_png);
-    let _ = std::fs::remove_file(&temp_png);
-    let png_data = png_data.map_err(|e| format!("Failed to read converted PNG: {}", e))?;
+    let png_data =
+        std::fs::read(&work.path).map_err(|e| format!("Failed to read converted PNG: {}", e))?;
 
     let img = image::load_from_memory(&png_data)
         .map_err(|e| format!("Failed to decode converted PNG: {}", e))?;
@@ -1184,5 +1259,47 @@ mod tests {
             "前提: / は他人に書けない"
         );
         assert!(reject_if_others_can_meddle(root).is_ok());
+    }
+
+    #[test]
+    fn reserved_workdir_is_0700_and_holds_the_output_name() {
+        let tmp = TempDir::new("workdir");
+
+        // umask を跨いでも 0700 であること。中の出力ファイルはまだ存在せず、
+        // 名前だけが予約された状態になっていること。
+        let work = reserve_private_workdir(tmp.path(), "heic", "converted.png")
+            .expect("failed to reserve workdir");
+
+        let dir = work.path.parent().unwrap().to_path_buf();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(dir.starts_with(tmp.path()));
+        assert!(!work.path.exists(), "出力ファイルはまだ作らない");
+
+        // 同じ base に 2 回確保しても衝突しない (別ディレクトリになる)
+        let other = reserve_private_workdir(tmp.path(), "heic", "converted.png")
+            .expect("failed to reserve second workdir");
+        assert_ne!(work.path, other.path);
+
+        drop(other);
+        assert!(dir.exists(), "他方の drop で消えてはいけない");
+    }
+
+    #[test]
+    fn reserved_workdir_is_removed_on_drop() {
+        let tmp = TempDir::new("workdir-drop");
+
+        let work = reserve_private_workdir(tmp.path(), "ocr", "capture.png")
+            .expect("failed to reserve workdir");
+        let dir = work.path.parent().unwrap().to_path_buf();
+
+        // 外部コマンドが出力した後を模して、中身が残っていても消えること
+        std::fs::write(&work.path, b"captured").expect("failed to write");
+        assert!(dir.exists());
+
+        drop(work);
+        assert!(!dir.exists(), "drop で中身ごと消えていない");
     }
 }
