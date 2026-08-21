@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
   import { load } from "@tauri-apps/plugin-store";
@@ -14,6 +14,7 @@
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
   import TextOverlay from "$lib/TextOverlay.svelte";
   import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
+  import CropOverlay from "$lib/CropOverlay.svelte";
   import Toolbar from "$lib/Toolbar.svelte";
   import VideoTrimmer from "$lib/VideoTrimmer.svelte";
 
@@ -21,7 +22,7 @@
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
-  import type { Arrow, ArrowSettings, MaskRect, MaskSettings, Shape, ShapeSettings, TextAnnotation, TextSettings } from "$lib/types";
+  import type { Arrow, ArrowSettings, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -109,8 +110,28 @@
     dropShadow: true,
   });
 
+  // Crop tool state
+  let cropToolActive = $state(false);
+  let cropRect = $state<CropRect | null>(null);
+  // 土台画像そのものを変更したか (トリミング)。ファイルへの書き戻しが必要かの判定に使う
+  let imageModified = $state(false);
+  // 土台画像の差し替え回数。MaskOverlay にモザイクの再サンプリング契機として渡す
+  let imageRevision = $state(0);
+
   // Undo history
-  let undoHistory = $state<{ arrows: Arrow[]; masks: MaskRect[]; shapes: Shape[]; texts: TextAnnotation[] }[]>([]);
+  interface EditSnapshot {
+    arrows: Arrow[];
+    masks: MaskRect[];
+    shapes: Shape[];
+    texts: TextAnnotation[];
+    // トリミングを巻き戻せるように土台画像もスナップショットに含める。
+    // 画像データを複製せず同じ base64 文字列を保持するだけなので、
+    // 注釈編集のたびに画像がコピーされるわけではない
+    image: string | null;
+    width: number;
+    height: number;
+  }
+  let undoHistory = $state<EditSnapshot[]>([]);
 
   function pushUndo() {
     undoHistory.push({
@@ -118,6 +139,9 @@
       masks: structuredClone($state.snapshot(masks)),
       shapes: structuredClone($state.snapshot(shapes)),
       texts: structuredClone($state.snapshot(textAnnotations)),
+      image: imageBase64,
+      width: naturalWidth,
+      height: naturalHeight,
     });
   }
 
@@ -128,6 +152,16 @@
     masks = entry.masks;
     shapes = entry.shapes;
     textAnnotations = entry.texts;
+    if (entry.image !== imageBase64) {
+      imageBase64 = entry.image;
+      imageUrl = entry.image ? `data:image/png;base64,${entry.image}` : null;
+      naturalWidth = entry.width;
+      naturalHeight = entry.height;
+      bumpImageRevision();
+      // imageModified はここで戻さない。トリミング後に保存やコピーでファイルへ
+      // 書き戻していた場合、undo してもディスク上は変更済みのままなので、
+      // 「メモリとファイルが一致している」とは言えなくなる
+    }
   }
 
   // Image element reference for composite rendering
@@ -140,7 +174,36 @@
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
 
-  let noToolActive = $derived(!arrowToolActive && !maskToolActive && !shapeToolActive && !textToolActive && !ocrSelectionActive);
+  let noToolActive = $derived(
+    !arrowToolActive && !maskToolActive && !shapeToolActive && !textToolActive &&
+    !ocrSelectionActive && !cropToolActive
+  );
+
+  let hasAnnotations = $derived(
+    arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0
+  );
+
+  // メモリ上の画像がファイルと食い違っている可能性がある状態
+  let needsFileWrite = $derived(hasAnnotations || imageModified);
+
+  // 表示中の <img> が現在の imageBase64 を持つまで待つ。
+  // src 差し替えの DOM 反映は次のフレームで、そこからのデコードも非同期なので、
+  // 待たずに <img> を読むと直前の画像を掴む
+  async function waitForImageDecode() {
+    await tick();
+    try {
+      await imgEl?.decode();
+    } catch {
+      // デコード失敗時は待たずに進む (次の描画で追いつく)
+    }
+  }
+
+  // モザイクは <img> からサンプリングするため、画像を差し替えたら
+  // デコード完了後に revision を上げて MaskOverlay に取り直させる
+  async function bumpImageRevision() {
+    await waitForImageDecode();
+    imageRevision++;
+  }
 
   // CSS scale to fit the natural-size wrapper into the viewport
   let displayScale = $derived(
@@ -296,7 +359,14 @@
           ocrSelectionActive = false;
           return;
         }
+        if (cropToolActive) {
+          cancelCrop();
+          return;
+        }
         getCurrentWindow().close();
+      } else if (e.key === "Enter" && cropToolActive) {
+        e.preventDefault();
+        applyCrop();
       } else if (e.metaKey && e.shiftKey && e.key === "c") {
         e.preventDefault();
         copyImage();
@@ -376,6 +446,10 @@
     undoHistory = [];
     naturalWidth = 0;
     naturalHeight = 0;
+    cropToolActive = false;
+    cropRect = null;
+    imageModified = false;
+    bumpImageRevision();
   }
 
   async function loadImageFile(path: string) {
@@ -902,22 +976,23 @@
     return bytes;
   }
 
-  // 合成画像をファイルに書き出す（矢印がある場合のみ）
+  // 合成画像をファイルに書き出す（注釈やトリミングでファイルと食い違う場合のみ）
   // メモリ上の元画像 (imageBase64) はそのまま保持する
   // compositeBytes が渡された場合は再レンダリングをスキップする
   async function saveCompositeToFile(compositeBytes?: Uint8Array) {
-    if (!filePath || !imageBase64 || (arrows.length === 0 && masks.length === 0 && shapes.length === 0 && textAnnotations.length === 0)) return;
-    const bytes = compositeBytes ?? await renderComposite();
-    await invoke("write_image_to_file", {
-      path: filePath,
-      dataBase64: uint8ToBase64(bytes),
-    });
+    if (!filePath || !imageBase64 || !needsFileWrite) return;
+    // 注釈が無ければ imageBase64 をそのまま渡し、base64 → bytes → base64 の往復を避ける
+    const dataBase64 = compositeBytes
+      ? uint8ToBase64(compositeBytes)
+      : hasAnnotations
+        ? uint8ToBase64(await renderComposite())
+        : imageBase64;
+    await invoke("write_image_to_file", { path: filePath, dataBase64 });
   }
 
   async function copyImage() {
     if (!imageBase64) return;
 
-    const hasAnnotations = arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0;
     const bytes = hasAnnotations
       ? await renderComposite()
       : base64ToUint8(imageBase64);
@@ -931,7 +1006,6 @@
   // 注釈をラスタライズして保存フォルダ(元ファイルパス)に書き出す
   async function saveImage() {
     if (!filePath || !imageBase64) return;
-    const hasAnnotations = arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0;
     // 注釈がある場合のみ再レンダリング。無ければ元の base64 をそのまま渡し、
     // base64 → Uint8Array → base64 の無駄な往復を避ける
     const dataBase64 = hasAnnotations ? uint8ToBase64(await renderComposite()) : imageBase64;
@@ -972,10 +1046,98 @@
     shapeToolActive = false;
     textToolActive = false;
     ocrSelectionActive = false;
+    cropToolActive = false;
+    cropRect = null;
     arrowOverlayRef?.deselect();
     maskOverlayRef?.deselect();
     shapeOverlayRef?.deselect();
     textOverlayRef?.deselect();
+  }
+
+  function fullImageCropRect(): CropRect {
+    return { x: 0, y: 0, width: naturalWidth, height: naturalHeight };
+  }
+
+  function toggleCropTool() {
+    const wasActive = cropToolActive;
+    deactivateAllTools();
+    if (wasActive || naturalWidth <= 0 || naturalHeight <= 0) return;
+    cropToolActive = true;
+    cropRect = fullImageCropRect();
+  }
+
+  function resetCropRect() {
+    if (cropToolActive && naturalWidth > 0) cropRect = fullImageCropRect();
+  }
+
+  function cancelCrop() {
+    cropToolActive = false;
+    cropRect = null;
+  }
+
+  /**
+   * 選択範囲で土台画像を切り出す。注釈は焼き込まず、切り出した原点ぶん平行移動して
+   * 編集可能なまま残す (mask だけは新しい画像領域へクランプする)
+   */
+  async function applyCrop() {
+    if (!cropToolActive || !cropRect) return;
+    // 直前に画像を差し替えていると <img> がまだ古い画を持っている
+    await waitForImageDecode();
+    // await の間に Esc でのキャンセルや 2 回目の適用が入りうるので状態を取り直す
+    if (!cropToolActive || !cropRect || !imageBase64 || !imgEl) return;
+    const rect = cropRect;
+
+    const cropX = Math.max(0, Math.round(rect.x));
+    const cropY = Math.max(0, Math.round(rect.y));
+    const cropW = Math.min(Math.round(rect.width), naturalWidth - cropX);
+    const cropH = Math.min(Math.round(rect.height), naturalHeight - cropY);
+    if (cropW < 1 || cropH < 1) return;
+    if (cropX === 0 && cropY === 0 && cropW === naturalWidth && cropH === naturalHeight) {
+      cancelCrop();
+      return;
+    }
+
+    pushUndo();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = cropW;
+    canvas.height = cropH;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(imgEl, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    const dataUrl = canvas.toDataURL("image/png");
+
+    imageBase64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    imageUrl = dataUrl;
+    naturalWidth = cropW;
+    naturalHeight = cropH;
+    arrows = arrows.map((a) => ({
+      ...a,
+      startX: a.startX - cropX, startY: a.startY - cropY,
+      endX: a.endX - cropX, endY: a.endY - cropY,
+    }));
+    // mask は画像の外へはみ出したままにできない。renderComposite() の getImageData は
+    // キャンバス外を transparent black で返すため、blur はアルファごと putImageData で
+    // 焼き付き、mosaic は端のブロックが半透明になって隠したはずの元画像が透ける。
+    // 切り落とされたぶんは undo で元の mask ごと戻る
+    masks = masks
+      .map((m) => {
+        const left = Math.max(0, m.x - cropX);
+        const top = Math.max(0, m.y - cropY);
+        return {
+          ...m,
+          x: left,
+          y: top,
+          width: Math.min(m.x - cropX + m.width, cropW) - left,
+          height: Math.min(m.y - cropY + m.height, cropH) - top,
+        };
+      })
+      .filter((m) => m.width > 0 && m.height > 0);
+    shapes = shapes.map((s) => ({ ...s, x: s.x - cropX, y: s.y - cropY }));
+    textAnnotations = textAnnotations.map((t) => ({ ...t, x: t.x - cropX, y: t.y - cropY }));
+    imageModified = true;
+    cropToolActive = false;
+    cropRect = null;
+    bumpImageRevision();
   }
 
   function toggleArrowTool() {
@@ -1074,6 +1236,13 @@
     {maskToolActive}
     {shapeToolActive}
     {textToolActive}
+    {cropToolActive}
+    {cropRect}
+    hasImage={imageUrl != null}
+    onToggleCropTool={toggleCropTool}
+    onApplyCrop={applyCrop}
+    onResetCrop={resetCropRect}
+    onCancelCrop={cancelCrop}
     {arrowSettings}
     {maskSettings}
     {shapeSettings}
@@ -1152,6 +1321,7 @@
           toolActive={maskToolActive}
           interactive={maskToolActive || (noToolActive && masks.length > 0)}
           scale={displayScale}
+          {imageRevision}
           onBeforeMutate={pushUndo}
           onMasksChange={(newMasks) => (masks = newMasks)}
         />
@@ -1190,6 +1360,15 @@
           scale={displayScale}
           onRegionSelected={onOcrRegionSelected}
         />
+        {#if cropToolActive && cropRect}
+          <CropOverlay
+            rect={cropRect}
+            imageWidth={naturalWidth}
+            imageHeight={naturalHeight}
+            scale={displayScale}
+            onRectChange={(rect) => (cropRect = rect)}
+          />
+        {/if}
       </div>
     {:else if isCapturing}
       <div class="text-neutral-500 text-sm">Capturing...</div>
