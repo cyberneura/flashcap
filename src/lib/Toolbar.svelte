@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {
     ArrowSettings,
+    CropRect,
     MaskSettings,
     ShapeSettings,
     TextSettings,
@@ -11,6 +12,13 @@
     maskToolActive,
     shapeToolActive,
     textToolActive,
+    cropToolActive,
+    cropRect,
+    hasImage,
+    onToggleCropTool,
+    onApplyCrop,
+    onResetCrop,
+    onCancelCrop,
     arrowSettings,
     maskSettings,
     shapeSettings,
@@ -44,6 +52,13 @@
     maskToolActive: boolean;
     shapeToolActive: boolean;
     textToolActive: boolean;
+    cropToolActive: boolean;
+    cropRect: CropRect | null;
+    hasImage: boolean;
+    onToggleCropTool: () => void;
+    onApplyCrop: () => void;
+    onResetCrop: () => void;
+    onCancelCrop: () => void;
     arrowSettings: ArrowSettings;
     maskSettings: MaskSettings;
     shapeSettings: ShapeSettings;
@@ -323,6 +338,34 @@
       {/if}
     </div>
   {/if}
+
+  <button
+    class="tool-btn"
+    class:active={cropToolActive}
+    onclick={onToggleCropTool}
+    disabled={!hasImage}
+    aria-label="Crop tool"
+    data-tooltip="Crop tool"
+  >
+    <i class="bi bi-crop"></i>
+  </button>
+
+  {#if cropToolActive}
+    <div class="tool-settings">
+      <span class="text-xs text-neutral-200 tabular-nums text-center min-w-[5.5rem]">
+        {cropRect ? `${Math.round(cropRect.width)} × ${Math.round(cropRect.height)}` : "—"}
+      </span>
+      <button class="crop-action" onclick={onResetCrop} data-tooltip="Select the whole image">
+        Reset
+      </button>
+      <button class="crop-action" onclick={onCancelCrop} data-tooltip="Cancel (Esc)">
+        Cancel
+      </button>
+      <button class="crop-action crop-apply" onclick={onApplyCrop} data-tooltip="Crop (Enter)">
+        Apply
+      </button>
+    </div>
+  {/if}
   {/if}
 
   <div class="toolbar-divider"></div>
@@ -498,6 +541,23 @@
     62%  { background: #3b82f6; color: #fff; }
     75%  { background: transparent; color: #d4d4d4; }
     100% { background: transparent; }
+  }
+
+  .crop-action {
+    @apply px-2 py-1 rounded border-none bg-neutral-600 text-neutral-100
+      text-xs cursor-pointer transition-colors duration-150;
+  }
+
+  .crop-action:hover {
+    @apply bg-neutral-500;
+  }
+
+  .crop-apply {
+    @apply bg-blue-600 text-white;
+  }
+
+  .crop-apply:hover {
+    @apply bg-blue-500;
   }
 
   .toolbar-divider {

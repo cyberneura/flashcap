@@ -7,11 +7,13 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
+    /** 土台画像が別物に差し替わるたびに増える。モザイクの再サンプリング契機 */
+    imageRevision: number;
     onMasksChange: (masks: MaskRect[]) => void;
     onBeforeMutate?: () => void;
   }
 
-  let { masks, settings, toolActive, interactive, scale, onMasksChange, onBeforeMutate }: Props = $props();
+  let { masks, settings, toolActive, interactive, scale, imageRevision, onMasksChange, onBeforeMutate }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move" | "resize" | null>(null);
@@ -288,6 +290,20 @@
     return out.toDataURL();
   }
 
+  // モザイクは <img> の現在の中身からサンプリングするため、マスクの座標だけでなく
+  // 画像そのものの差し替え (トリミング等) でも計算し直す必要がある。
+  // テンプレート内で直接呼ぶと画像の差し替えが依存に入らず、古い絵のまま固まる
+  let mosaicUrls = $derived.by(() => {
+    imageRevision;
+    const urls = new Map<string, string>();
+    for (const mask of allMasks) {
+      if (mask.mode !== "mosaic") continue;
+      const url = pixelateRegion(mask);
+      if (url) urls.set(mask.id, url);
+    }
+    return urls;
+  });
+
   export function deselect() {
     selectedId = null;
   }
@@ -320,7 +336,7 @@
         fill={mask.color}
       />
     {:else if mask.mode === "mosaic"}
-      {@const url = pixelateRegion(mask)}
+      {@const url = mosaicUrls.get(mask.id)}
       {#if url}
         <image
           href={url}

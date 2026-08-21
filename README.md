@@ -30,6 +30,7 @@ fails, install them with `xcode-select --install`.
 - Timer capture (configurable delay: 3/5/10 seconds)
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
 - Mask tool (mosaic, blur, fill) with resize/move handles
+- Crop tool (drag to select, Enter to apply, annotations move with the image)
 - OCR text recognition (macOS Vision Framework, Japanese/English)
 - Clipboard integration (copy path or image)
 - Drag & drop to external apps (e.g. Slack)
@@ -113,6 +114,7 @@ src/                          # SvelteKit frontend
   lib/
     ArrowOverlay.svelte       # Arrow annotation overlay
     MaskOverlay.svelte        # Mask (mosaic/blur/fill) overlay
+    CropOverlay.svelte        # Crop selection overlay
     types.ts                  # Shared types
 src-tauri/                    # Rust backend (Tauri)
   src/lib.rs                  # Tauri commands & app setup

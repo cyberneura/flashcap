@@ -18,6 +18,7 @@ macOS screenshot capture & annotation app.
 - **Components**:
   - `src/lib/ArrowOverlay.svelte` - Arrow annotation overlay
   - `src/lib/MaskOverlay.svelte` - Mask (mosaic/blur/fill) overlay
+  - `src/lib/CropOverlay.svelte` - Crop selection overlay
 - **Types**: `src/lib/types.ts`
 - **Preferences**: `src/routes/preferences/+page.svelte`
 
@@ -49,6 +50,27 @@ macOS screenshot capture & annotation app.
 - `captureScreen()` の `finally` ではガードフラグ `isCapturing` を `show()`/`setFocus()` の
   await が**全部終わった後**に false へ戻す。先に戻すと復元中の `do-capture` が新キャプチャーを
   開始してインターリーブする。
+
+## Crop Tool (src/lib/CropOverlay.svelte + src/routes/+page.svelte)
+
+- 適用時は `imageBase64` を切り出した PNG に差し替え、注釈は焼き込まずに切り出した原点ぶん
+  平行移動する。注釈座標は自然解像度ピクセルなので、この平行移動だけで `renderComposite()` と
+  各オーバーレイの座標系が揃う。
+- **mask だけは切り出し後の領域へクランプする**。`renderComposite()` の `getImageData` は
+  キャンバス外を transparent black で返すため、はみ出した mask を残すと blur はアルファごと
+  `putImageData` で焼き付き、mosaic は端のブロックが半透明になって**隠したはずの元画像が透ける**。
+  arrow / shape / text はキャンバスにクリップされるだけなので座標をそのまま保持してよい。
+- 同時に `imageModified` を立てる。`saveCompositeToFile()` の書き込み判定は
+  `needsFileWrite` (= 注釈がある or `imageModified`) で、ここに入れないとトリミング後の
+  ⌘C (パスのコピー) / ドラッグで**ディスク上の未トリミングの元ファイル**が相手に渡る。
+  判定を外して常に書き戻す形にはしないこと (JPEG など非可逆形式で無駄な再エンコード劣化を招く)。
+- undo スナップショット (`EditSnapshot`) は画像 base64 と寸法も持つ。ただし `imageModified` は
+  undo で戻さない — 既にファイルへ書き戻していた場合、巻き戻してもディスク上は変更済みで
+  「メモリ = ファイル」とは言えないため。
+- 画像を差し替えたら `bumpImageRevision()` を呼ぶ。MaskOverlay のモザイクは表示中の `<img>` から
+  サンプリングするので、デコード完了を待って revision を上げないと旧画像から取った絵で固まる。
+- 枠が画像いっぱいの間は内側ドラッグを「範囲の引き直し」に回す。枠の外が存在しないため、
+  move に倒すと引き直す手段が無くなる。
 
 ## Rust Commands (src-tauri/src/lib.rs)
 

@@ -81,6 +81,14 @@ export interface TextSettings {
   dropShadow: boolean;
 }
 
+/** トリミング範囲。座標・寸法は画像の自然解像度ピクセル */
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // --- Video capture / export ---
 
 export type VideoExportFormat = "mp4" | "gif";
