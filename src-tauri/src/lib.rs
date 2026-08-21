@@ -442,8 +442,13 @@ fn resize_window_for_image(app: &tauri::AppHandle, width: usize, height: usize) 
     };
 
     let scale = monitor.scale_factor();
+    // **この 2 つは CSS 側と暗黙に結合している。** 片方だけ動かすと画像が等倍で表示されなくなる:
+    // - padding: viewport (`+page.svelte`) の `p-5`
+    // - toolbar_h: `Toolbar.svelte` の root `py-2` (8+8) + 最も高い子 `.tool-btn` の `h-8` (32)
+    //   + `border-b` (1) = 49。root の `min-h-[40px]` は下限にすぎず効いていない
+    //   (`.tool-settings` は `-my-2` で親の padding に食い込むので、ツールを開いても高さは変わらない)
     let padding = 20.0;
-    let toolbar_h = 41.0; // ツールバー 40px + ボーダー 1px
+    let toolbar_h = 49.0;
 
     // 画像の論理サイズ（screen points）
     let img_w = width as f64 / scale;
@@ -889,7 +894,7 @@ fn convert_png_to_heic(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
 /// ウィンドウが出てくると、それがそのまま撮影範囲に写り込む。
 ///
 /// 起動中に届いた場合の隠す処理 (Opened 側の hide) と対になっていて、こちらは
-/// 「これから出てくるのを止める」役割。CaptureHandshake と違って読むだけなので、
+/// 「これから出てくるのを止める」役割。FrontendHandshake と違って読むだけなので、
 /// 状態管理を足さず static で持つ。
 static HEADLESS_OCR_REQUESTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -898,7 +903,7 @@ fn headless_ocr_requested() -> bool {
     HEADLESS_OCR_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// キャプチャー開始のハンドシェイク状態
+/// フロント (WebView) の準備待ちハンドシェイク状態
 ///
 /// キャプチャー開始経路 (--capture コールド / single-instance 再起動 /
 /// flashcap://capture) は、いずれも「ウィンドウは show せず do-capture のみ送り、
@@ -906,12 +911,17 @@ fn headless_ocr_requested() -> bool {
 /// ただしコールド起動 (WebView 未ロード) では do-capture が登録前のリスナーに届かず
 /// 取りこぼすため、frontend-ready 受信を待ってから emit する必要がある。
 ///
-/// frontend_ready と capture_pending を別々の AtomicBool で持つと
-/// 「request 側が ready=false を見る → mark_ready 側が ready=true にし pending=false を見る
-///  → request 側が pending=true を立てる」の順で do-capture が永久に飛ばない
-/// lost-wakeup が起きうるため、Mutex で原子的に判定する。
+/// **ファイルを開く経路 (Finder の「このアプリケーションで開く」/ Dock へのドロップ) も
+/// 同じ取りこぼしをする。** macOS は起動直後に application:openURLs: を送るため、
+/// アプリが起動していない状態から開くと open-file が必ず捨てられる。だからここは
+/// キャプチャー専用ではなく「フロントが用意できるまで仕事を預かる場所」として持つ。
+///
+/// frontend_ready と待ち行列を別々の Atomic / Mutex に分けると
+/// 「request 側が ready=false を見る → mark_ready 側が ready=true にして待ち行列が空だと見る
+///  → request 側が待ち行列に積む」の順で通知が永久に飛ばない lost-wakeup が起きうるため、
+/// 1 つの Mutex で原子的に判定する。
 #[derive(Default)]
-struct CaptureHandshake {
+struct FrontendHandshake {
     inner: std::sync::Mutex<HandshakeInner>,
 }
 
@@ -919,9 +929,17 @@ struct CaptureHandshake {
 struct HandshakeInner {
     frontend_ready: bool,
     capture_pending: bool,
+    /// frontend-ready より前に届いた「開くべき画像」のパス
+    pending_files: Vec<String>,
 }
 
-impl CaptureHandshake {
+/// frontend-ready 受信時に取り出す、溜まっていた仕事
+struct PendingWork {
+    capture: bool,
+    files: Vec<String>,
+}
+
+impl FrontendHandshake {
     /// ロックを取得する。poison (ロック保持中の panic) しても回復して継続する。
     /// GUI アプリではここで panic 連鎖させてプロセスを落とすより、状態を読めるだけ
     /// 読んで進む方が被害が小さい。
@@ -929,19 +947,19 @@ impl CaptureHandshake {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// frontend-ready 受信を記録する。受信前にキャプチャーが予約済みだった場合 true を返す
-    /// (= 呼び出し側が do-capture を emit すべき)。予約は consume して false に戻す。
-    fn mark_ready(&self) -> bool {
+    /// frontend-ready 受信を記録し、溜まっていた仕事を取り出す (取り出したぶんは消す)。
+    fn mark_ready(&self) -> PendingWork {
         let mut s = self.lock();
         s.frontend_ready = true;
-        let pending = s.capture_pending;
-        s.capture_pending = false;
-        pending
+        PendingWork {
+            capture: std::mem::take(&mut s.capture_pending),
+            files: std::mem::take(&mut s.pending_files),
+        }
     }
 
     /// キャプチャーを要求する。frontend が ready 済みなら true (即 emit すべき)、
     /// 未 ready なら予約だけして false を返す (frontend-ready 受信時に emit される)。
-    fn request(&self) -> bool {
+    fn request_capture(&self) -> bool {
         let mut s = self.lock();
         if s.frontend_ready {
             true
@@ -951,8 +969,20 @@ impl CaptureHandshake {
         }
     }
 
+    /// 画像を開くよう要求する。frontend が ready 済みなら渡されたパスをそのまま返し
+    /// (= 呼び出し側が即 emit する)、未 ready なら預かって None を返す。
+    fn request_open_files(&self, files: Vec<String>) -> Option<Vec<String>> {
+        let mut s = self.lock();
+        if s.frontend_ready {
+            Some(files)
+        } else {
+            s.pending_files.extend(files);
+            None
+        }
+    }
+
     /// frontend-ready より前にキャプチャーを予約する (--capture コールド起動用)。
-    fn set_pending(&self) {
+    fn set_capture_pending(&self) {
         self.lock().capture_pending = true;
     }
 
@@ -960,7 +990,7 @@ impl CaptureHandshake {
         self.lock().frontend_ready
     }
 
-    fn is_pending(&self) -> bool {
+    fn is_capture_pending(&self) -> bool {
         self.lock().capture_pending
     }
 }
@@ -969,9 +999,52 @@ impl CaptureHandshake {
 /// ウィンドウは show しない (撮影完了後に captureScreen() が show する)。
 /// frontend が未 ready の場合 (コールド起動) は予約だけ行い、frontend-ready 受信時に emit する。
 fn request_capture(app: &tauri::AppHandle) {
-    if app.state::<CaptureHandshake>().request() {
+    if app.state::<FrontendHandshake>().request_capture() {
         let _ = app.emit("do-capture", ());
     }
+}
+
+/// フロントエンドに画像を開かせる (open-file)。
+///
+/// **未 ready の時は show しない。** WebView が描画を始める前に表示しても白いウィンドウが
+/// 見えるだけなので、表示は frontend-ready 側の show に一任する。預けたパスは
+/// frontend-ready 受信時に emit される。
+///
+/// (キャプチャー経路が show しない理由は別で、あちらは撮影前の hide と重なって
+///  show→hide の点滅になるのを避けている。open 経路に撮影前の hide は無い)
+fn request_open_files(app: &tauri::AppHandle, files: Vec<String>) {
+    if files.is_empty() {
+        return;
+    }
+    if let Some(files) = app.state::<FrontendHandshake>().request_open_files(files) {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        let _ = app.emit("open-file", files);
+    }
+}
+
+/// FlashCap が開ける画像ファイルの拡張子か
+fn is_supported_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| SUPPORTED_IMAGE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// コマンドライン引数から、実在する対応画像ファイルだけを取り出す
+///
+/// `--capture` のようなフラグや OS が足す引数 (`-psn_0_...` 等) は拡張子を持たないので
+/// 拡張子の判定だけで落ちる。実在確認はその先の話で、`.png` で終わるが存在しないパスを
+/// フロントへ渡さないためのもの (渡しても `load_image_file` が失敗するだけ)
+fn collect_image_args<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
+    args.into_iter()
+        .filter(|a| {
+            let path = Path::new(a);
+            path.exists() && is_supported_image_path(path)
+        })
+        .collect()
 }
 
 /// プリファレンスウィンドウを開く (既に開いていればフォーカス)
@@ -995,7 +1068,7 @@ fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .manage(video::RecordingState::default())
-        .manage(CaptureHandshake::default())
+        .manage(FrontendHandshake::default())
         .manage(OpenedImages::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1023,17 +1096,9 @@ pub fn run() {
                 let _ = w.set_focus();
             }
             // args[0] はバイナリパス。args[1..] がファイルパス
-            let file_paths: Vec<String> = args.iter().skip(1)
-                .filter(|a| {
-                    let p = std::path::Path::new(a);
-                    p.exists() && p.extension().map_or(false, |ext| {
-                        ext.to_str().map_or(false, |e| SUPPORTED_IMAGE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
-                    })
-                })
-                .cloned()
-                .collect();
+            let file_paths = collect_image_args(args.iter().skip(1).cloned());
             if !file_paths.is_empty() {
-                let _ = app.emit("open-file", file_paths);
+                request_open_files(app, file_paths);
             } else {
                 let _ = app.emit("reactivate", ());
             }
@@ -1121,12 +1186,27 @@ pub fn run() {
                 // (URL スキーム capture のコールド起動は RunEvent::Opened → request_capture が
                 //  同じ予約を行う)
                 if std::env::args().any(|a| a == "--capture") {
-                    app.state::<CaptureHandshake>().set_pending();
+                    app.state::<FrontendHandshake>().set_capture_pending();
                 }
+
+                // コールド起動の引数で渡された画像 (ターミナルからの `flashcap foo.png`)。
+                // 起動中に同じコマンドを叩くと single-instance 側が argv で受けて開けるのに、
+                // コールド起動だけ無視していたので揃える。
+                //
+                // Finder の「このアプリケーションで開く」はここには来ない。起動中でも
+                // コールド起動でも LaunchServices は openURLs を送るので (起動中のアプリに
+                // 2 個目のプロセスは立たない)、あちらは RunEvent::Opened 側で受ける
+                request_open_files(&handle, collect_image_args(std::env::args().skip(1)));
 
                 let handle_cb = handle.clone();
                 app.once_any("frontend-ready", move |_| {
-                    if handle_cb.state::<CaptureHandshake>().mark_ready() {
+                    let work = handle_cb.state::<FrontendHandshake>().mark_ready();
+                    // コールド起動中に「このアプリケーションで開く」で預かった画像。
+                    // ウィンドウの表示は下のキャプチャー判定と同じ経路に任せる
+                    if !work.files.is_empty() {
+                        let _ = handle_cb.emit("open-file", work.files);
+                    }
+                    if work.capture {
                         // キャプチャーが予約済み: do-capture を送る。
                         // captureScreen 側は撮影前に hide を呼ぶが、ウィンドウは
                         // visible:false のままなので hide は no-op。撮影完了後に
@@ -1154,9 +1234,9 @@ pub fn run() {
                 // フロントを使わないので、ウィンドウが出ないままでも困らない)。
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    let handshake = handle.state::<CaptureHandshake>();
+                    let handshake = handle.state::<FrontendHandshake>();
                     if !handshake.is_ready()
-                        && !handshake.is_pending()
+                        && !handshake.is_capture_pending()
                         && !headless_ocr_requested()
                     {
                         if let Some(w) = handle.get_webview_window("main") {
@@ -1228,7 +1308,12 @@ pub fn run() {
                         }
                     }
 
-                    // ファイル関連付けや Dock へのドロップで開かれた場合
+                    // ファイル関連付け (Finder の「このアプリケーションで開く」) や
+                    // Dock へのドロップで開かれた場合。
+                    //
+                    // **コールド起動では、ここはまだ WebView が JS をロードする前に来る。**
+                    // 直接 emit すると届け先が無く捨てられるので、request_open_files に
+                    // 預けて frontend-ready 受信時に送らせる
                     let file_paths: Vec<String> = urls.iter()
                         .filter_map(|url| {
                             if url.scheme() != "file" {
@@ -1236,21 +1321,14 @@ pub fn run() {
                             }
                             let path = url.to_file_path().ok()?;
                             // 対応する画像拡張子のみ許可
-                            let ext = path.extension()?.to_str()?.to_lowercase();
-                            if SUPPORTED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                            if is_supported_image_path(&path) {
                                 Some(path.to_string_lossy().to_string())
                             } else {
                                 None
                             }
                         })
                         .collect();
-                    if !file_paths.is_empty() {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                        let _ = app.emit("open-file", file_paths);
-                    }
+                    request_open_files(app, file_paths);
                 }
                 _ => {}
             }
@@ -1350,6 +1428,89 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"first");
         write_without_following_symlinks(&path, b"second").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
+    }
+
+    #[test]
+    fn open_files_are_held_until_the_frontend_is_ready() {
+        // Arrange: コールド起動直後 (WebView 未ロード) の状態
+        let handshake = FrontendHandshake::default();
+
+        // Act: Finder の「このアプリケーションで開く」が届く
+        let immediate = handshake.request_open_files(vec!["/tmp/a.png".to_string()]);
+
+        // Assert: この場では emit させず、frontend-ready で受け取れる
+        assert!(immediate.is_none(), "未 ready なのに即 emit しようとしている");
+        let work = handshake.mark_ready();
+        assert_eq!(work.files, vec!["/tmp/a.png".to_string()]);
+        assert!(!work.capture);
+    }
+
+    #[test]
+    fn open_files_go_straight_through_once_the_frontend_is_ready() {
+        // Arrange
+        let handshake = FrontendHandshake::default();
+        handshake.mark_ready();
+
+        // Act
+        let immediate = handshake.request_open_files(vec!["/tmp/a.png".to_string()]);
+
+        // Assert: 即 emit させ、預かり分としては残さない
+        assert_eq!(immediate, Some(vec!["/tmp/a.png".to_string()]));
+        assert!(handshake.mark_ready().files.is_empty(), "二重に配送されている");
+    }
+
+    #[test]
+    fn held_work_is_taken_exactly_once() {
+        // Arrange: コールド起動で複数回開かれ、キャプチャーも予約された状態
+        let handshake = FrontendHandshake::default();
+        handshake.set_capture_pending();
+        handshake.request_open_files(vec!["/tmp/a.png".to_string()]);
+        handshake.request_open_files(vec!["/tmp/b.png".to_string()]);
+
+        // Act
+        let first = handshake.mark_ready();
+        let second = handshake.mark_ready();
+
+        // Assert: 溜めた順に 1 度だけ渡り、2 度目は空
+        assert_eq!(
+            first.files,
+            vec!["/tmp/a.png".to_string(), "/tmp/b.png".to_string()]
+        );
+        assert!(first.capture);
+        assert!(second.files.is_empty());
+        assert!(!second.capture);
+    }
+
+    #[test]
+    fn only_supported_image_extensions_are_opened() {
+        // Arrange / Act / Assert
+        assert!(is_supported_image_path(Path::new("/tmp/a.png")));
+        assert!(is_supported_image_path(Path::new("/tmp/a.JPEG")));
+        assert!(is_supported_image_path(Path::new("/tmp/a.heic")));
+        assert!(!is_supported_image_path(Path::new("/tmp/a.pdf")));
+        assert!(!is_supported_image_path(Path::new("/tmp/png")));
+    }
+
+    #[test]
+    fn command_line_arguments_yield_only_existing_images() {
+        // Arrange: フラグ・存在しないパス・非対応拡張子を混ぜる
+        let tmp = TempDir::new("args");
+        let image = tmp.path().join("shot.png");
+        std::fs::write(&image, b"x").unwrap();
+        let document = tmp.path().join("note.pdf");
+        std::fs::write(&document, b"x").unwrap();
+        let missing = tmp.path().join("gone.png");
+
+        // Act
+        let picked = collect_image_args(vec![
+            "--capture".to_string(),
+            image.to_string_lossy().to_string(),
+            document.to_string_lossy().to_string(),
+            missing.to_string_lossy().to_string(),
+        ]);
+
+        // Assert
+        assert_eq!(picked, vec![image.to_string_lossy().to_string()]);
     }
 
     #[test]

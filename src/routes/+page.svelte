@@ -15,6 +15,8 @@
   import TextOverlay from "$lib/TextOverlay.svelte";
   import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
   import CropOverlay from "$lib/CropOverlay.svelte";
+  import { detectEdgeSnapLines, type EdgeSnapLines } from "$lib/edgeSnap";
+  import { largestAspectRect, refitToAspect } from "$lib/cropAspect";
   import Toolbar from "$lib/Toolbar.svelte";
   import VideoTrimmer from "$lib/VideoTrimmer.svelte";
 
@@ -111,8 +113,17 @@
   });
 
   // Crop tool state
+  const CROP_SNAP_KEY = "flashcap-crop-snap";
   let cropToolActive = $state(false);
   let cropRect = $state<CropRect | null>(null);
+  // トリミング枠を画像内の境界線に吸着させるか
+  let cropSnapEnabled = $state(true);
+  let cropSnapLines = $state<EdgeSnapLines | null>(null);
+  // cropSnapLines がどの画像から取られたか。画像を差し替えたら取り直す
+  let cropSnapLinesRevision = -1;
+  // 固定する縦横比 (width / height)。null なら自由。
+  // **セッションを跨いで覚えない** — 次の起動でトリミングが勝手に固定されていると驚くため
+  let cropAspect = $state<number | null>(null);
   // 土台画像そのものを変更したか (トリミング)。ファイルへの書き戻しが必要かの判定に使う
   let imageModified = $state(false);
   // 土台画像の差し替え回数。MaskOverlay にモザイクの再サンプリング契機として渡す
@@ -157,6 +168,9 @@
       imageUrl = entry.image ? `data:image/png;base64,${entry.image}` : null;
       naturalWidth = entry.width;
       naturalHeight = entry.height;
+      // 土台画像が別物に入れ替わるので、旧画像の座標で作った枠と吸着線は持ち越せない
+      // (Cmd+Z は crop ツール表示中でも通るため、閉じないと枠が画像の外にはみ出す)
+      if (cropToolActive) cancelCrop();
       bumpImageRevision();
       // imageModified はここで戻さない。トリミング後に保存やコピーでファイルへ
       // 書き戻していた場合、undo してもディスク上は変更済みのままなので、
@@ -201,6 +215,9 @@
   // モザイクは <img> からサンプリングするため、画像を差し替えたら
   // デコード完了後に revision を上げて MaskOverlay に取り直させる
   async function bumpImageRevision() {
+    // 吸着線は旧画像の座標系なので、差し替えが決まった時点で捨てる。revision の更新は
+    // デコード完了後だが、こちらを待たせると「新しい寸法 + 旧画像の線」で吸着する隙ができる
+    cropSnapLines = null;
     await waitForImageDecode();
     imageRevision++;
   }
@@ -219,11 +236,31 @@
     }
   }
 
+  /**
+   * displayScale の分母になる「画像を置ける実寸」を測る。
+   *
+   * **clientWidth/Height は padding を含む** (padding box の寸法) ので、そのまま使うと
+   * viewport の `p-5` ぶん 40px を余分に使えると見積もる。すると画像が **content box** を
+   * 40px はみ出す大きさに拡大され、flex の中央寄せに負の余白が渡る。負の余白を開始側へ
+   * 寄せる実装では「左に 20px の余白は残るのに、右は 20px はみ出して `overflow-hidden`
+   * で切れる」という非対称なズレになる。content box を測れば余白が負にならないので、
+   * 負の余白をどう配る実装でも左右対称の 20px に収まる。
+   *
+   * **表面化するかは表示スケール次第**なので、直る前も「たまに」に見えていた:
+   * - Retina (scale_factor 2) では `naturalWidth` が論理 px の 2 倍あるので
+   *   `displayScale` は 0.5 付近になり、`Math.min(..., 1)` の上限に当たらない。
+   *   40px ぶんの過大評価がそのまま効くので **常に**はみ出す。
+   * - 1x ディスプレイでは希望どおりのサイズで開けた時に比が 1 を超え、上限 1 に
+   *   丸められて吸収される。はみ出すのは `resize_window_for_image` が
+   *   `.min(max_w/max_h)` で作業領域にクランプされた時 (= 画像が画面より大きい時)。
+   */
   function updateViewportSize() {
-    if (viewportEl) {
-      viewportWidth = viewportEl.clientWidth;
-      viewportHeight = viewportEl.clientHeight;
-    }
+    if (!viewportEl) return;
+    const style = getComputedStyle(viewportEl);
+    const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    viewportWidth = Math.max(0, viewportEl.clientWidth - paddingX);
+    viewportHeight = Math.max(0, viewportEl.clientHeight - paddingY);
   }
 
   onMount(() => {
@@ -284,6 +321,8 @@
       } catch { /* ignore invalid JSON */ }
     }
 
+    cropSnapEnabled = localStorage.getItem(CROP_SNAP_KEY) !== "off";
+
     const savedText = localStorage.getItem(TEXT_SETTINGS_KEY);
     if (savedText) {
       try {
@@ -314,9 +353,6 @@
     const unlistenDoCapture = listen("do-capture", () => {
       if (!isCapturing) captureScreen();
     });
-    // do-capture リスナーの登録完了後にバックエンドへ準備完了を通知する。
-    // (--capture コールド起動時、setup での emit 取りこぼしを防ぐハンドシェイク)
-    unlistenDoCapture.then(() => { emit("frontend-ready"); });
 
     // 範囲選択完了で録画が開始された: アプリ内タイマーを動かす
     const unlistenRecStart = listen("recording-started", () => {
@@ -334,6 +370,23 @@
       if (event.payload.length > 0) {
         loadImageFile(event.payload[0]);
       }
+    });
+
+    // バックエンドへの準備完了通知。コールド起動 (WebView 未ロード) で取りこぼす
+    // イベントはバックエンドが frontend-ready まで預かるので、預かり対象の
+    // リスナー (do-capture / open-file) が **全部** 登録され終わってから一度だけ送る。
+    // do-capture の登録だけを待って送ると、open-file の登録が間に合う保証が無い。
+    // **預かり対象のイベントを増やしたら、この配列にも足すこと。**
+    //
+    // allSettled にしているのは、片方の listen が失敗した時に frontend-ready ごと
+    // 飛ばなくなるのを避けるため。all だと 1 つの reject でキャプチャー予約まで
+    // 巻き添えで座礁し、コールド起動が無反応になる。
+    //
+    // 逆に allSettled では、失敗した側の預かり分が「届け先が無いまま consume される」。
+    // それでも all より被害が小さいので許容する (all は両方失われる)。listen が reject
+    // するのは IPC 自体が壊れている時で、その状態では下の emit も届かない
+    Promise.allSettled([unlistenDoCapture, unlistenOpenFile]).then(() => {
+      emit("frontend-ready");
     });
 
     // ウインドウへのファイルドロップ
@@ -422,6 +475,10 @@
   $effect(() => {
     const { fontSize, color, bold, italic, whiteStroke, dropShadow } = textSettings;
     localStorage.setItem(TEXT_SETTINGS_KEY, JSON.stringify({ fontSize, color, bold, italic, whiteStroke, dropShadow }));
+  });
+
+  $effect(() => {
+    localStorage.setItem(CROP_SNAP_KEY, cropSnapEnabled ? "on" : "off");
   });
 
   // テキスト属性変更時、編集中/選択中のテキストにも反映する
@@ -1054,7 +1111,10 @@
     textOverlayRef?.deselect();
   }
 
+  // 縦横比を固定している時は、画像いっぱいではなくその比で取れる最大の枠を初期値にする
   function fullImageCropRect(): CropRect {
+    const bounds = { width: naturalWidth, height: naturalHeight };
+    if (cropAspect !== null) return largestAspectRect(cropAspect, bounds);
     return { x: 0, y: 0, width: naturalWidth, height: naturalHeight };
   }
 
@@ -1064,6 +1124,44 @@
     if (wasActive || naturalWidth <= 0 || naturalHeight <= 0) return;
     cropToolActive = true;
     cropRect = fullImageCropRect();
+    if (cropSnapEnabled) detectCropSnapLines();
+  }
+
+  /** 縦横比ボタン。同じ比を押し直すと解除、別の比を押すと乗り換える (排他) */
+  function toggleCropAspect(ratio: number) {
+    cropAspect = cropAspect === ratio ? null : ratio;
+    // 押した瞬間に今の枠を新しい比へ合わせ直す。解除時は今の枠をそのまま残す
+    if (cropAspect !== null && cropRect && naturalWidth > 0 && naturalHeight > 0) {
+      cropRect = refitToAspect(cropRect, cropAspect, {
+        width: naturalWidth,
+        height: naturalHeight,
+      });
+    }
+  }
+
+  function toggleCropSnap() {
+    cropSnapEnabled = !cropSnapEnabled;
+    // 吸着を後から ON にした時、まだ検出していなければここで走らせる
+    if (cropSnapEnabled && cropToolActive) detectCropSnapLines();
+  }
+
+  /**
+   * トリミングの吸着先になる境界線を検出する (画像 1 枚につき 1 回)。
+   *
+   * **検出そのものはメインスレッドを止める同期処理。** ワーカーには逃がしていない。
+   * 数千万画素のキャンバス確保と getImageData を crop ツールを開くクリックと同じ
+   * フレームで走らせるとツールバーの反応が引っかかって見えるので、ツールが開いた
+   * 見た目を先に描かせてから走らせている (吸着が要るのは最初のドラッグからなので、
+   * 数フレーム遅れても操作には間に合う)。
+   */
+  async function detectCropSnapLines() {
+    if (cropSnapLinesRevision === imageRevision) return;
+    await waitForImageDecode();
+    // ツールを開いた見た目が 1 フレーム描かれるまで待つ (rAF 2 回で描画後になる)
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (!cropToolActive || !imgEl || cropSnapLinesRevision === imageRevision) return;
+    cropSnapLinesRevision = imageRevision;
+    cropSnapLines = detectEdgeSnapLines(imgEl);
   }
 
   function resetCropRect() {
@@ -1238,8 +1336,12 @@
     {textToolActive}
     {cropToolActive}
     {cropRect}
+    {cropSnapEnabled}
+    {cropAspect}
     hasImage={imageUrl != null}
     onToggleCropTool={toggleCropTool}
+    onToggleCropSnap={toggleCropSnap}
+    onToggleCropAspect={toggleCropAspect}
     onApplyCrop={applyCrop}
     onResetCrop={resetCropRect}
     onCancelCrop={cancelCrop}
@@ -1366,6 +1468,9 @@
             imageWidth={naturalWidth}
             imageHeight={naturalHeight}
             scale={displayScale}
+            snapEnabled={cropSnapEnabled}
+            snapLines={cropSnapLines}
+            aspect={cropAspect}
             onRectChange={(rect) => (cropRect = rect)}
           />
         {/if}
