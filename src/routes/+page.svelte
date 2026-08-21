@@ -216,8 +216,15 @@
   // デコード完了後に revision を上げて MaskOverlay に取り直させる
   async function bumpImageRevision() {
     // 吸着線は旧画像の座標系なので、差し替えが決まった時点で捨てる。revision の更新は
-    // デコード完了後だが、こちらを待たせると「新しい寸法 + 旧画像の線」で吸着する隙ができる
+    // デコード完了後だが、こちらを待たせると「新しい寸法 + 旧画像の線」で吸着する隙ができる。
+    //
+    // **キャッシュ世代の無効化も同期的に行う。** imageRevision の更新はデコード待ちの
+    // 後なので、この await の間に crop ツールを開き直されると
+    // 「cropSnapLinesRevision === imageRevision (どちらも旧世代)」が成立してしまい、
+    // detectCropSnapLines が中身空のまま早期 return する。その後 revision が上がっても
+    // 検出は再スケジュールされないので、吸着が黙って効かないまま残る
     cropSnapLines = null;
+    cropSnapLinesRevision = -1;
     await waitForImageDecode();
     imageRevision++;
   }
@@ -1155,11 +1162,14 @@
    * 数フレーム遅れても操作には間に合う)。
    */
   async function detectCropSnapLines() {
-    if (cropSnapLinesRevision === imageRevision) return;
+    // 世代が一致していても中身が無いなら計算し直す (検出が canvas を読めずに null を
+    // 返した場合も、次に開いた時にやり直す)
+    if (cropSnapLines && cropSnapLinesRevision === imageRevision) return;
     await waitForImageDecode();
     // ツールを開いた見た目が 1 フレーム描かれるまで待つ (rAF 2 回で描画後になる)
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    if (!cropToolActive || !imgEl || cropSnapLinesRevision === imageRevision) return;
+    if (!cropToolActive || !imgEl) return;
+    if (cropSnapLines && cropSnapLinesRevision === imageRevision) return;
     cropSnapLinesRevision = imageRevision;
     cropSnapLines = detectEdgeSnapLines(imgEl);
   }

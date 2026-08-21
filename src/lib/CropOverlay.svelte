@@ -35,6 +35,15 @@
   const MIN_SIZE = MIN_CROP_SIZE;
   /** 境界線に吸着する距離 (画面上の px) */
   const SNAP_DISTANCE = 6;
+  /**
+   * 「クリックしただけ」と「引いた」を分ける移動量 (画面上の px)。
+   *
+   * **MIN_SIZE を流用しない。** 縦横比の固定中は 3px 引いただけでも
+   * aspectRectFromCorner が最小サイズまで広げた正当な枠を作って画面に出すので、
+   * MIN_SIZE を閾値にすると「見えている枠が離した瞬間に消える」ことになる。
+   * ここで見たいのは寸法ではなく、押下時の微小なブレとドラッグの区別。
+   */
+  const CLICK_SLOP = 2;
 
   let bounds = $derived({ width: imageWidth, height: imageHeight });
 
@@ -46,6 +55,8 @@
   let hoverCursor = $state("crosshair");
   /** 引き直しのドラッグでポインタが実際に動いたか (縦横比固定時の「クリックだけ」判定用) */
   let drawMoved = false;
+  /** 引き直しを始めた生のポインタ位置 (吸着前)。drawMoved の判定に使う */
+  let drawStartRaw: { x: number; y: number } | null = null;
 
   // lo > hi の時は lo に倒す。素の Math.min(Math.max(v, lo), hi) だと hi を返してしまい、
   // 下限より小さい値が通る (MIN_SIZE より小さい画像で下の minWidth/minHeight が効かなくなる)
@@ -229,6 +240,7 @@
     // 枠の外からのドラッグは範囲の引き直し。始点も境界線に吸着させる
     dragging = "draw";
     drawMoved = false;
+    drawStartRaw = { x: clamp(pt.x, 0, imageWidth), y: clamp(pt.y, 0, imageHeight) };
     dragStart = {
       x: snapped(clamp(pt.x, 0, imageWidth), snapXs),
       y: snapped(clamp(pt.y, 0, imageHeight), snapYs),
@@ -272,8 +284,13 @@
     } else if (dragging === "draw") {
       const cx = snapEndpoint(clamp(pt.x, 0, imageWidth), dragStart.x, snapXs);
       const cy = snapEndpoint(clamp(pt.y, 0, imageHeight), dragStart.y, snapYs);
-      if (Math.abs(cx - dragStart.x) >= MIN_SIZE || Math.abs(cy - dragStart.y) >= MIN_SIZE) {
-        drawMoved = true;
+      // 吸着後の座標ではなく生のポインタで見る。吸着が終点を始点側へ引き戻すと、
+      // 実際には引いているのに「動いていない」と判定されてしまう
+      if (drawStartRaw) {
+        const slop = CLICK_SLOP / scale;
+        if (Math.abs(pt.x - drawStartRaw.x) >= slop || Math.abs(pt.y - drawStartRaw.y) >= slop) {
+          drawMoved = true;
+        }
       }
       if (aspect !== null) {
         // 引き直しは開始点を固定した角として扱えるので、角リサイズと同じ計算になる
