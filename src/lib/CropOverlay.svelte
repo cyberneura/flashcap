@@ -98,6 +98,21 @@
   }
 
   /**
+   * 引き直しの始点を軸ごとに決める。**始点の吸着も選択を消しうる。**
+   *
+   * 始点は mousedown の時点で吸着させるが、その時はまだ引く向きが分からない。
+   * 吸着線の手前から線へ向かって引くと、始点が線まで動いたぶん span が削られ、
+   * ポインタは十分動いているのに MIN_SIZE を割って mouseup で破棄される
+   * (例: 始点 5 が線 10 へ吸着 → 14 まで引いても幅 4)。
+   * その軸だけ生の始点に戻す。snapEndpoint と対になる、始点側の守り。
+   */
+  function drawAnchor(snappedStart: number, rawStart: number, pointer: number): number {
+    if (Math.abs(pointer - snappedStart) >= MIN_SIZE) return snappedStart;
+    if (Math.abs(pointer - rawStart) >= MIN_SIZE) return rawStart;
+    return snappedStart;
+  }
+
+  /**
    * ドラッグ中の枠を親へ渡す。**退化した枠は渡さない。**
    *
    * 縦横比の計算は、伸ばす余地が完全に無い向きでは 0 を返すしかない。0×0 を渡すと
@@ -282,8 +297,13 @@
         y: clamp(snapSpan(y, dragOrigRect.height, snapYs), 0, imageHeight - dragOrigRect.height),
       });
     } else if (dragging === "draw") {
-      const cx = snapEndpoint(clamp(pt.x, 0, imageWidth), dragStart.x, snapXs);
-      const cy = snapEndpoint(clamp(pt.y, 0, imageHeight), dragStart.y, snapYs);
+      const rawX = clamp(pt.x, 0, imageWidth);
+      const rawY = clamp(pt.y, 0, imageHeight);
+      // 始点は引く向きが決まってから軸ごとに選び直す (吸着した始点 / 生の始点)
+      const ax = drawAnchor(dragStart.x, drawStartRaw?.x ?? dragStart.x, rawX);
+      const ay = drawAnchor(dragStart.y, drawStartRaw?.y ?? dragStart.y, rawY);
+      const cx = snapEndpoint(rawX, ax, snapXs);
+      const cy = snapEndpoint(rawY, ay, snapYs);
       // 吸着後の座標ではなく生のポインタで見る。吸着が終点を始点側へ引き戻すと、
       // 実際には引いているのに「動いていない」と判定されてしまう
       if (drawStartRaw) {
@@ -294,14 +314,14 @@
       }
       if (aspect !== null) {
         // 引き直しは開始点を固定した角として扱えるので、角リサイズと同じ計算になる
-        emitRect(aspectRectFromCorner(dragStart, { x: cx, y: cy }, aspect, bounds));
+        emitRect(aspectRectFromCorner({ x: ax, y: ay }, { x: cx, y: cy }, aspect, bounds));
         return;
       }
       emitRect({
-        x: Math.min(dragStart.x, cx),
-        y: Math.min(dragStart.y, cy),
-        width: Math.abs(cx - dragStart.x),
-        height: Math.abs(cy - dragStart.y),
+        x: Math.min(ax, cx),
+        y: Math.min(ay, cy),
+        width: Math.abs(cx - ax),
+        height: Math.abs(cy - ay),
       });
     }
   }
