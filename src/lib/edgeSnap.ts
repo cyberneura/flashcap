@@ -111,15 +111,19 @@ export function snapLinesFromPixels(
     let pr = data[base];
     let pg = data[base + 1];
     let pb = data[base + 2];
+    let pa = data[base + 3];
     for (let x = 1; x < w; x++) {
       const i = base + x * 4;
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      colScore[x] += Math.abs(r - pr) + Math.abs(g - pg) + Math.abs(b - pb);
+      const a = data[i + 3];
+      colScore[x] +=
+        Math.abs(r - pr) + Math.abs(g - pg) + Math.abs(b - pb) + Math.abs(a - pa);
       pr = r;
       pg = g;
       pb = b;
+      pa = a;
     }
     sampledRows++;
   }
@@ -138,7 +142,8 @@ export function snapLinesFromPixels(
       sum +=
         Math.abs(data[i] - data[j]) +
         Math.abs(data[i + 1] - data[j + 1]) +
-        Math.abs(data[i + 2] - data[j + 2]);
+        Math.abs(data[i + 2] - data[j + 2]) +
+        Math.abs(data[i + 3] - data[j + 3]);
     }
     rowScore[y] = sum;
   }
@@ -159,7 +164,10 @@ export function snapLinesFromPixels(
 function pickLines(score: Float64Array, size: number, samples: number): EdgeSnapRun[] {
   if (samples <= 0 || size < 2) return [];
 
-  // チャンネル 3 本ぶんの和なので、3 で割って 0-255 の平均差に戻す
+  // **4 チャンネルの和を 3 で割る。** 不透明な画像 (スクリーンショット = 主用途) では
+  // アルファ差が常に 0 なので、3 で割る限りスコアは従来とまったく同じになる。
+  // 4 で割ると主用途のスコアが一律 25% 下がって閾値の意味が変わってしまう。
+  // アルファだけが違う境界 (透明背景の上の不透明な図形) は、これで初めて見えるようになる
   const norm = samples * 3;
   const strength = new Float64Array(size);
   for (let i = 1; i < size; i++) strength[i] = score[i] / norm;

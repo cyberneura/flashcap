@@ -184,6 +184,48 @@ check("大きい画像でも実用的な速度で終わる", () => {
   assert.ok(elapsed < 1000, `${elapsed}ms かかった`);
 });
 
+check("アルファだけが違う境界も拾える", () => {
+  // Arrange: 透明な黒 (0,0,0,0) の上に、不透明な黒 (0,0,0,255) の矩形。
+  // RGB は全画素 0 なので、アルファを見ないと差分がゼロになって線が 1 本も出ない
+  const w = 400;
+  const h = 300;
+  const data = new Uint8Array(w * h * 4); // 全画素 (0,0,0,0)
+  for (let y = 50; y < 250; y++) {
+    for (let x = 100; x < 300; x++) data[(y * w + x) * 4 + 3] = 255;
+  }
+  // Act
+  const lines = snapLinesFromPixels(data, w, h);
+  // Assert
+  assert.ok(positionsOf(lines.xs, w).includes(100), `xs=${positionsOf(lines.xs, w)}`);
+  assert.ok(positionsOf(lines.xs, w).includes(300), `xs=${positionsOf(lines.xs, w)}`);
+  assert.ok(positionsOf(lines.ys, h).includes(50), `ys=${positionsOf(lines.ys, h)}`);
+  assert.ok(positionsOf(lines.ys, h).includes(250), `ys=${positionsOf(lines.ys, h)}`);
+});
+
+check("不透明な画像のスコアはアルファ導入前と変わらない", () => {
+  // Arrange: 同じ絵を「全画素不透明」で作る。アルファ差は常に 0 なので、
+  // 4 チャンネルの和を 3 で割る限り従来とスコアが一致するはず。
+  // 従来の値は blank/fillRect ベースのテスト群が担保しているので、ここでは
+  // 「アルファを変えても結果が動かないこと」を直接見る
+  const w = 400;
+  const h = 300;
+  const opaque = blank(w, h, [250, 250, 250]);
+  fillRect(opaque, w, 100, 50, 300, 250, [40, 90, 200]);
+  // 同じ絵で、アルファだけ一律に別の値 (128) にしたもの
+  const translucent = blank(w, h, [250, 250, 250]);
+  fillRect(translucent, w, 100, 50, 300, 250, [40, 90, 200]);
+  for (let i = 0; i < w * h; i++) translucent[i * 4 + 3] = 128;
+
+  // Act
+  const a = snapLinesFromPixels(opaque, w, h);
+  const b = snapLinesFromPixels(translucent, w, h);
+
+  // Assert: アルファが一様なら (255 でも 128 でも) 差分に寄与しないので同じ結果になる
+  assert.deepEqual(positionsOf(a.xs, w), positionsOf(b.xs, w));
+  assert.deepEqual(positionsOf(a.ys, h), positionsOf(b.ys, h));
+  assert.ok(positionsOf(a.xs, w).includes(100), `xs=${positionsOf(a.xs, w)}`);
+});
+
 // ---- 吸着先への変換 (snapPositions) ----
 
 check("近すぎる線は強い方だけが残る", () => {
