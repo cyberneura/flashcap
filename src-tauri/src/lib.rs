@@ -1037,6 +1037,21 @@ fn is_supported_image_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// コールド起動の argv から「開くべき画像」を決める
+///
+/// **`--capture` が入っていれば画像は無視する。** single-instance 経路は
+/// `request_capture()` を呼んだ時点で return してファイル引数を見ないので、
+/// こちらだけ両方処理すると `flashcap --capture foo.png` の結果が起動状態で変わる
+/// (コールドだけ open-file と do-capture が同時に飛び、loadImageFile() と
+/// captureScreen() が並走して、後に終わった方が表示を上書きする)。
+fn image_args_for_startup<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
+    let args: Vec<String> = args.into_iter().collect();
+    if args.iter().any(|a| a == "--capture") {
+        return Vec::new();
+    }
+    collect_image_args(args)
+}
+
 /// コマンドライン引数から、実在する対応画像ファイルだけを取り出す
 ///
 /// `--capture` のようなフラグや OS が足す引数 (`-psn_0_...` 等) は拡張子を持たないので
@@ -1195,12 +1210,13 @@ pub fn run() {
 
                 // コールド起動の引数で渡された画像 (ターミナルからの `flashcap foo.png`)。
                 // 起動中に同じコマンドを叩くと single-instance 側が argv で受けて開けるのに、
-                // コールド起動だけ無視していたので揃える。
+                // コールド起動だけ無視していたので揃える (--capture との優先順位も
+                // image_args_for_startup が single-instance 経路に合わせている)。
                 //
                 // Finder の「このアプリケーションで開く」はここには来ない。起動中でも
                 // コールド起動でも LaunchServices は openURLs を送るので (起動中のアプリに
                 // 2 個目のプロセスは立たない)、あちらは RunEvent::Opened 側で受ける
-                request_open_files(&handle, collect_image_args(std::env::args().skip(1)));
+                request_open_files(&handle, image_args_for_startup(std::env::args().skip(1)));
 
                 let handle_cb = handle.clone();
                 app.once_any("frontend-ready", move |_| {
@@ -1505,6 +1521,27 @@ mod tests {
         assert!(handshake.is_open_pending(), "預かり中が見えていない");
         handshake.mark_ready();
         assert!(!handshake.is_open_pending(), "取り出した後も残っている");
+    }
+
+    #[test]
+    fn capture_flag_wins_over_image_arguments_on_cold_start() {
+        // Arrange: 実在する画像 + --capture を同時に渡す
+        let tmp = TempDir::new("precedence");
+        let image = tmp.path().join("shot.png");
+        std::fs::write(&image, b"x").unwrap();
+        let path = image.to_string_lossy().to_string();
+
+        // Act
+        let with_capture =
+            image_args_for_startup(vec!["--capture".to_string(), path.clone()]);
+        let without_capture = image_args_for_startup(vec![path.clone()]);
+
+        // Assert: single-instance 経路と同じ優先順位 (capture ならファイルは見ない)
+        assert!(
+            with_capture.is_empty(),
+            "--capture と同時に画像を開こうとしている: {with_capture:?}"
+        );
+        assert_eq!(without_capture, vec![path]);
     }
 
     #[test]

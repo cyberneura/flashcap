@@ -69,6 +69,10 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 - Finder の「このアプリケーションで開く」は起動中でもコールド起動でも `RunEvent::Opened`
   で来る (起動中のアプリに 2 個目のプロセスは立たない)。argv で来るのはターミナルからの
   `flashcap foo.png` だけ。
+- **argv で `--capture` と画像を同時に渡された時は capture を優先する**
+  (`image_args_for_startup`)。single-instance 経路は `request_capture()` の後に return して
+  ファイル引数を見ないので、コールド起動だけ両方処理すると同じコマンドの結果が
+  起動状態で変わる (`loadImageFile()` と `captureScreen()` が並走して後勝ちになる)。
 - `captureScreen()` の `finally` ではガードフラグ `isCapturing` を `show()`/`setFocus()` の
   await が**全部終わった後**に false へ戻す。先に戻すと復元中の `do-capture` が新キャプチャーを
   開始してインターリーブする。
