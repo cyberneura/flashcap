@@ -1,0 +1,67 @@
+# jj-menu (https://github.com/cyberneura/jj-menu) 用のメニュー定義。
+#
+# 各エントリのコマンドは、jj-menu が組み立てて**呼び出し元のシェルで eval される**。
+# そのため、複数手順は必ず `&&` で繋いで fail-fast にすること (jj-menu は
+# リストの各行を改行で連結するだけで、`set -e` も `&&` も足さない)。
+# `cd` を含むものはサブシェルで囲み、実行後に作業ディレクトリを動かさない。
+menu:
+  - title: 開発サーバーを起動
+    help: >
+      vite の dev サーバーを立ててから Tauri のネイティブウインドウを開く
+      (frontendDist ではなく devUrl http://localhost:1420 を読む)。
+      **この URL を普通のブラウザで開いても画面は出ない。** フロントは Tauri の
+      IPC (invoke) 越しにデータを取るので、IPC の無いブラウザでは初期化が失敗する。
+      見た目の確認もネイティブウインドウ側で行うこと。
+      Rust 側を触った場合は自動で再ビルドされるぶん、初回起動より時間がかかる。
+      終了は Ctrl-C。**アプリ側で Esc を押しても dev セッションごと終わる** —
+      Esc はウインドウを閉じ、main が唯一のウインドウで `ExitRequested` を
+      prevent していないのでプロセスごと落ちるため。
+    shell: ( cd "$(git rev-parse --show-toplevel)" && pnpm tauri dev )
+
+  - title: ビルドして署名 (手元確認用。配布物ではない)
+    help: >
+      この Mac のアーキテクチャ向けに .app と dmg を作り、Developer ID Application で署名する。
+      署名 identity は package.json の `tauri` スクリプトが env で渡している
+      (tauri.conf.json の signingIdentity "-" より env が優先されるため、素の
+      `pnpm exec tauri build` だと ad-hoc 署名になる。だからここは `pnpm tauri build` を使う)。
+      **公証 (notarization) と staple は通らない。** 公証クレデンシャルは GitHub Secrets に
+      しか無いので、この dmg を他人の Mac に配ると Gatekeeper に弾かれる。配布物を作るなら
+      下の「リリース」を使うこと。
+      **universal ではない。** `--target` を渡していないのでホストアーキ 1 つぶんしか作らない
+      (手元で動かして確かめるのが目的なので、両アーキ作る時間は無駄)。universal が要るなら
+      `--target universal-apple-darwin` を足す。CI (release.yml) はそちらでビルドしている。
+      成果物: src-tauri/target/release/bundle/dmg/
+    shell: ( cd "$(git rev-parse --show-toplevel)" && pnpm tauri build )
+
+  - title: リリース (GitHub Actions で署名+公証してビルド)
+    help: >
+      version を採番して main へ push し、GitHub Actions の release ワークフローを起動して
+      完了まで watch する。公開されるのは署名+公証済みの universal dmg。
+      **作業ツリーがクリーンで、HEAD == origin/main でないと止まる** (ビルドは origin/main の
+      内容で走るため)。version は毎回インクリメントされる — 公開済みと同じ version で
+      再実行すると tauri-action が draft 状態の不一致でエラーになるので、採番は自動化してある。
+      引数は patch / minor / major。
+    shell: ( cd "$(git rev-parse --show-toplevel)" && pnpm release {bump} )
+    args:
+      - name: bump
+        prompt: バージョンの上げ方 (patch / minor / major)
+
+  - title: 型チェックとテスト
+    help: >
+      フロント (svelte-check) → 境界線検出と縦横比のテスト (pnpm test) → Rust (cargo test)
+      を順に流す。
+      fail-fast なので、落ちたところで止まる。
+      コミット前の確認用。cargo test は src-tauri で走らせる必要があるのでサブシェルで cd する。
+      svelte-check の警告 60 件ほどは Tailwind の `@apply` を VS Code の CSS 言語サーバーが
+      知らないために出るもので、0 errors なら通っている。
+    shell: >-
+      ( cd "$(git rev-parse --show-toplevel)" && pnpm check && pnpm test &&
+      cd src-tauri && cargo test )
+
+  - title: 保存先フォルダを開く
+    help: >
+      スクリーンショットの既定の保存先 ($TMPDIR/flashcap) を Finder で開く。
+      **/tmp ではない。** /tmp は mode 1777 で同じ Mac の別アカウントから中身を読めるが、
+      このアプリが書くのは画面に映っていたものそのものなので、所有者専用の $TMPDIR を使う。
+      Preferences で保存先を変えている場合、ここで開くのは既定の方なので中身が違う。
+    shell: open "${TMPDIR%/}/flashcap"

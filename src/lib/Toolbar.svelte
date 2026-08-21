@@ -6,6 +6,7 @@
     ShapeSettings,
     TextSettings,
   } from "$lib/types";
+  import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
 
   let {
     arrowToolActive,
@@ -14,8 +15,12 @@
     textToolActive,
     cropToolActive,
     cropRect,
+    cropSnapEnabled,
+    cropAspect,
     hasImage,
     onToggleCropTool,
+    onToggleCropSnap,
+    onToggleCropAspect,
     onApplyCrop,
     onResetCrop,
     onCancelCrop,
@@ -54,8 +59,12 @@
     textToolActive: boolean;
     cropToolActive: boolean;
     cropRect: CropRect | null;
+    cropSnapEnabled: boolean;
+    cropAspect: number | null;
     hasImage: boolean;
     onToggleCropTool: () => void;
+    onToggleCropSnap: () => void;
+    onToggleCropAspect: (ratio: number) => void;
     onApplyCrop: () => void;
     onResetCrop: () => void;
     onCancelCrop: () => void;
@@ -355,7 +364,41 @@
       <span class="text-xs text-neutral-200 tabular-nums text-center min-w-[5.5rem]">
         {cropRect ? `${Math.round(cropRect.width)} × ${Math.round(cropRect.height)}` : "—"}
       </span>
-      <button class="crop-action" onclick={onResetCrop} data-tooltip="Select the whole image">
+      <button
+        class="crop-action crop-ratio"
+        class:active={cropAspect === ASPECT_SQUARE}
+        onclick={() => onToggleCropAspect(ASPECT_SQUARE)}
+        aria-pressed={cropAspect === ASPECT_SQUARE}
+        data-tooltip="Lock the aspect ratio to a square"
+      >
+        1:1
+      </button>
+      <button
+        class="crop-action crop-ratio"
+        class:active={cropAspect === ASPECT_WIDESCREEN}
+        onclick={() => onToggleCropAspect(ASPECT_WIDESCREEN)}
+        aria-pressed={cropAspect === ASPECT_WIDESCREEN}
+        data-tooltip="Lock the aspect ratio to 16:9"
+      >
+        16:9
+      </button>
+      <button
+        class="crop-action crop-snap"
+        class:active={cropSnapEnabled}
+        onclick={onToggleCropSnap}
+        aria-pressed={cropSnapEnabled}
+        aria-label="Snap to edges"
+        data-tooltip="Snap to edges in the image"
+      >
+        <i class="bi bi-magnet"></i>
+      </button>
+      <button
+        class="crop-action"
+        onclick={onResetCrop}
+        data-tooltip={cropAspect === null
+          ? "Select the whole image"
+          : "Select the largest area with this ratio"}
+      >
         Reset
       </button>
       <button class="crop-action" onclick={onCancelCrop} data-tooltip="Cancel (Esc)">
@@ -550,6 +593,24 @@
 
   .crop-action:hover {
     @apply bg-neutral-500;
+  }
+
+  .crop-snap {
+    @apply px-2 text-sm leading-none;
+  }
+
+  .crop-ratio {
+    @apply px-2 tabular-nums;
+  }
+
+  .crop-snap.active,
+  .crop-ratio.active {
+    @apply bg-blue-600 text-white;
+  }
+
+  .crop-snap.active:hover,
+  .crop-ratio.active:hover {
+    @apply bg-blue-500;
   }
 
   .crop-apply {
