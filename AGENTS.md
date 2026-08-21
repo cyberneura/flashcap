@@ -60,6 +60,8 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   → 経路側で `show()` を足すと show→hide の点滅が起きるので追加しないこと。
   `request_open_files()` も未 ready の時は show しない (白いウィンドウが見えるだけ。
   こちらは点滅ではなく描画前表示が理由で、キャプチャー側とは事情が違う)。
+  **2 秒フェイルセーフも、キャプチャー予約中と画像の預かり中は表示しない。**
+  ここで出すと「未 ready なら show しない」を裏口から破ることになる。
 - **フロントは、預かり対象のリスナーが全部登録され終わってから `frontend-ready` を
   一度だけ emit する** (`+page.svelte` の `Promise.allSettled([unlistenDoCapture,
   unlistenOpenFile])`)。**預かるイベントを増やしたらこの配列にも足すこと。**

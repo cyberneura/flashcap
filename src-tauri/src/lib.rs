@@ -993,6 +993,10 @@ impl FrontendHandshake {
     fn is_capture_pending(&self) -> bool {
         self.lock().capture_pending
     }
+
+    fn is_open_pending(&self) -> bool {
+        !self.lock().pending_files.is_empty()
+    }
 }
 
 /// フロントエンドにキャプチャー開始 (do-capture) を通知する。
@@ -1230,6 +1234,12 @@ pub fn run() {
                 // show → captureScreen の hide で点滅するため。予約中に frontend が
                 // 永久に来ない場合はそもそも captureScreen が動かずキャプチャー不能なので、
                 // 空ウィンドウを出しても無意味。
+                // **画像の預かり中も同じ理由で表示しない。** request_open_files() が
+                // 「未 ready なら show しない」としているのに、ここで出してしまうと
+                // 低速環境で白いウィンドウが 2 秒時点で出てから画像が入ることになり、
+                // ハンドシェイクで避けたかった見え方をこちらが作ってしまう。
+                // frontend が永久に来なければ open-file も処理できないので、
+                // 空ウィンドウを出す意味が無いのもキャプチャーと同じ。
                 // ヘッドレス OCR 中も同様に表示しない (撮影に写り込むため。OCR は
                 // フロントを使わないので、ウィンドウが出ないままでも困らない)。
                 tauri::async_runtime::spawn(async move {
@@ -1237,6 +1247,7 @@ pub fn run() {
                     let handshake = handle.state::<FrontendHandshake>();
                     if !handshake.is_ready()
                         && !handshake.is_capture_pending()
+                        && !handshake.is_open_pending()
                         && !headless_ocr_requested()
                     {
                         if let Some(w) = handle.get_webview_window("main") {
@@ -1479,6 +1490,21 @@ mod tests {
         assert!(first.capture);
         assert!(second.files.is_empty());
         assert!(!second.capture);
+    }
+
+    #[test]
+    fn pending_work_is_visible_to_the_startup_fallback() {
+        // Arrange: 2 秒フェイルセーフは「預かり中なら表示しない」を判定に使う
+        let handshake = FrontendHandshake::default();
+        assert!(!handshake.is_open_pending());
+
+        // Act
+        handshake.request_open_files(vec!["/tmp/a.png".to_string()]);
+
+        // Assert: 預かっている間は true、取り出したら false に戻る
+        assert!(handshake.is_open_pending(), "預かり中が見えていない");
+        handshake.mark_ready();
+        assert!(!handshake.is_open_pending(), "取り出した後も残っている");
     }
 
     #[test]
