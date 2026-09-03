@@ -8,15 +8,26 @@ A macOS screenshot capture & annotation app.
 
 ## Download
 
+### Homebrew (macOS)
+
+```shell
+brew install --cask cyberneura/tap/flashcap
+```
+
+### Manual download
+
 Get the latest `flashcap_x.y.z_universal.dmg` from the
 [Releases](https://github.com/cyberneura/flashcap/releases) page and drag the app into
 `/Applications`.
 
-The dmg is signed with a Developer ID certificate and notarized by Apple, so it
-passes Gatekeeper — no "unidentified developer" warning, and no
-`xattr -dr com.apple.quarantine` workaround. macOS still shows the usual
-"downloaded from the Internet, are you sure you want to open it?" confirmation
-on first launch. The binary is universal (Intel + Apple Silicon).
+## First launch
+
+Both methods install the same app from the same dmg. It is signed with a
+Developer ID certificate and notarized by Apple, so it passes Gatekeeper — no
+"unidentified developer" warning, and no `xattr -dr com.apple.quarantine`
+workaround. macOS still shows the usual "downloaded from the Internet, are you
+sure you want to open it?" confirmation on first launch. The binary is universal
+(Intel + Apple Silicon).
 
 macOS grants the app Screen Recording permission on first capture
 (System Settings → Privacy & Security → Screen Recording).
