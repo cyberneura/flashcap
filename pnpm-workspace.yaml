@@ -1,0 +1,12 @@
+# @sveltejs/kit は cookie@0.6.0 を固定しているため、直接依存を最新にしても
+# cookie の既知脆弱性 (GHSA-pxg6-pf52-xh8x: 範囲外文字を含む name / path / domain を
+# 受理する) が pnpm audit に残り続ける。この 1 件のみ override で patch 済み
+# バージョンへ引き上げる。
+# 上限を <1.0.0 で固定し、API 破壊変更のある cookie 1.x が混入して SvelteKit の
+# cookie パース / シリアライズ互換性を壊さないようにする (0.7.x は 0.6.x と API 互換) 。
+#
+# このアプリは adapter-static + `export const ssr = false` で、サーバーランタイムは
+# 出荷されない。そのため実害はほぼ無いが、放置すると本物の advisory が出た時に
+# audit のノイズに埋もれるので塞いでおく。
+overrides:
+  cookie: '>=0.7.0 <1.0.0'
