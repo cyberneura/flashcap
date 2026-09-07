@@ -11,7 +11,7 @@ macOS screenshot capture & annotation app.
 - `pnpm test` - Edge-snap / crop-aspect の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and run the GitHub Actions release build
 
-`jj-menu.yaml` にも同じ操作を並べてある (`jj` で選ぶ)。
+`j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
 
 ## Architecture
 
