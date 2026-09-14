@@ -14,6 +14,7 @@
 //! だけ。貼り付け・ファイルを開く・OCR・動画は撮影ではないのでコピーしない。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::image::Image;
@@ -33,9 +34,15 @@ const TRAY_ID: &str = "auto-copy";
 ///
 /// コピーは撮影ごとに別スレッドで走るので、完了順は撮影順と一致しない (画像の
 /// デコードは大きい画像ほど遅い)。書き込む直前にこれと照合し、後の撮影に
-/// 追い越されたコピーは捨てる。照合から書き込みまでの間に次の撮影が割り込む
-/// 余地は残るが、撮影は人の操作 (範囲選択) を挟むので実用上は起きない
+/// 追い越されたコピーは捨てる
 static LATEST_CAPTURE: AtomicU64 = AtomicU64::new(0);
+
+/// 「最新の撮影か」の照合とクリップボードへの書き込みをまとめて直列にする
+///
+/// 照合だけでは足りない。照合を通った先の撮影の書き込みが遅いと、その間に後の撮影が
+/// 照合と書き込みを終え、先の撮影が最後にクリップボードを上書きしてしまう。
+/// デコードはこのロックの外で行うので、待たされるのは書き込みの間だけ
+static CLIPBOARD_WRITE: Mutex<()> = Mutex::new(());
 
 /// メニューバーのアイコンを置けたか
 ///
@@ -222,23 +229,32 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
     let data = (mode == AutoCopyMode::Image).then(|| result.data.clone());
 
     tauri::async_runtime::spawn_blocking(move || {
-        let outcome = match data {
-            Some(data) => decode_image(&data).and_then(|image| {
-                if !is_latest_capture(generation) {
-                    return Ok(None);
-                }
-                app.clipboard()
-                    .write_image(&image)
-                    .map(|_| Some("Copied the image to the clipboard"))
-                    .map_err(|e| format!("Failed to copy the image: {}", e))
-            }),
-            None if !is_latest_capture(generation) => Ok(None),
-            None => app
-                .clipboard()
+        let image = match data.as_deref().map(decode_image).transpose() {
+            Ok(image) => image,
+            Err(e) => {
+                crate::ocr::notify("FlashCap", &e);
+                return;
+            }
+        };
+
+        // 中身は無いので、他のスレッドが書き込み中に panic していても続行してよい
+        let guard = CLIPBOARD_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let outcome = if !is_latest_capture(generation) {
+            Ok(None)
+        } else if let Some(image) = image {
+            app.clipboard()
+                .write_image(&image)
+                .map(|_| Some("Copied the image to the clipboard"))
+                .map_err(|e| format!("Failed to copy the image: {}", e))
+        } else {
+            app.clipboard()
                 .write_text(file_path)
                 .map(|_| Some("Copied the image path to the clipboard"))
-                .map_err(|e| format!("Failed to copy the image path: {}", e)),
+                .map_err(|e| format!("Failed to copy the image path: {}", e))
         };
+        // 通知 (osascript の起動) の間まで次の撮影の書き込みを待たせない
+        drop(guard);
+
         match outcome {
             Ok(Some(message)) => crate::ocr::notify("FlashCap", message),
             // 後の撮影に追い越された。クリップボードは後の撮影の分が入る
