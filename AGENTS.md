@@ -186,6 +186,27 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   padding を含む寸法なので、引かずに使うと 40px 過大に見積もり、画像が content box を
   はみ出して flex の中央寄せに負の余白が渡る → 「左に余白 / 右は切れる」の非対称になる。
 
+## 撮影後の自動コピーとメニューバーのアイコン (src-tauri/src/auto_copy.rs)
+
+- メニューバーにアイコンを 1 つ置き、クリックで開くネイティブメニューから
+  「Don't copy / Copy the image file path / Copy the image data」を選ぶ (CYBERNEURA-DEV-761)。
+  幅を取らないことが要件なので、ポップアップウインドウではなくメニューにしている。
+- 選択は `settings.json` の `auto_copy_on_capture` (`none` / `path` / `image`) に保存する。
+  **未設定・未知の値は `none`** — この機能より前から使っている人の撮影で、いきなり
+  クリップボードを書き換え始めないため。
+- コピーするのは撮影 (`take_screenshot_interactive` / `take_screenshot_timer`) の結果だけ。
+  貼り付け・ファイルを開く・OCR・動画は対象外。コピーと通知 (`ocr::notify` の osascript) は
+  `spawn_blocking` に逃がしてあり、撮影結果の返却 (= ウインドウの再表示) を待たせない。
+  その代わり完了順が撮影順と一致しないので、撮影ごとの通し番号 (`LATEST_CAPTURE`) を
+  書き込む直前に照合し、後の撮影に追い越されたコピーは捨てる。
+- `CheckMenuItem` は押した時点で OS 側がチェックを反転させるので、選択中の項目を押し直すと
+  外れる。`select_mode()` が全項目のチェックを付け直してラジオボタンとして振る舞わせている。
+- アイコンは `src-tauri/icons/tray/auto-copy-{none,path,image}.png` (36x36 のテンプレート画像。
+  tray-icon crate が高さ 18pt に揃えるので Retina で等倍)。**手で描き直さず
+  `python3 scripts/make-tray-icons.py` で作り直す** (標準ライブラリだけで動く)。
+- ヘッドレス OCR (`--capture-screen-text` のコールド起動) ではアイコンを置かない
+  (終わり次第プロセスごと終了するので、一瞬出て消えるだけになる)。
+
 ## Rust Commands (src-tauri/src/lib.rs)
 
 - `take_screenshot_interactive` - Standard interactive capture (`screencapture -i`)

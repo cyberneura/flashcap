@@ -44,6 +44,7 @@ fails, install them with `xcode-select --install`.
 - Crop tool (drag to select, Enter to apply, annotations move with the image)
 - OCR text recognition (macOS Vision Framework, Japanese/English)
 - Clipboard integration (copy path or image)
+- Menu bar icon to auto-copy each capture (off / file path / image data), with a notification
 - Drag & drop to external apps (e.g. Slack)
 - Configurable save location (tmp / macOS default / custom folder)
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation)
