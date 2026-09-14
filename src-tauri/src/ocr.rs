@@ -4,7 +4,7 @@ use std::process::Stdio;
 use tauri::Manager;
 
 /// macOS 通知センターに通知を表示
-fn notify(title: &str, body: &str) {
+pub(crate) fn notify(title: &str, body: &str) {
     let _ = std::process::Command::new("osascript")
         .args([
             "-e",

@@ -1,6 +1,7 @@
 // objc 0.2 の msg_send! マクロ展開時に出る unexpected_cfgs(cargo-clippy)警告を抑制
 #![allow(unexpected_cfgs)]
 
+mod auto_copy;
 mod ocr;
 mod video;
 
@@ -580,6 +581,7 @@ async fn take_screenshot_interactive(
     }
 
     let result = load_image_result(file_path)?;
+    auto_copy::copy_after_capture(&app, &result);
     resize_window_for_image(&app, result.width, result.height);
     Ok(result)
 }
@@ -629,6 +631,7 @@ async fn take_screenshot_timer(
     }
 
     let result = load_image_result(file_path)?;
+    auto_copy::copy_after_capture(&app, &result);
     resize_window_for_image(&app, result.width, result.height);
     Ok(result)
 }
@@ -1189,6 +1192,11 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     ocr::run_headless_ocr(&handle, true).await;
                 });
+            } else if let Err(e) = auto_copy::setup_tray(app.handle()) {
+                // メニューバーのアイコン (撮影後の自動コピーの切り替え)。
+                // ヘッドレス OCR は終わり次第プロセスごと終了するので、置いても一瞬で消えるだけ。
+                // 置けなくても撮影には関係ないので、起動は止めない
+                eprintln!("[flashcap] Failed to set up the menu bar icon: {}", e);
             }
 
             // 通常起動時はメインウィンドウを表示してアクティブにする
