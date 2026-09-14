@@ -13,7 +13,7 @@
 //! 自動コピーの対象は「撮影」(take_screenshot_interactive / take_screenshot_timer)
 //! だけ。貼り付け・ファイルを開く・OCR・動画は撮影ではないのでコピーしない。
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::image::Image;
@@ -36,6 +36,14 @@ const TRAY_ID: &str = "auto-copy";
 /// 追い越されたコピーは捨てる。照合から書き込みまでの間に次の撮影が割り込む
 /// 余地は残るが、撮影は人の操作 (範囲選択) を挟むので実用上は起きない
 static LATEST_CAPTURE: AtomicU64 = AtomicU64::new(0);
+
+/// メニューバーのアイコンを置けたか
+///
+/// **置けなかったセッションでは保存値に関わらずコピーしない。** 切り替えの UI は
+/// このアイコンのメニューしか無いので、保存値が path / image のままだと、
+/// 撮影のたびにクリップボードが書き換わるのに止める手段が無くなる。
+/// 保存値そのものは書き換えない (次にアイコンを置けた起動では選択が戻る)
+static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
 
 /// 撮影後に何をクリップボードへ入れるか
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +174,7 @@ pub(crate) fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    TRAY_AVAILABLE.store(true, Ordering::SeqCst);
     Ok(())
 }
 
@@ -202,7 +211,7 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
     // コピーしない設定の撮影でも番号は進める。先の撮影のコピーが後から終わって、
     // 後の撮影の直後にクリップボードを書き換えるのを防ぐため
     let generation = next_capture_generation();
-    let mode = current_mode(app);
+    let mode = effective_mode(TRAY_AVAILABLE.load(Ordering::SeqCst), || current_mode(app));
     if mode == AutoCopyMode::None {
         return;
     }
@@ -239,6 +248,16 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
     });
 }
 
+/// 撮影後に実際に使うモード。アイコンを置けていなければ保存値を読まずにコピーしない
+/// (理由は TRAY_AVAILABLE を参照)
+fn effective_mode(tray_available: bool, stored: impl FnOnce() -> AutoCopyMode) -> AutoCopyMode {
+    if tray_available {
+        stored()
+    } else {
+        AutoCopyMode::None
+    }
+}
+
 /// 撮影ごとの通し番号を 1 つ進め、今回の番号を返す
 fn next_capture_generation() -> u64 {
     LATEST_CAPTURE.fetch_add(1, Ordering::SeqCst) + 1
@@ -263,6 +282,15 @@ mod tests {
     fn settings_round_trip() {
         for mode in AutoCopyMode::ALL {
             assert_eq!(AutoCopyMode::from_setting(Some(mode.as_setting())), mode);
+        }
+    }
+
+    #[test]
+    fn without_the_menubar_icon_nothing_is_copied() {
+        // 切り替えの UI が無いのに保存値どおりコピーし続けないこと
+        for stored in AutoCopyMode::ALL {
+            assert_eq!(effective_mode(false, || stored), AutoCopyMode::None);
+            assert_eq!(effective_mode(true, || stored), stored);
         }
     }
 
