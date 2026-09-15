@@ -1,12 +1,23 @@
 name: Release
 
-# リリースは手動実行 (workflow_dispatch) のみ。push では自動ビルドしない。
-# ローカルからは `pnpm release` で起動する。
-# PR では test ジョブだけが走る (build 以降は if で止めてある)。門番のテストを
-# マージ前に同じ定義で回すためで、リリース経路とテストの内容がずれない。
+# リリースは main の src-tauri/tauri.conf.json の version で決まる。まだリリースされて
+# いない (かつ公開中の最新より新しい) version を main に載せればリリースされ、
+# リリース済みの version のままなら何度 push しても何も起きない。
+# ローカルからは `pnpm release [patch|minor|major]` (scripts/release.sh) で採番して
+# push する。PR の中で version を上げてマージしても同じようにリリースされる。
+#
+# 実行可否を決めるのは diff ではなく「その version がリリース済みか」。squash / rebase /
+# 直 push で diff は変わるが結果は変わらない (冪等)。path フィルターを付けないのも
+# 同じ理由で、bump が想定外の形で入っても取りこぼさないため。
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+  # PR では test ジョブだけが走る (plan 以降は if で止めてある)。門番のテストを
+  # マージ前に同じ定義で回すためで、リリース経路とテストの内容がずれない。
   pull_request:
+  # version は正しいのに、その時の run が (API の一時障害等で) 失敗した場合の再実行用。
+  # 同じ判定を通るので、公開済みの version をもう一度出すことはできない。
+  workflow_dispatch:
 
 # 既定は権限なし。必要な job にだけ与える。特に test は PR が持ち込んだコードを
 # 実行するので contents: read までしか渡さない (同一リポジトリからの PR では
@@ -20,14 +31,19 @@ on:
 # 権限を持つ相手だけなので、そちらも権限の昇格にはならない。
 permissions: {}
 
-# 同時に走らないよう直列化する。1 回の dispatch が 1 つの version に対応するため、
-# キャンセルされた run の version は (bump コミットは main に載ったまま) 永久に公開
-# されない状態になる。走行中を守る cancel-in-progress: false だけでは不十分で、
-# 既定の queue: single は pending を 1 件しか保持せず、新しい dispatch が既存 pending を
-# 置き換えてしまう (走行中 1 + dispatch 2 回で真ん中の version が消える)。queue: max は
-# pending を 100 件まで積む。queue: max と cancel-in-progress: true の併用は不可。
+# 同時に走らないよう直列化する。run 単位で直列なので、後続の run の plan は先行 run の
+# publish が終わってから走り、同じ version を二重にビルドしない。ただし pending の
+# 消化順は push 順とは限らない (GitHub は開始順を保証しない)。新しい version が先に
+# 公開された後で古い version の run が回ってきても、plan が「最新より古い」で止める。
+# run を取りこぼすと、その version は次に main へ push (または dispatch) されるまで
+# 公開されない。取りこぼさないために 2 つとも要る:
+#   cancel-in-progress: false — 走行中の run を後発でキャンセルしない。
+#   queue: max — pending も最大 100 件まで積む。既定の `queue: single` は pending を
+#     1 件しか保持せず、新しい run が既存 pending を置き換える (走行中 1 + push 2 回で
+#     真ん中の run が消える)。
+# (queue: max と cancel-in-progress: true の併用は validation error になる)
 #
-# PR の検査 run は「1 dispatch = 1 version」の直列化とは無関係なので、リリース用の
+# PR の検査 run は「1 push = 1 version」の直列化とは無関係なので、リリース用の
 # グループへ入れない。同じグループにすると PR が 1 本走るだけでリリースが pending に
 # 積まれる (cancel-in-progress: false なので待たされ続ける)。さらに commit ごとに
 # 別グループにして、PR 側では直列化そのものを効かせない — ここで PR をまとめると
@@ -39,6 +55,57 @@ concurrency:
   queue: max
 
 jobs:
+  # ビルドに macOS ランナーを使う前に、その version がまだリリースされておらず、
+  # 公開中の最新より新しいことを確かめる。ここが false を返す限り、main への push の
+  # たびに macOS ランナーが動くことはない。
+  # PR ではリリース判定そのものが無意味なので走らせない。この job が skipped に
+  # なると、依存している build / publish も (always() を使っていないので) skipped に
+  # なる — PR では test だけが動く。
+  plan:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      # dispatch は自分の ref を指定できる。未公開 version を載せたブランチが、
+      # そのブランチの内容でリリースされてしまわないようにする (push では main 以外
+      # 起こり得ないが、dispatch では起こる)。
+      - name: Refuse to release from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::releases come from main, and this run is on ${REF}"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # 判定の中身は scripts/release-decide.sh。publish が公開直前にも同じ判定を使う。
+      # `release=$(...)` を代入で受けるのは、スクリプトの失敗 (判定不能) で step を
+      # 落とすため (echo の引数の中でコマンド置換が失敗しても -e は効かない)。
+      - name: Decide whether this version still needs releasing
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          release=$(bash scripts/release-decide.sh)
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
   # リリースビルドの門番。方針: cyberneura/cyberneura-github-actions の
   # docs/build-requires-tests.md
   #
@@ -46,6 +113,18 @@ jobs:
   # screencapture / sips / NSPasteboard を叩く macOS 専用コードで、ubuntu では
   # そもそもコンパイルが通らない (通ったとしても配布物と別のコードを検査したことになる)。
   test:
+    # push / dispatch では、実際にリリースする version の時だけ走らせる。plan を
+    # 通さず無条件に走らせると、リリースを伴わない main への push のたびに
+    # macOS ランナーが動く — plan を置いた目的そのものが無くなる。
+    # PR では plan が skipped になり、既定ではこの job も道連れで skipped になる
+    # ので、!cancelled() で自動スキップを外してからイベント名で判定する
+    # (plan が失敗した時は needs.plan.result で止まる)。
+    needs: plan
+    if: >-
+      ${{ !cancelled()
+          && (github.event_name == 'pull_request'
+              || (needs.plan.result == 'success'
+                  && needs.plan.outputs.release == 'true')) }}
     runs-on: macos-latest
     timeout-minutes: 45
     permissions:
@@ -101,9 +180,11 @@ jobs:
   build:
     # test を通らずにビルドしない。needs は同じ run の job にしか効かないので、
     # テストを別 workflow に切り出さないこと。
-    needs: test
+    needs: [plan, test]
     # PR では成果物を作らない (Apple の証明書を PR のコードに触らせないためでもある)。
-    if: github.event_name != 'pull_request'
+    # PR では plan が skipped なので下の判定だけでも止まるが、証明書を扱う job なので
+    # イベント名でも明示的に止める。
+    if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
     runs-on: macos-latest
     permissions:
       contents: write
@@ -213,9 +294,10 @@ jobs:
       # tauri.conf.json の version から v<version> タグの Release を作成し、
       # ビルド成果物をアップロードする。ビルドが途中で失敗しても不完全な Release が
       # 公開されないよう draft で作成し、成功後に publish ジョブで公開する。
-      # 注意: 公開済みバージョンと同じ version で再実行すると、tauri-action が
-      # draft 状態の不一致でエラーになる。必ず version を上げてから実行すること
-      # (`pnpm release` が自動で採番する)。
+      # 公開済みバージョンと同じ version でここまで来ると、tauri-action が draft 状態の
+      # 不一致でエラーになる。plan が公開済みの version を止めるので通常は起きない。
+      # 失敗した run が残した draft は、tauri-action が tag 名で探して再利用し、同名の
+      # asset を差し替える (target_commitish は draft を作った時のまま。publish で直す)。
       # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う。
       # このジョブは Apple の秘密鍵入り証明書を keychain に置くため、`uses:` は
       # すべて可変タグではなく commit SHA に固定してある (タグが差し替えられると
@@ -248,7 +330,8 @@ jobs:
   # ビルド・アップロードが成功した時のみ draft を公開する。
   # 失敗した場合は draft のまま残る (不完全な Release は公開されない)。
   publish:
-    needs: build
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -259,9 +342,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # --target: 再利用した draft は、最初に draft を作った run の commit を target に
+      # 持ったまま。失敗後に別の commit で作り直した場合、そのまま公開すると tag が
+      # 古い commit に付き、中身 (この run の commit でビルドした dmg) と食い違う。
+      # tag は draft を公開した時に作られるので、ここで target を合わせれば足りる。
+      #
+      # 公開直前に plan と同じ判定をやり直す。「Re-run failed jobs」は成功済みの plan を
+      # 再実行せず当時の release=true を使い回すので、その間に新しい version が
+      # 公開されていると --latest で最新を巻き戻してしまう。止めた場合 draft は残る。
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          gh release edit "v${VERSION}" --draft=false --latest
+          release=$(VERSION="$VERSION" bash scripts/release-decide.sh)
+          if [ "$release" != "true" ]; then
+            echo "::error::v${VERSION} should no longer be published (see the message above); leaving the draft as it is."
+            exit 1
+          fi
+          gh release edit "v${VERSION}" --draft=false --latest --target "${GITHUB_SHA}"
