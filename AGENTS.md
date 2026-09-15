@@ -243,8 +243,10 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   - **録画の範囲選択中 (タイマーのカウントダウン中を含む) は Open だけを受け付け、範囲選択を
     やめてメインウインドウに戻す**。カウントダウン中のオーバーレイはクリックを透過するので、
     他のアプリを触った後は Esc が届かず、ここがキャンセルの手段になる。
-  - **撮影 / OCR の範囲選択中は何もしない** (`CAPTURES_IN_PROGRESS`。撮影コマンドと
-    `screencapture_and_ocr` が `CaptureInProgress` のガードで数える)。メニューはフロントの
+  - **撮影中 / OCR 中は何もしない** (`CAPTURES_IN_PROGRESS`。撮影コマンドと
+    `screencapture_and_ocr` が `CaptureInProgress` のガードで数える。OCR は文字認識が
+    終わるまで数える — ツールバーの `ocrCaptureRegion()` は終わった後にメインウインドウを
+    戻すので、認識中に始まった撮影に写り込む)。メニューはフロントの
     `isCapturing` を見られないので、Rust 側で数えている。
 - 録画は `video::open_region_selector(app, delay_seconds)` を直接呼ぶ。タイマー付きは範囲選択後の
   カウントダウンを 3-2-1 の代わりにその秒数 (1 秒刻み、60 秒で頭打ち) で行う。
