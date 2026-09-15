@@ -270,7 +270,13 @@ fn copy_text_on_screen(app: &tauri::AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         crate::ocr::run_headless_ocr(&app, false).await;
-        if was_visible {
+        // 文字認識は範囲選択の後に数秒かかり、その間にメニューから次の撮影や録画を
+        // 始められる (ガードは範囲選択の間だけ)。始まっていたら戻さない。戻すと
+        // 新しい撮影や範囲選択にメインウインドウが写り込む (録画はメインウインドウを自分で出す)
+        let busy = crate::is_capture_in_progress()
+            || crate::video::is_selecting_region(&app)
+            || crate::video::is_recording(&app);
+        if was_visible && !busy {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
             }
