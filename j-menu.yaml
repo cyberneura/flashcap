@@ -35,11 +35,11 @@ menu:
 
   - title: リリース (GitHub Actions で署名+公証してビルド)
     help: >
-      version を採番して main へ push し、GitHub Actions の release ワークフローを起動して
-      完了まで watch する。公開されるのは署名+公証済みの universal dmg。
+      version を採番して main へ push し、その push で始まる GitHub Actions の release
+      ワークフローを完了まで watch する。公開されるのは署名+公証済みの universal dmg。
       **作業ツリーがクリーンで、HEAD == origin/main でないと止まる** (ビルドは origin/main の
-      内容で走るため)。version は毎回インクリメントされる — 公開済みと同じ version で
-      再実行すると tauri-action が draft 状態の不一致でエラーになるので、採番は自動化してある。
+      内容で走るため)。リリースするかは workflow が「その version が未リリースか」で決める
+      (build 失敗で draft が残っている間は、version を上げない push でも公開される)。
       引数は patch / minor / major。
     shell: ( cd "$(git rev-parse --show-toplevel)" && pnpm release {bump} )
     args:

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# GitHub Actions の Release ワークフローを起動し、完了まで watch する。
+# version を採番して main に載せ、それで始まる Release ワークフローを watch する。
 # `pnpm release [patch|minor|major]` から呼ばれる (省略時は patch)。
 #
 # 処理の流れ:
 #   1. 作業ツリーがクリーン かつ HEAD == origin/main であることを検証
 #   2. tauri.conf.json の version を bump 種別に応じて採番
 #   3. tauri.conf.json / package.json の version を書き換えて commit & push
-#   4. workflow をトリガーして watch
+#   4. その push で始まった run を探して watch
 #
-# version を毎回インクリメントするのは、公開済みバージョンと同じ version で
-# workflow を再実行すると tauri-action が draft 状態の不一致でエラーになるため。
-# 採番を自動化することで「bump し忘れて落ちる」事故を構造的に無くす。
+# リリースを始めるのは push であってこのスクリプトではない (workflow の on: push)。
+# ここが落ちてもビルドは走るし、同じ version をもう一度 push しても workflow 側の
+# 判定が「リリース済み」を見て何もしない。
 #
 # gh CLI (認証済み) が必要。
 set -euo pipefail
@@ -26,9 +26,9 @@ case "${BUMP}" in
     ;;
 esac
 
-# gh の存在と認証を、何かを書き換える前に確認する。push した後で gh が使えないと、
-# bump コミットだけが main に載って workflow が起動されず、次回実行が別 version を
-# 採番してしまう (公開されない version が main に取り残される)。
+# gh の存在と認証を、何かを書き換える前に確認する。リリース自体は push で始まるので
+# gh が無くてもビルドは走るが、その場合このスクリプトは watch できずに終わる。
+# 「起動したかどうか分からないまま終わる」より、先に言って止める。
 if ! command -v gh >/dev/null 2>&1; then
   echo "Error: gh CLI not found. Install it and run 'gh auth login'." >&2
   exit 1
@@ -113,19 +113,12 @@ if ! git push origin HEAD:main; then
   exit 1
 fi
 
-echo "Triggering release build for v${VERSION} ..."
+echo "Waiting for the release build of v${VERSION} ..."
 
-# workflow_dispatch は run ID を返さないため、起動後にポーリングして拾う。
-# 「最新の run」ではなく「今 push した bump コミットを head に持つ run」を探す:
-# ポーリング中に別の dispatch が挟まっても、他人の run を watch してしまわない。
-# version は毎回インクリメントされるので、この SHA を持つ run は今回の1つだけ。
+# push で始まった run は API に出てくるまで少し遅れるので、ポーリングして拾う。
+# 「最新の run」ではなく「今 push した bump コミットを head に持つ push の run」を探す:
+# 待っている間に別の push や dispatch が挟まっても、他の run を watch してしまわない。
 RELEASE_SHA=$(git rev-parse HEAD)
-
-if ! gh workflow run release.yml --ref main; then
-  echo "Error: failed to trigger the workflow. v${VERSION} is already pushed to main." >&2
-  echo "  Retry with: gh workflow run release.yml --ref main" >&2
-  exit 1
-fi
 
 # `|| true` が無いと、GitHub API の一時エラーで set -e がリトライループごと殺す。
 # ここは「まだ run が出てこない」状態を待つループなので、失敗は空文字として扱う。
@@ -134,7 +127,7 @@ fi
 RUN_ID=""
 for _ in $(seq 1 60); do
   sleep 2
-  RUN_ID=$(gh run list --workflow=release.yml --branch main --limit 20 \
+  RUN_ID=$(gh run list --workflow=release.yml --branch main --event push --limit 20 \
     --json databaseId,headSha \
     --jq "[.[] | select(.headSha == \"${RELEASE_SHA}\")] | .[0].databaseId // \"\"" \
     2>/dev/null || true)
@@ -144,7 +137,7 @@ for _ in $(seq 1 60); do
 done
 if [ -z "${RUN_ID}" ]; then
   # 見つからないだけで、run 自体は動いている可能性が高い (watch できないだけ)。
-  echo "Error: could not find the triggered workflow run within 2 minutes." >&2
+  echo "Error: could not find the workflow run within 2 minutes." >&2
   echo "  The build may still be running. Check it with:" >&2
   echo "    gh run list --workflow=release.yml" >&2
   exit 1
@@ -152,4 +145,13 @@ fi
 echo "Watching run ${RUN_ID} ..."
 gh run watch "${RUN_ID}" --exit-status
 
-echo "Done: https://github.com/cyberneura/flashcap/releases/tag/v${VERSION}"
+# run の成功は「公開された」を意味しない。plan が release=false を返した run
+# (後から push された新しい version に先に公開された等) も、build 以降が skip されて
+# 成功で終わる。公開済み (draft ではない) Release があることを確かめてから Done と言う。
+if [ "$(gh release view "v${VERSION}" --json isDraft --jq '.isDraft' 2>/dev/null || true)" != "false" ]; then
+  echo "Error: the run succeeded but v${VERSION} is not published. See why in the plan job:" >&2
+  echo "  gh run view ${RUN_ID} --log" >&2
+  exit 1
+fi
+
+echo "Done:https://github.com/cyberneura/flashcap/releases/tag/v${VERSION}"

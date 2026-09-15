@@ -105,8 +105,10 @@ pnpm check
 
 ## Release
 
-Bumps the version, pushes it to `main`, and runs the GitHub Actions release build
-(signed + notarized universal dmg) until the Release is published.
+A push to `main` whose `src-tauri/tauri.conf.json` version has no published GitHub Release yet,
+and is newer than the latest one, builds and publishes it (signed + notarized universal dmg). `pnpm release` bumps the
+version, pushes it to `main`, and watches that build until the Release is published.
+Bumping the version in a pull request and merging it releases the same way.
 
 ```bash
 pnpm release           # 0.1.0 -> 0.1.1 (patch, default)

@@ -9,7 +9,7 @@ macOS screenshot capture & annotation app.
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
 - `pnpm test` - Edge-snap / crop-aspect の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
-- `pnpm release [patch|minor|major]` - Bump version and run the GitHub Actions release build
+- `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
 
@@ -287,10 +287,32 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 
 ## Release (.github/workflows/release.yml + scripts/release.sh)
 
-配布は GitHub Release。`pnpm release [patch|minor|major]` で version 採番 → main へ push →
-`workflow_dispatch` で Actions を起動 → 署名+公証済み universal dmg が公開される。
+配布は GitHub Release。**main の `tauri.conf.json` の version が未リリースなら、main への push で
+Actions が走り、署名+公証済み universal dmg が公開される**。`pnpm release [patch|minor|major]` は
+version を採番して main へ push し、その run を watch するだけ。PR の中で version を上げて
+マージしても同じくリリースされる。Homebrew cask (`cyberneura/homebrew-tap`) は tap 側が
+1 時間ごとに最新 Release を見て追従するので、こちらからは何もしない。
 
-- **`workflow_dispatch` のみ**。push では自動ビルドしない (無駄な CI を避ける)。
+- **起動は `push: main`、判定は `plan` ジョブ** (中身は `scripts/release-decide.sh`)。
+  `releases/tags/v<version>` が 404 ならリリース (draft は 404 になる。念のため 200 でも `.draft` が true なら未リリース扱い)、
+  200 なら何もしない、それ以外 (rate limit・障害) は失敗させる。障害を「未リリース」と読むと
+  公開済み version を二重に出しにいくため。diff ではなく version で決めるので、squash / rebase /
+  直 push のどれでも結果が同じになる (path フィルターも付けない)。
+- **未リリースでも、公開中の最新 Release より古い version は出さない** (`sort -V` で比較し、warning を
+  出して skip)。publish は `--latest` を付けるので、出すと最新が巻き戻って tap もダウングレードする。
+  version を上げた commit の revert (一度も出していない 0.2.0 に戻る等) と、pending の run が push 順と
+  逆に消化された時 (GitHub は順序を保証しない) に起きる。後者で飛ばされた version は、それを追い越した
+  新しい version に含まれているので出し直さない。比較のため version は X.Y.Z に限る。
+- **publish も公開直前に `release-decide.sh` をやり直す**。「Re-run failed jobs」は成功済みの `plan` を
+  再実行せず当時の `release=true` を使い回すので、その間に新しい version が出ていると巻き戻すため。
+  止めた場合は失敗させ、draft を残す。
+- **main への push でも、その version がリリース済みなら ubuntu の `plan` 1 本で終わる**。
+  「version を変えていないから何も起きない」ではない点に注意。build 失敗で draft が残っている間は
+  その version が未リリースなので、無関係な commit を push しても、その commit でビルド・公開される。
+  `test` は PR か「リリースする」判定の時だけ走る (`!cancelled()` で plan の skipped 連鎖を外している)。
+  `build` / `publish` は `needs.plan.outputs.release == 'true'` で止める。
+- **`workflow_dispatch` は失敗した run の再実行用に残してある**。`plan` を通るので公開済み version は
+  出せず、main 以外の ref からの dispatch は `plan` が拒否する。
 - **macOS のみビルドする**。screencapture / Vision Framework 依存の macOS 専用アプリなので
   Windows ビルドは作らない。成果物は `--target universal-apple-darwin --bundles dmg` の
   `flashcap_<version>_universal.dmg` (x86_64 + arm64)。
@@ -298,8 +320,14 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   `releaseDraft: false` だとビルド失敗時に空の Release が公開されてしまう。draft で作り、
   build 成功後に publish ジョブが `gh release edit --draft=false --latest` で公開する。
   失敗時は draft のまま残る。
-- **version は毎回インクリメント必須**。公開済みと同じ version で再実行すると tauri-action が
-  draft 状態の不一致でエラーになる。`scripts/release.sh` が採番を自動化して bump 忘れを構造的に消す。
+- **リリース済みの version は二度と出ない**。公開済みと同じ version で build まで進むと
+  tauri-action が draft 状態の不一致でエラーになるが、`plan` がそこへ行かせない。
+  build 失敗で残った draft (tag がまだ無いので `plan` からは 404 に見える) は、次の push か
+  dispatch で同じ version のまま埋め直される (tauri-action が tag 名で draft を探して再利用し、
+  同名 asset を差し替える)。
+- **publish の `--target "${GITHUB_SHA}"` は消さない**。再利用された draft の `target_commitish` は
+  最初に draft を作った run の commit のままで、tag は公開時にそこへ作られる。失敗後に別 commit で
+  作り直すと、tag と dmg の中身が別の commit を指すことになる。
 - **`tauriScript: pnpm exec tauri` は消さない**。省略すると tauri-action は pnpm プロジェクトに
   対して `pnpm tauri build` を実行し、`package.json` の `tauri` スクリプトが持つインラインの
   `APPLE_SIGNING_IDENTITY=...` が workflow の env を上書きしてしまう (シェルのインライン代入は
@@ -319,11 +347,10 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   default keychain ではなく検索リストから identity を引く。直後の `find-identity | grep` は
   「identity 0 件でも exit 0」という仕様を潰すためのアサーションで、証明書が引けない状態を
   ビルドの奥ではなくこのステップで落とす。
-- **`cancel-in-progress: false` + `queue: max` の両方を書く**。1 dispatch = 1 version なので、
-  キャンセルされた run の version は (bump コミットは main に残ったまま) 永久に公開されない。
-  走行中を守る `cancel-in-progress: false` だけでは不十分で、既定の `queue: single` は pending を
-  1 件しか保持せず、新しい dispatch が既存 pending を置き換える (走行中 1 + dispatch 2 回で
-  真ん中の version が消える)。`queue: max` は pending を 100 件まで積む。CI 分数より取りこぼし防止。
+- **`cancel-in-progress: false` + `queue: max` の両方を書く**。run 単位で直列にするので、後続 run の
+  `plan` は先行 run の publish 後に走り、同じ version を二重にビルドしない。既定の `queue: single` は
+  pending を 1 件しか保持せず、新しい run が既存 pending を置き換える。`queue: max` は 100 件まで積む。
+  PR の run は commit ごとの別グループなので、この直列化に巻き込まない。
 - **`dtolnay/rust-toolchain` の SHA は master 履歴から選ぶ**。`@stable` の指す SHA は生成ブランチ
   stable の先端で、それを pin すると stable が進んだ時に commit が GC され、以降の run が Rust
   セットアップ前に落ちる。master 履歴の SHA を pin し、ref から toolchain を推測できなくなる分
@@ -332,8 +359,8 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   コマンド名は必ず `release`。
 - **`package.json` の version は飾り**だが、見た目の一貫性のため release.sh が
   `tauri.conf.json` と同期させている。tauri-action が読むのは `tauri.conf.json` の方。
-- **弱点**: `pnpm release` は main へ直接 push する。ブランチ保護 (PR 必須) を掛けると破綻する。
-  掛ける運用にするなら tag 駆動 (CI で version 注入) へ切り替えること。
+- **弱点**: `pnpm release` は main へ直接 push する。ブランチ保護 (PR 必須) を掛けるとこのスクリプトは
+  使えなくなるが、PR で `tauri.conf.json` / `package.json` の version を上げてマージすれば同じくリリースされる。
 - 必要な GitHub Secrets (登録済み): `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` /
   `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`。
   `APPLE_PASSWORD` は App 用パスワード (通常の Apple ID パスワードでは公証が通らない)。
