@@ -145,4 +145,13 @@ fi
 echo "Watching run ${RUN_ID} ..."
 gh run watch "${RUN_ID}" --exit-status
 
-echo "Done: https://github.com/cyberneura/flashcap/releases/tag/v${VERSION}"
+# run の成功は「公開された」を意味しない。plan が release=false を返した run
+# (後から push された新しい version に先に公開された等) も、build 以降が skip されて
+# 成功で終わる。公開済み (draft ではない) Release があることを確かめてから Done と言う。
+if [ "$(gh release view "v${VERSION}" --json isDraft --jq '.isDraft' 2>/dev/null || true)" != "false" ]; then
+  echo "Error: the run succeeded but v${VERSION} is not published. See why in the plan job:" >&2
+  echo "  gh run view ${RUN_ID} --log" >&2
+  exit 1
+fi
+
+echo "Done:https://github.com/cyberneura/flashcap/releases/tag/v${VERSION}"
