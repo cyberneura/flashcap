@@ -192,7 +192,19 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
 }
 
 fn run(app: &tauri::AppHandle, action: MenuAction) {
-    // **録画中は撮影も録画も始めずにメインウインドウを出す。** ウインドウのツールバーも
+    // フロントの描画前 (コールド起動の直後) に受け付けるのは、撮影 (ハンドシェイクが
+    // frontend-ready まで預かる) と Quit だけ。録画と OCR をここで始めると、途中で
+    // frontend-ready 側がメインウインドウを出してしまい、範囲選択や撮影に写り込む。
+    // Open も、描画前に出すと白いウインドウが見えるだけ (描画が終われば向こうが出す)
+    let queued_or_immediate = matches!(
+        action,
+        MenuAction::Capture | MenuAction::CaptureWithTimer | MenuAction::Quit
+    );
+    if !queued_or_immediate && !crate::is_frontend_ready(app) {
+        return;
+    }
+
+    // **録画中 (書き出し中を含む) は撮影も録画も始めずにメインウインドウを出す。** ウインドウのツールバーも
     // 録画中は撮影ボタンを無効にしている。停止ボタンはメインウインドウにしか無く、
     // 範囲選択を終えると start_video_recording が録画中のものを止めて差し替えてしまう
     let starts_capture = matches!(
@@ -208,13 +220,7 @@ fn run(app: &tauri::AppHandle, action: MenuAction) {
     }
 
     match action {
-        // フロントの描画前 (コールド起動の直後) は出さない。白いウインドウが見えるだけで、
-        // 描画が終われば frontend-ready 側がウインドウを出す
-        MenuAction::OpenMainWindow => {
-            if crate::is_frontend_ready(app) {
-                show_main_window(app);
-            }
-        }
+        MenuAction::OpenMainWindow => show_main_window(app),
         // 撮影はウインドウ経由と同じくフロントの captureScreen() に任せる
         // (撮影前に隠し、撮影後に結果を出す。ウインドウを出すのもあちらの仕事)
         MenuAction::Capture => crate::request_capture(app, CaptureKind::Interactive),

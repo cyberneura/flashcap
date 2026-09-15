@@ -1,6 +1,7 @@
 use chrono::Local;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -92,13 +93,39 @@ pub fn check_ffmpeg_available() -> bool {
     find_ffmpeg().is_some()
 }
 
-/// 録画中か (範囲選択中はまだ録画していないので false)
+/// 停止した録画を書き出している (screencapture の finalize を待っている) 間 true
+///
+/// stop_video_recording は待つ前に RecordingState から録画を取り出すので、
+/// RecordingState だけを見ると書き出し中を「録画していない」と取り違える。
+/// フロントはこの間も isRecording / isStopping を立てたままにしている
+static FINALIZING: AtomicBool = AtomicBool::new(false);
+
+/// FINALIZING をスコープの間だけ立てる (エラーで抜けても必ず下ろす)
+struct FinalizingGuard;
+
+impl FinalizingGuard {
+    fn start() -> Self {
+        FINALIZING.store(true, Ordering::SeqCst);
+        FinalizingGuard
+    }
+}
+
+impl Drop for FinalizingGuard {
+    fn drop(&mut self) {
+        FINALIZING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 録画中、または停止した録画を書き出している最中か
+/// (範囲選択中はまだ録画していないので false)
 pub fn is_recording(app: &tauri::AppHandle) -> bool {
-    app.state::<RecordingState>()
-        .0
-        .lock()
-        .map(|guard| guard.is_some())
-        .unwrap_or(false)
+    FINALIZING.load(Ordering::SeqCst)
+        || app
+            .state::<RecordingState>()
+            .0
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
 }
 
 /// 指定 PID に SIGINT を送る。screencapture -v は SIGINT で録画を finalize して終了する
@@ -511,7 +538,13 @@ pub fn start_video_recording(
 pub async fn stop_video_recording(
     state: tauri::State<'_, RecordingState>,
 ) -> Result<VideoResult, String> {
-    let rec = state.0.lock().map_err(|e| e.to_string())?.take();
+    // 取り出してから書き出しが終わるまで、メニューバーからの撮影・録画を止めておく。
+    // 取り出しと同じロックの中で立てる (間に隙があると is_recording が false を返す)
+    let (rec, _finalizing) = {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        let finalizing = FinalizingGuard::start();
+        (guard.take(), finalizing)
+    };
     let Some(mut rec) = rec else {
         return Err("No active recording".to_string());
     };
