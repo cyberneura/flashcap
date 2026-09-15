@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {
     ArrowSettings,
+    AutoCopyMode,
     CropRect,
     MaskSettings,
     ShapeSettings,
@@ -52,6 +53,8 @@
     onUpdateTextSetting,
     highlightCapture,
     onHighlightEnd,
+    autoCopyMode,
+    onChangeAutoCopyMode,
   }: {
     arrowToolActive: boolean;
     maskToolActive: boolean;
@@ -96,7 +99,64 @@
     onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K]) => void;
     highlightCapture: boolean;
     onHighlightEnd: () => void;
+    /** null = 設定をまだ読めていない (ボタンを押せない) */
+    autoCopyMode: AutoCopyMode | null;
+    onChangeAutoCopyMode: (mode: AutoCopyMode) => void;
   } = $props();
+
+  const AUTO_COPY_OPTIONS: { mode: AutoCopyMode; label: string }[] = [
+    { mode: "none", label: "Don't copy" },
+    { mode: "path", label: "Copy the image file path" },
+    { mode: "image", label: "Copy the image data" },
+  ];
+
+  let autoCopyOpen = $state(false);
+  let autoCopyEl = $state<HTMLDivElement | null>(null);
+  // ポップオーバーをボタンの右端に揃えるか左端に揃えるか。普段はツールバーの右寄りに
+  // あるので右端に揃えるが、動画モードではパス欄 (flex-1) が無くなってボタンが左端へ
+  // 寄るので、右端揃えだとウインドウの左にはみ出す
+  let autoCopyAlignLeft = $state(false);
+  const AUTO_COPY_POPOVER_WIDTH = 240;
+
+  function toggleAutoCopy() {
+    if (!autoCopyOpen && autoCopyEl) {
+      autoCopyAlignLeft = autoCopyEl.getBoundingClientRect().right < AUTO_COPY_POPOVER_WIDTH;
+    }
+    autoCopyOpen = !autoCopyOpen;
+  }
+
+  let autoCopyLabel = $derived(
+    AUTO_COPY_OPTIONS.find((o) => o.mode === autoCopyMode)?.label ?? "Don't copy"
+  );
+
+  function selectAutoCopyMode(mode: AutoCopyMode) {
+    onChangeAutoCopyMode(mode);
+    autoCopyOpen = false;
+  }
+
+  // 開いている間だけ、外側のクリックと Esc で閉じる
+  $effect(() => {
+    if (!autoCopyOpen) return;
+
+    function onPointerDown(e: PointerEvent) {
+      if (autoCopyEl && !autoCopyEl.contains(e.target as Node)) autoCopyOpen = false;
+    }
+    // **キャプチャーフェーズで拾って伝播を止める。** +page.svelte は window の keydown で
+    // Esc を「ウインドウを閉じる」に割り当てているので、ここで止めないとポップオーバーを
+    // 閉じるつもりの Esc でアプリごと終了する
+    function onKeydown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      autoCopyOpen = false;
+    }
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeydown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeydown, true);
+    };
+  });
 </script>
 
 <div class="flex items-center gap-2 px-3 py-2 bg-neutral-800 border-b border-neutral-700 min-h-[40px]">
@@ -510,6 +570,71 @@
 
   <div class="toolbar-divider"></div>
 
+  <!-- 撮影後の自動コピー。図柄は「範囲選択の四隅 + コピーするもの」で、選択に合わせて変わる -->
+  <div class="relative" bind:this={autoCopyEl}>
+    <button
+      class="tool-btn"
+      class:active={autoCopyOpen}
+      onclick={toggleAutoCopy}
+      disabled={autoCopyMode === null}
+      aria-label="Auto-copy after capture"
+      aria-haspopup="dialog"
+      aria-expanded={autoCopyOpen}
+      data-tooltip={autoCopyOpen ? null : `Auto-copy after capture: ${autoCopyLabel}`}
+    >
+      <svg
+        class="auto-copy-icon"
+        viewBox="0 0 36 36"
+        fill="none"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path
+          d="M3.5 12.5V3.5H12.5M23.5 3.5H32.5V12.5M32.5 23.5V32.5H23.5M12.5 32.5H3.5V23.5"
+          stroke-width="3"
+        />
+        {#if autoCopyMode === "path"}
+          <path d="M11.5 13H24.5M11.5 18H24.5M11.5 23H19.5" stroke-width="2.6" />
+        {:else if autoCopyMode === "image"}
+          <path
+            d="M9.5 25.5L15.5 15.5L19.8 21.8L22.3 18.6L26.5 25.5Z"
+            fill="currentColor"
+            stroke="none"
+          />
+          <circle cx="23" cy="12" r="2.7" fill="currentColor" stroke="none" />
+        {/if}
+      </svg>
+    </button>
+
+    {#if autoCopyOpen}
+      <div
+        class="auto-copy-popover"
+        class:align-left={autoCopyAlignLeft}
+        role="dialog"
+        aria-label="Auto-copy after capture"
+      >
+        <div class="text-[11px] font-semibold text-neutral-400 px-2 pt-1 pb-1.5">
+          Auto-copy after capture
+        </div>
+        {#each AUTO_COPY_OPTIONS as option (option.mode)}
+          <label class="auto-copy-option">
+            <input
+              type="radio"
+              name="auto-copy-mode"
+              value={option.mode}
+              checked={autoCopyMode === option.mode}
+              onchange={() => selectAutoCopyMode(option.mode)}
+              class="accent-blue-600"
+            />
+            {option.label}
+          </label>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
   <button
     class="tool-btn"
     onclick={() => onCapture("take_screenshot_timer")}
@@ -619,6 +744,29 @@
 
   .crop-apply:hover {
     @apply bg-blue-500;
+  }
+
+  .auto-copy-icon {
+    @apply w-[18px] h-[18px];
+  }
+
+  .auto-copy-popover {
+    @apply absolute top-[calc(100%+6px)] right-0 z-100 min-w-max
+      p-1.5 rounded-lg bg-neutral-800 border border-neutral-600
+      shadow-[0_8px_24px_rgba(0,0,0,0.5)];
+  }
+
+  .auto-copy-popover.align-left {
+    @apply left-0 right-auto;
+  }
+
+  .auto-copy-option {
+    @apply flex items-center gap-2 px-2 py-1.5 rounded-md
+      text-[13px] text-neutral-200 cursor-pointer whitespace-nowrap;
+  }
+
+  .auto-copy-option:hover {
+    @apply bg-neutral-700;
   }
 
   .toolbar-divider {

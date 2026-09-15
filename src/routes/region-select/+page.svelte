@@ -36,6 +36,8 @@
   let drag = $state<DragKind>(null);
 
   let countdown = $state<number | null>(null);
+  // タイマー付き録画の待ち秒数 (URL の delay)。0 ならタイマー無し
+  let delaySeconds = 0;
   // カウントダウン中に cancel された場合に録画開始を中断するフラグ
   let aborted = false;
 
@@ -226,11 +228,14 @@
 
   async function startRecording() {
     if (!hasSelection || rectW < MIN_SIZE || rectH < MIN_SIZE) return;
-    // 3-2-1 カウントダウン。途中で cancel された場合は録画を始めない
+    // カウントダウン。途中で cancel された場合は録画を始めない。
+    // タイマー付き録画 (delaySeconds > 0) はその秒数を 1 秒刻みで、通常は 3-2-1 を短く刻む
     aborted = false;
-    for (let n = 3; n >= 1; n--) {
+    const from = delaySeconds > 0 ? delaySeconds : 3;
+    const step = delaySeconds > 0 ? 1000 : 700;
+    for (let n = from; n >= 1; n--) {
       countdown = n;
-      await new Promise((res) => setTimeout(res, 700));
+      await new Promise((res) => setTimeout(res, step));
       if (aborted) {
         countdown = null;
         return;
@@ -260,6 +265,9 @@
     const params = new URLSearchParams(window.location.search);
     quartzX = Number(params.get("qx") ?? 0) || 0;
     quartzY = Number(params.get("qy") ?? 0) || 0;
+    // Rust 側で 60 秒に頭打ちしてある。整数でなければタイマー無しとして扱う
+    const delay = Number(params.get("delay"));
+    delaySeconds = Number.isInteger(delay) && delay > 0 ? Math.min(delay, 60) : 0;
     dispW = window.innerWidth;
     dispH = window.innerHeight;
     dpr = window.devicePixelRatio || 1;

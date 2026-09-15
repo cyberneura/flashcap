@@ -92,6 +92,15 @@ pub fn check_ffmpeg_available() -> bool {
     find_ffmpeg().is_some()
 }
 
+/// 録画中か (範囲選択中はまだ録画していないので false)
+pub fn is_recording(app: &tauri::AppHandle) -> bool {
+    app.state::<RecordingState>()
+        .0
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false)
+}
+
 /// 指定 PID に SIGINT を送る。screencapture -v は SIGINT で録画を finalize して終了する
 fn send_sigint(pid: u32) {
     let _ = std::process::Command::new("/bin/kill")
@@ -290,9 +299,17 @@ fn close_region_selectors(app: &tauri::AppHandle) {
 /// 各オーバーレイには自身のディスプレイの Quartz ポイント原点 (qx, qy) を渡す。
 /// screencapture -R はグローバル Quartz 座標 (main 左上=原点, y下, ポイント単位) を取り、
 /// 各モニタの Quartz 原点は Tauri の position()/scale_factor() で求まる
+///
+/// `delay_seconds` はタイマー付き録画の待ち秒数。範囲を選んで Record を押した後の
+/// カウントダウンを、既定の 3-2-1 の代わりにこの秒数で行う (メニューバーの
+/// 「Record Video with Timer」)。範囲を選ぶ前に待たせないのは、待っている間に
+/// 画面を整えるためのタイマーだから (選択オーバーレイは画面を覆ってしまう)
 #[tauri::command]
-pub fn open_region_selector(app: tauri::AppHandle) -> Result<(), String> {
-    let result = open_region_selector_impl(&app);
+pub fn open_region_selector(
+    app: tauri::AppHandle,
+    delay_seconds: Option<u32>,
+) -> Result<(), String> {
+    let result = open_region_selector_impl(&app, delay_seconds);
     if result.is_err() {
         // 失敗時: 既に作成済みのオーバーレイを閉じ、メインウィンドウと
         // activation policy を確実に復帰する (中途半端な状態を残さない)
@@ -306,7 +323,10 @@ pub fn open_region_selector(app: tauri::AppHandle) -> Result<(), String> {
     result
 }
 
-fn open_region_selector_impl(app: &tauri::AppHandle) -> Result<(), String> {
+fn open_region_selector_impl(
+    app: &tauri::AppHandle,
+    delay_seconds: Option<u32>,
+) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -347,7 +367,7 @@ fn open_region_selector_impl(app: &tauri::AppHandle) -> Result<(), String> {
             i, pos.x, pos.y, size.width, size.height, scale, lx, ly, lw, lh
         );
         let label = format!("region-selector-{}", i);
-        let url = format!("/region-select?qx={}&qy={}", lx, ly);
+        let url = region_selector_url(lx, ly, delay_seconds);
 
         // visible_on_all_workspaces は使わない (tao が collectionBehavior を
         // 上書きするため)。必要なフラグは elevate_overlay_window で直接設定する
@@ -382,6 +402,19 @@ fn open_region_selector_impl(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = w.set_focus();
     }
     Ok(())
+}
+
+/// 範囲選択オーバーレイの URL。待ち秒数はオーバーレイのカウントダウンに渡す
+///
+/// 秒数は 60 で頭打ちにする。設定の選択肢は 3 / 5 / 10 秒だが、settings.json を
+/// 手で書き換えられると、Esc 以外で止められないカウントダウンが延々と続くため
+fn region_selector_url(qx: f64, qy: f64, delay_seconds: Option<u32>) -> String {
+    match delay_seconds {
+        Some(delay) if delay > 0 => {
+            format!("/region-select?qx={}&qy={}&delay={}", qx, qy, delay.min(60))
+        }
+        _ => format!("/region-select?qx={}&qy={}", qx, qy),
+    }
 }
 
 /// あるオーバーレイが選択を開始したことを他のオーバーレイに伝え、選択をクリアさせる。

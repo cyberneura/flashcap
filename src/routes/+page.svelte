@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
-  import { load } from "@tauri-apps/plugin-store";
+  import { load, type Store } from "@tauri-apps/plugin-store";
   import { writeText, writeImage, readImage } from "@tauri-apps/plugin-clipboard-manager";
   import { confirm } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -24,7 +24,7 @@
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
-  import type { Arrow, ArrowSettings, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, TextAnnotation, TextSettings } from "$lib/types";
+  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -37,6 +37,31 @@
 
   let isCapturing = $state(false);
   let timerDelay = $state(5);
+
+  // 撮影後の自動コピー。コピーするのは Rust 側 (auto_copy.rs) で、ここは選択の表示と保存だけ
+  const AUTO_COPY_KEY = "auto_copy_on_capture";
+  // null = settings.json をまだ読めていない。ツールバーのボタンはその間押せない
+  // (押せると、選んだ値が保存されないまま初回の読み込みで保存値に戻される)
+  let autoCopyMode = $state<AutoCopyMode | null>(null);
+  let settingsStore: Store | null = null;
+
+  // **未設定・知らない値は "none"** (Rust の from_setting と同じ)。
+  // この機能より前から使っている人の撮影で、いきなりクリップボードを書き換え始めないため
+  function parseAutoCopyMode(value: unknown): AutoCopyMode {
+    return value === "path" || value === "image" ? value : "none";
+  }
+
+  async function changeAutoCopyMode(mode: AutoCopyMode) {
+    autoCopyMode = mode;
+    if (!settingsStore) return;
+    try {
+      await settingsStore.set(AUTO_COPY_KEY, mode);
+      await settingsStore.save();
+    } catch (e) {
+      // メモリ上の store には入っているので、このセッションの撮影には効く
+      console.error("Failed to save the auto-copy setting:", e);
+    }
+  }
   let imageUrl = $state<string | null>(null);
   let imageBase64 = $state<string | null>(null);
   let filePath = $state<string | null>(null);
@@ -277,19 +302,21 @@
       .catch(() => (ffmpegAvailable = false));
 
     // タイマー設定を読み込み
-    load("settings.json").then(async (settingsStore) => {
+    load("settings.json").then(async (store) => {
+      settingsStore = store;
       const applyStoreSettings = async () => {
-        const savedTimer = await settingsStore.get<number>("timer_delay");
+        const savedTimer = await store.get<number>("timer_delay");
         if (savedTimer != null) timerDelay = savedTimer;
-        const savedBlur = await settingsStore.get<number>("blur_radius");
+        const savedBlur = await store.get<number>("blur_radius");
         if (savedBlur != null) maskSettings.blurRadius = savedBlur;
-        const savedMosaic = await settingsStore.get<number>("mosaic_block_size");
+        const savedMosaic = await store.get<number>("mosaic_block_size");
         if (savedMosaic != null) maskSettings.mosaicBlockSize = savedMosaic;
+        autoCopyMode = parseAutoCopyMode(await store.get(AUTO_COPY_KEY));
       };
       await applyStoreSettings();
       // Preferences ウィンドウでの変更を即時反映
-      settingsStore.onChange(async (key) => {
-        if (["timer_delay", "blur_radius", "mosaic_block_size"].includes(key)) {
+      store.onChange(async (key) => {
+        if (["timer_delay", "blur_radius", "mosaic_block_size", AUTO_COPY_KEY].includes(key)) {
           await applyStoreSettings();
         }
       });
@@ -356,9 +383,12 @@
       setTimeout(() => { highlightCapture = false; }, 1500);
     });
 
-    // --capture フラグ付きで再起動された場合: 点滅させずに直接キャプチャー
-    const unlistenDoCapture = listen("do-capture", () => {
-      if (!isCapturing) captureScreen();
+    // --capture フラグ付きで再起動された場合 / メニューバーのメニューから撮影した場合:
+    // 点滅させずに直接キャプチャー。payload は実行するコマンド名 (タイマー付きかどうか)。
+    // 知らない値は通常の撮影に倒す (invoke に任意のコマンド名を渡さない)
+    const unlistenDoCapture = listen<string | null>("do-capture", (event) => {
+      if (isCapturing) return;
+      captureScreen(event.payload === "take_screenshot_timer" ? "take_screenshot_timer" : undefined);
     });
 
     // 範囲選択完了で録画が開始された: アプリ内タイマーを動かす
@@ -1383,6 +1413,8 @@
     onUpdateTextSetting={updateTextSetting}
     {highlightCapture}
     onHighlightEnd={() => highlightCapture = false}
+    {autoCopyMode}
+    onChangeAutoCopyMode={changeAutoCopyMode}
   />
 
   <div bind:this={viewportEl} class="flex-1 flex items-center justify-center overflow-hidden p-5">

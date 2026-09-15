@@ -186,14 +186,22 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   padding を含む寸法なので、引かずに使うと 40px 過大に見積もり、画像が content box を
   はみ出して flex の中央寄せに負の余白が渡る → 「左に余白 / 右は切れる」の非対称になる。
 
-## 撮影後の自動コピーとメニューバーのアイコン (src-tauri/src/auto_copy.rs)
+## 撮影後の自動コピー (src-tauri/src/auto_copy.rs + src/lib/Toolbar.svelte)
 
-- メニューバーにアイコンを 1 つ置き、クリックで開くネイティブメニューから
+- メインウインドウのツールバー (撮影ボタンの左) のボタンで、ポップオーバーから
   「Don't copy / Copy the image file path / Copy the image data」を選ぶ (CYBERNEURA-DEV-761)。
-  幅を取らないことが要件なので、ポップアップウインドウではなくメニューにしている。
-- 選択は `settings.json` の `auto_copy_on_capture` (`none` / `path` / `image`) に保存する。
-  **未設定・未知の値は `none`** — この機能より前から使っている人の撮影で、いきなり
-  クリップボードを書き換え始めないため。
+  ボタンの図柄 (範囲選択の四隅 + コピーするもの) が選択に合わせて変わる。
+  **最初はメニューバーに置いていたが、依頼者の意図はアプリ内のツールバーだった**ので移した。
+  メニューバーのアイコンは下の「メニューバーへの常駐」で別の用途に使っている。
+- 選択はフロント (`+page.svelte` の `changeAutoCopyMode`) が `settings.json` の
+  `auto_copy_on_capture` (`none` / `path` / `image`) に保存し、Rust は撮影のたびに読むだけ。
+  **未設定・未知の値は `none`** (フロントの `parseAutoCopyMode` と Rust の `from_setting` の両方)
+  — この機能より前から使っている人の撮影で、いきなりクリップボードを書き換え始めないため。
+- ポップオーバーの Esc は **window のキャプチャーフェーズで拾って伝播を止める**。
+  `+page.svelte` の keydown が Esc を「ウインドウを閉じる」に割り当てているので、
+  止めないとポップオーバーを閉じるつもりの Esc でアプリが終了する。
+- ポップオーバーは普段ボタンの右端に揃えるが、ボタンがウインドウの左寄りにある時
+  (動画モードはパス欄が無く、ツールバーが左に詰まる) は左端に揃える。
 - コピーするのは撮影 (`take_screenshot_interactive` / `take_screenshot_timer`) の結果だけ。
   貼り付け・ファイルを開く・OCR・動画は対象外。コピーと通知 (`ocr::notify` の osascript) は
   `spawn_blocking` に逃がしてあり、撮影結果の返却 (= ウインドウの再表示) を待たせない。
@@ -201,14 +209,41 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   書き込む直前に照合し、後の撮影に追い越されたコピーは捨てる。**照合と書き込みは
   `CLIPBOARD_WRITE` のロックの中で一緒に行う** (照合を通った後の遅い書き込みが、
   後の撮影の書き込みを上書きしないため)。デコードと通知はロックの外。
-- **アイコンを置けなかったセッションでは保存値に関わらずコピーしない** (`TRAY_AVAILABLE`)。
-  切り替えの UI はこのメニューしか無いので、保存値が path / image のまま置けないと
-  止める手段が無くなる。保存値は書き換えない。
-- `CheckMenuItem` は押した時点で OS 側がチェックを反転させるので、選択中の項目を押し直すと
-  外れる。`select_mode()` が全項目のチェックを付け直してラジオボタンとして振る舞わせている。
-- アイコンは `src-tauri/icons/tray/auto-copy-{none,path,image}.png` (36x36 のテンプレート画像。
-  tray-icon crate が高さ 18pt に揃えるので Retina で等倍)。**手で描き直さず
-  `python3 scripts/make-tray-icons.py` で作り直す** (標準ライブラリだけで動く)。
+
+## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
+
+- Preferences の「Keep FlashCap in the menu bar」(`settings.json` の `show_in_menu_bar`、
+  未設定は OFF) を ON にすると、メニューバーにアイコンを置く (CYBERNEURA-DEV-761)。
+  クリックで Open FlashCap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
+  Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit FlashCap。
+  N は Preferences の Timer delay。
+- Preferences は store に書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
+  メニューの秒数を追従させるため)。`sync` は「保存値を読んでアイコンの有無と文言を合わせる」
+  だけなので何度呼んでもよい。起動時は setup から呼ぶ。
+- **トレイの `TrayIconBuilder::on_menu_event` は使わない。** そこで登録したハンドラは app 全体の
+  リストに積まれ、トレイを外しても消えない。設定を OFF → ON するたびに増えて、1 回のクリックで
+  撮影が 2 回走る。イベントは lib.rs の `app.on_menu_event` から `menu_bar::handle_menu_event` に回す。
+- **常駐中はメインウインドウを閉じても終了せず隠す** (`on_window_event` の CloseRequested)。
+  閉じるとフロントの WebView ごと破棄され、メニューからの `do-capture` を受け取る相手が
+  いなくなる。Esc / ⌘W / 閉じるボタンがすべてここを通る。終了は ⌘Q かメニューの Quit。
+- 撮影は `request_capture(app, CaptureKind)` 経由でフロントの `captureScreen()` に任せる
+  (ウインドウの hide / show もあちらの仕事)。**ハンドシェイクの予約も種類ごと持つ**
+  (`capture_pending: Option<CaptureKind>`)。bool だとコールド起動直後に押された
+  タイマー付き撮影が通常の撮影に化ける。`do-capture` の payload はコマンド名で、フロントは
+  `take_screenshot_timer` 以外を通常の撮影として扱う。
+- **録画中は撮影・録画の項目を押しても始めずにメインウインドウを出す** (停止ボタンはそこにしか
+  無く、範囲選択を終えると `start_video_recording` が録画中のものを止めて差し替えるため。
+  ツールバーも録画中は撮影ボタンを無効にしている)。
+- 録画は `video::open_region_selector(app, delay_seconds)` を直接呼ぶ。タイマー付きは範囲選択後の
+  カウントダウンを 3-2-1 の代わりにその秒数 (1 秒刻み、60 秒で頭打ち) で行う。
+  範囲を選ぶ前に待たせないのは、待つ間に画面を整えるためのタイマーで、選択オーバーレイは
+  画面を覆ってしまうから。
+- OCR は `ocr::run_headless_ocr(app, false)`。メインウインドウが出ていれば撮影の間だけ隠し、
+  終わったらフォーカスを奪わずに戻す。
+- アイコンは `src-tauri/icons/tray/menu-bar.png` (36x36 のテンプレート画像。
+  tray-icon crate が高さ 18pt に揃えるので Retina で等倍。図柄はアプリアイコンと同じ線画の
+  カメラ)。**手で描き直さず `python3 scripts/make-tray-icons.py` で作り直す**
+  (標準ライブラリだけで動く)。
 - ヘッドレス OCR (`--capture-screen-text` のコールド起動) ではアイコンを置かない
   (終わり次第プロセスごと終了するので、一瞬出て消えるだけになる)。
 

@@ -107,3 +107,9 @@ export interface VideoExportSettings {
   padColor: string;
   fps: number;
 }
+
+/**
+ * 撮影後にクリップボードへ自動で入れるもの。settings.json の `auto_copy_on_capture`。
+ * 読むのは Rust (`src-tauri/src/auto_copy.rs`) で、値の綴りはそちらと揃えること
+ */
+export type AutoCopyMode = "none" | "path" | "image";
