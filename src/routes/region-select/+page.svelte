@@ -279,6 +279,11 @@
       origin: string
     ) => {
       if (origin === myLabel) return;
+      // カウントダウン中なら止める。止めないと、別のディスプレイで選び直した後に
+      // こちらのカウントダウンが終わって古い範囲の録画を始め、新しい選択ごと閉じてしまう
+      // (タイマー付き録画では最大 10 秒あるので、その間に選び直すのは普通に起きる)
+      aborted = true;
+      countdown = null;
       hasSelection = false;
       drag = null;
       windowMode = false;
