@@ -119,13 +119,13 @@ impl Drop for FinalizingGuard {
 /// 録画中、または停止した録画を書き出している最中か
 /// (範囲選択中はまだ録画していないので false)
 pub fn is_recording(app: &tauri::AppHandle) -> bool {
-    FINALIZING.load(Ordering::SeqCst)
-        || app
-            .state::<RecordingState>()
-            .0
-            .lock()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false)
+    let state = app.state::<RecordingState>();
+    let guard = state.0.lock();
+    // **FINALIZING はロックを取った後に読む。** 停止側はロックの中で FINALIZING を立ててから
+    // 録画を取り出す。先に読むと「false を読む → ロック待ち → 取り出し済みの None を見る」の
+    // 順で、書き出し中を録画していないと取り違える
+    let has_recording = guard.as_ref().map(|g| g.is_some()).unwrap_or(false);
+    has_recording || FINALIZING.load(Ordering::SeqCst)
 }
 
 /// 指定 PID に SIGINT を送る。screencapture -v は SIGINT で録画を finalize して終了する
