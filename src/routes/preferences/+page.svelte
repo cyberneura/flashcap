@@ -108,15 +108,28 @@
       showInMenuBar = !value;
       return;
     }
-    await syncMenuBar();
+    if (!(await syncMenuBar()) && value) {
+      // アイコンを置けなかった。保存値だけ ON のまま残すと、次の起動でも置けずに
+      // 「常駐するはずなのに閉じると終了する」になるので、OFF に戻す
+      showInMenuBar = false;
+      try {
+        await store.set("show_in_menu_bar", false);
+        await store.save();
+      } catch (e) {
+        console.error("Failed to roll back the menu bar setting:", e);
+      }
+    }
   }
 
-  // Rust は store の値を読んでアイコンを置く / 外す (src-tauri/src/menu_bar.rs)
-  async function syncMenuBar() {
+  // Rust は store の値を読んでアイコンを置く / 外す (src-tauri/src/menu_bar.rs)。
+  // 置けなかった (失敗した) 時は false を返す
+  async function syncMenuBar(): Promise<boolean> {
     try {
       await invoke("sync_menu_bar");
+      return true;
     } catch (e) {
       console.error("Failed to update the menu bar icon:", e);
+      return false;
     }
   }
 
