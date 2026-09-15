@@ -24,19 +24,23 @@ http_status() {
   gh api "$1" --silent --include 2>/dev/null | head -n 1 | awk '{print $2}' || true
 }
 
-# このエンドポイントが答えるのは公開済みの Release だけで、draft は 404 になる。
-# それがここで訊きたいことでもある: 失敗した run が残した draft は、同じ version で
-# 再実行して埋め直す。
+# 訊きたいのは「公開済みか」。draft は未リリースとして扱う: 失敗した run が残した
+# draft は同じ version で再実行して埋め直すし、publish はビルドが作った draft を
+# 前にしてこの判定を呼ぶ。このエンドポイントは draft に 404 を返す (ドキュメントは
+# "Get a published release"、実測でもそう) が、200 で draft が返ってきた場合に
+# 公開済みと読むと publish が永久に止まるので、200 の時は draft かどうかも見る。
 #
-# 404 だけを「未リリース」と読む。rate limit や障害をそう読むと、公開済みの
+# 404 だけを「見つからない」と読む。rate limit や障害をそう読むと、公開済みの
 # version をもう一度ビルドして二重に公開しにいく。
 status=$(http_status "repos/${GH_REPO}/releases/tags/v${VERSION}")
 case "$status" in
   404) ;;
   200)
-    echo "v${VERSION} is already released." >&2
-    echo false
-    exit 0
+    if [ "$(gh api "repos/${GH_REPO}/releases/tags/v${VERSION}" --jq '.draft')" != "true" ]; then
+      echo "v${VERSION} is already released." >&2
+      echo false
+      exit 0
+    fi
     ;;
   *)
     echo "::error::could not tell whether v${VERSION} exists (HTTP ${status:-none}). Not guessing." >&2

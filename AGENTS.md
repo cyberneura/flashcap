@@ -294,7 +294,7 @@ version を採番して main へ push し、その run を watch するだけ。
 1 時間ごとに最新 Release を見て追従するので、こちらからは何もしない。
 
 - **起動は `push: main`、判定は `plan` ジョブ** (中身は `scripts/release-decide.sh`)。
-  `releases/tags/v<version>` が 404 ならリリース (draft もこのエンドポイントでは 404 になる)、
+  `releases/tags/v<version>` が 404 ならリリース (draft は 404 になる。念のため 200 でも `.draft` が true なら未リリース扱い)、
   200 なら何もしない、それ以外 (rate limit・障害) は失敗させる。障害を「未リリース」と読むと
   公開済み version を二重に出しにいくため。diff ではなく version で決めるので、squash / rebase /
   直 push のどれでも結果が同じになる (path フィルターも付けない)。
