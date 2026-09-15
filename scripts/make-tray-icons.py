@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""メニューバー (トレイ) のアイコン 3 枚を描き出す (標準ライブラリだけ)。
+"""メニューバー (トレイ) のアイコンを描き出す (標準ライブラリだけ)。
 
     python3 scripts/make-tray-icons.py
 
-出力は `src-tauri/icons/tray/auto-copy-{none,path,image}.png`。どれも 36x36 の
-RGBA で、色は黒・形はアルファだけで表す。macOS のテンプレート画像
-(`icon_as_template(true)`) として使うので、ダーク / ライトの切り替えは OS が行う。
+出力は `src-tauri/icons/tray/menu-bar.png`。36x36 の RGBA で、色は黒・形は
+アルファだけで表す。macOS のテンプレート画像 (`icon_as_template(true)`) として
+使うので、ダーク / ライトの切り替えは OS が行う。
 
 **36px にしているのは tray-icon crate がメニューバーのアイコンを高さ 18pt に
 揃えるため。** Retina では 18pt = 36px なので、等倍で載って縮小のボケが出ない。
 
-図柄は「スクリーンショットの範囲選択」を表す四隅のかぎ括弧が共通で、中身だけが
-設定ごとに変わる:
-
-- none  : 括弧だけ (何もコピーしない)
-- path  : 文字の行 (パス = テキストをコピーする)
-- image : 山と太陽 (画像データをコピーする)
+図柄はアプリアイコン (`src-tauri/icons/icon.png`) と同じ線画のカメラ。
+メニューバーは線の太さが揃っていないと浮くので、どの線も同じ太さで描く。
 
 Pillow / ImageMagick / rsvg が無い環境でも作り直せるよう、図形は距離関数で書いて
 4x4 のスーパーサンプリングで塗っている。
@@ -54,48 +50,43 @@ def circle(cx: float, cy: float, r: float):
     return inside
 
 
-def polygon(points: list[tuple[float, float]]):
-    """偶奇規則で内側を判定する (凹多角形でもよい)"""
+LINE_WIDTH = 2.6
+
+
+def rounded_rect_outline(x0: float, y0: float, x1: float, y1: float, radius: float, width: float):
+    """角の丸い長方形の輪郭 (内側を塗らない)"""
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    hx, hy = (x1 - x0) / 2 - radius, (y1 - y0) / 2 - radius
 
     def inside(x: float, y: float) -> bool:
-        hit = False
-        n = len(points)
-        for i in range(n):
-            x1, y1 = points[i]
-            x2, y2 = points[(i + 1) % n]
-            if (y1 > y) != (y2 > y):
-                cross = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-                if x < cross:
-                    hit = not hit
-        return hit
+        qx, qy = abs(x - cx) - hx, abs(y - cy) - hy
+        outside = math.hypot(max(qx, 0.0), max(qy, 0.0))
+        distance = outside + min(max(qx, qy), 0.0) - radius
+        return abs(distance) <= width / 2
 
     return inside
 
 
-def corner_brackets():
-    """範囲選択の四隅。図柄の共通部分"""
-    lo, hi, arm, width = 3.5, 32.5, 9.0, 3.0
-    shapes = []
-    for cx, sx in ((lo, 1), (hi, -1)):
-        for cy, sy in ((lo, 1), (hi, -1)):
-            shapes.append(capsule(cx, cy, cx + sx * arm, cy, width))
-            shapes.append(capsule(cx, cy, cx, cy + sy * arm, width))
-    return shapes
+def ring(cx: float, cy: float, r: float, width: float):
+    def inside(x: float, y: float) -> bool:
+        return abs(math.hypot(x - cx, y - cy) - r) <= width / 2
+
+    return inside
 
 
-def text_lines():
-    width = 2.6
+def camera():
+    w = LINE_WIDTH
     return [
-        capsule(11.5, 13.0, 24.5, 13.0, width),
-        capsule(11.5, 18.0, 24.5, 18.0, width),
-        capsule(11.5, 23.0, 19.5, 23.0, width),
-    ]
-
-
-def picture():
-    return [
-        polygon([(9.5, 25.5), (15.5, 15.5), (19.8, 21.8), (22.3, 18.6), (26.5, 25.5)]),
-        circle(23.0, 12.0, 2.7),
+        # 本体
+        rounded_rect_outline(3.5, 11.0, 32.5, 30.5, 4.5, w),
+        # 上のファインダーの出っ張り
+        capsule(12.0, 11.0, 14.5, 6.5, w),
+        capsule(14.5, 6.5, 21.5, 6.5, w),
+        capsule(21.5, 6.5, 24.0, 11.0, w),
+        # レンズ
+        ring(18.0, 20.5, 5.5, w),
+        # フラッシュ
+        circle(9.0, 16.0, 1.5),
     ]
 
 
@@ -134,15 +125,9 @@ def write_png(path: Path, raw_rows: bytes) -> None:
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    variants = {
-        "none": corner_brackets(),
-        "path": corner_brackets() + text_lines(),
-        "image": corner_brackets() + picture(),
-    }
-    for name, shapes in variants.items():
-        out = OUT_DIR / f"auto-copy-{name}.png"
-        write_png(out, render(shapes))
-        print(out)
+    out = OUT_DIR / "menu-bar.png"
+    write_png(out, render(camera()))
+    print(out)
 
 
 if __name__ == "__main__":

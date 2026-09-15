@@ -13,6 +13,7 @@
   let customPath = $state("");
   let timerDelay = $state(5);
   let excludeShadow = $state(true);
+  let showInMenuBar = $state(false);
   let blurRadius = $state(5);
   let mosaicBlockSize = $state(7);
   let store = $state<Store | null>(null);
@@ -35,6 +36,7 @@
     if (savedTimer != null) timerDelay = savedTimer;
     const savedShadow = await store.get<boolean>("exclude_shadow");
     if (savedShadow != null) excludeShadow = savedShadow;
+    showInMenuBar = (await store.get<boolean>("show_in_menu_bar")) === true;
     const savedBlur = await store.get<number>("blur_radius");
     if (savedBlur != null) blurRadius = savedBlur;
     const savedMosaic = await store.get<number>("mosaic_block_size");
@@ -90,6 +92,45 @@
     if (!store) return;
     await store.set("timer_delay", value);
     await store.save();
+    // メニューバーのメニューの「with Timer (5s)」の秒数を追従させる
+    await syncMenuBar();
+  }
+
+  async function onShowInMenuBarChange(value: boolean) {
+    if (!store) return;
+    showInMenuBar = value;
+    try {
+      await store.set("show_in_menu_bar", value);
+      await store.save();
+    } catch (e) {
+      // チェックの見た目と、閉じた時に終了するか隠れるかの実際の挙動を食い違わせない
+      console.error("Failed to save the menu bar setting:", e);
+      showInMenuBar = !value;
+      return;
+    }
+    if (!(await syncMenuBar()) && value) {
+      // アイコンを置けなかった。保存値だけ ON のまま残すと、次の起動でも置けずに
+      // 「常駐するはずなのに閉じると終了する」になるので、OFF に戻す
+      showInMenuBar = false;
+      try {
+        await store.set("show_in_menu_bar", false);
+        await store.save();
+      } catch (e) {
+        console.error("Failed to roll back the menu bar setting:", e);
+      }
+    }
+  }
+
+  // Rust は store の値を読んでアイコンを置く / 外す (src-tauri/src/menu_bar.rs)。
+  // 置けなかった (失敗した) 時は false を返す
+  async function syncMenuBar(): Promise<boolean> {
+    try {
+      await invoke("sync_menu_bar");
+      return true;
+    } catch (e) {
+      console.error("Failed to update the menu bar icon:", e);
+      return false;
+    }
   }
 
   async function onModeChange(mode: SaveMode) {
@@ -232,6 +273,26 @@
       <div>
         <div class="text-sm font-medium">Exclude window shadow</div>
         <div class="text-xs text-gray-500 mt-0.5">Remove drop shadow when capturing a window</div>
+      </div>
+    </label>
+  </section>
+
+  <section class="mt-8">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
+      Menu Bar
+    </h3>
+    <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-[#2d2d2d] transition-colors">
+      <input
+        type="checkbox"
+        checked={showInMenuBar}
+        onchange={(e) => onShowInMenuBarChange((e.target as HTMLInputElement).checked)}
+        class="accent-blue-600"
+      />
+      <div>
+        <div class="text-sm font-medium">Keep FlashCap in the menu bar</div>
+        <div class="text-xs text-gray-500 mt-0.5">
+          Capture, record, and copy text from the menu bar. Closing the window keeps FlashCap running.
+        </div>
       </div>
     </label>
   </section>

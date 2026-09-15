@@ -1,6 +1,7 @@
 use chrono::Local;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -90,6 +91,41 @@ fn find_ffmpeg() -> Option<String> {
 #[tauri::command]
 pub fn check_ffmpeg_available() -> bool {
     find_ffmpeg().is_some()
+}
+
+/// 停止した録画を書き出している (screencapture の finalize を待っている) 間 true
+///
+/// stop_video_recording は待つ前に RecordingState から録画を取り出すので、
+/// RecordingState だけを見ると書き出し中を「録画していない」と取り違える。
+/// フロントはこの間も isRecording / isStopping を立てたままにしている
+static FINALIZING: AtomicBool = AtomicBool::new(false);
+
+/// FINALIZING をスコープの間だけ立てる (エラーで抜けても必ず下ろす)
+struct FinalizingGuard;
+
+impl FinalizingGuard {
+    fn start() -> Self {
+        FINALIZING.store(true, Ordering::SeqCst);
+        FinalizingGuard
+    }
+}
+
+impl Drop for FinalizingGuard {
+    fn drop(&mut self) {
+        FINALIZING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 録画中、または停止した録画を書き出している最中か
+/// (範囲選択中はまだ録画していないので false)
+pub fn is_recording(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<RecordingState>();
+    let guard = state.0.lock();
+    // **FINALIZING はロックを取った後に読む。** 停止側はロックの中で FINALIZING を立ててから
+    // 録画を取り出す。先に読むと「false を読む → ロック待ち → 取り出し済みの None を見る」の
+    // 順で、書き出し中を録画していないと取り違える
+    let has_recording = guard.as_ref().map(|g| g.is_some()).unwrap_or(false);
+    has_recording || FINALIZING.load(Ordering::SeqCst)
 }
 
 /// 指定 PID に SIGINT を送る。screencapture -v は SIGINT で録画を finalize して終了する
@@ -290,9 +326,17 @@ fn close_region_selectors(app: &tauri::AppHandle) {
 /// 各オーバーレイには自身のディスプレイの Quartz ポイント原点 (qx, qy) を渡す。
 /// screencapture -R はグローバル Quartz 座標 (main 左上=原点, y下, ポイント単位) を取り、
 /// 各モニタの Quartz 原点は Tauri の position()/scale_factor() で求まる
+///
+/// `delay_seconds` はタイマー付き録画の待ち秒数。範囲を選んで Record を押した後の
+/// カウントダウンを、既定の 3-2-1 の代わりにこの秒数で行う (メニューバーの
+/// 「Record Video with Timer」)。範囲を選ぶ前に待たせないのは、待っている間に
+/// 画面を整えるためのタイマーだから (選択オーバーレイは画面を覆ってしまう)
 #[tauri::command]
-pub fn open_region_selector(app: tauri::AppHandle) -> Result<(), String> {
-    let result = open_region_selector_impl(&app);
+pub fn open_region_selector(
+    app: tauri::AppHandle,
+    delay_seconds: Option<u32>,
+) -> Result<(), String> {
+    let result = open_region_selector_impl(&app, delay_seconds);
     if result.is_err() {
         // 失敗時: 既に作成済みのオーバーレイを閉じ、メインウィンドウと
         // activation policy を確実に復帰する (中途半端な状態を残さない)
@@ -306,7 +350,10 @@ pub fn open_region_selector(app: tauri::AppHandle) -> Result<(), String> {
     result
 }
 
-fn open_region_selector_impl(app: &tauri::AppHandle) -> Result<(), String> {
+fn open_region_selector_impl(
+    app: &tauri::AppHandle,
+    delay_seconds: Option<u32>,
+) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -347,7 +394,7 @@ fn open_region_selector_impl(app: &tauri::AppHandle) -> Result<(), String> {
             i, pos.x, pos.y, size.width, size.height, scale, lx, ly, lw, lh
         );
         let label = format!("region-selector-{}", i);
-        let url = format!("/region-select?qx={}&qy={}", lx, ly);
+        let url = region_selector_url(lx, ly, delay_seconds);
 
         // visible_on_all_workspaces は使わない (tao が collectionBehavior を
         // 上書きするため)。必要なフラグは elevate_overlay_window で直接設定する
@@ -384,6 +431,19 @@ fn open_region_selector_impl(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 範囲選択オーバーレイの URL。待ち秒数はオーバーレイのカウントダウンに渡す
+///
+/// 秒数は 60 で頭打ちにする。設定の選択肢は 3 / 5 / 10 秒だが、settings.json を
+/// 手で書き換えられると、Esc 以外で止められないカウントダウンが延々と続くため
+fn region_selector_url(qx: f64, qy: f64, delay_seconds: Option<u32>) -> String {
+    match delay_seconds {
+        Some(delay) if delay > 0 => {
+            format!("/region-select?qx={}&qy={}&delay={}", qx, qy, delay.min(60))
+        }
+        _ => format!("/region-select?qx={}&qy={}", qx, qy),
+    }
+}
+
 /// あるオーバーレイが選択を開始したことを他のオーバーレイに伝え、選択をクリアさせる。
 /// Tauri のイベント配信 (emit / emit_to) はオーバーレイ webview に届かなかったため、
 /// 各 webview への eval (evaluateJavaScript 直叩き) で確実に通知する
@@ -401,6 +461,38 @@ pub fn broadcast_region_selecting(app: tauri::AppHandle, origin: String) {
             label, origin, result
         );
     }
+}
+
+/// 録画の範囲選択オーバーレイが開いているか
+pub fn is_selecting_region(app: &tauri::AppHandle) -> bool {
+    app.webview_windows()
+        .keys()
+        .any(|label| label.starts_with("region-selector"))
+}
+
+/// タイマー付き録画のカウントダウンに入ったオーバーレイを、画面の操作を妨げない状態にする
+///
+/// タイマーは「範囲を決めた後、録画が始まるまでに画面を整える」ためのもの。オーバーレイが
+/// 全ディスプレイを暗くしてクリックを奪ったままだと、待つ間に何も操作できない。
+/// 呼んだオーバーレイはクリックを透過させ (選択枠とカウントダウンだけを描く)、
+/// 他のディスプレイのオーバーレイは閉じる。キャンセルは、このオーバーレイにフォーカスが
+/// 残っている間の Esc か、メニューバーの Open FlashCap で行う
+#[tauri::command]
+pub fn release_region_selector_for_countdown(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if !window.label().starts_with("region-selector") {
+        return Err("Only a region selector can be released".to_string());
+    }
+    for (label, other) in app.webview_windows() {
+        if label.starts_with("region-selector") && label != window.label() {
+            let _ = other.close();
+        }
+    }
+    window
+        .set_ignore_cursor_events(true)
+        .map_err(|e| format!("Failed to let clicks through the region selector: {}", e))
 }
 
 /// 範囲選択をキャンセルする (オーバーレイを閉じてメインを戻す)
@@ -478,7 +570,13 @@ pub fn start_video_recording(
 pub async fn stop_video_recording(
     state: tauri::State<'_, RecordingState>,
 ) -> Result<VideoResult, String> {
-    let rec = state.0.lock().map_err(|e| e.to_string())?.take();
+    // 取り出してから書き出しが終わるまで、メニューバーからの撮影・録画を止めておく。
+    // 取り出しと同じロックの中で立てる (間に隙があると is_recording が false を返す)
+    let (rec, _finalizing) = {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        let finalizing = FinalizingGuard::start();
+        (guard.take(), finalizing)
+    };
     let Some(mut rec) = rec else {
         return Err("No active recording".to_string());
     };

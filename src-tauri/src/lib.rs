@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)]
 
 mod auto_copy;
+mod menu_bar;
 mod ocr;
 mod video;
 
@@ -558,10 +559,39 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
     })
 }
 
+/// 撮影 (screencapture の対話選択) が進行中の数
+///
+/// メニューバーのメニューはフロントの `isCapturing` を見られないので、撮影コマンドの側で
+/// 数える。撮影中に別の撮影・録画・OCR を始めたりメインウインドウを出したりすると、
+/// 進行中の撮影に写り込むか、screencapture が 2 つ並ぶ (menu_bar.rs)
+static CAPTURES_IN_PROGRESS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// 撮影中の印。生きている間だけ CAPTURES_IN_PROGRESS に数える (エラーやキャンセルで抜けても戻る)
+pub(crate) struct CaptureInProgress;
+
+impl CaptureInProgress {
+    pub(crate) fn start() -> Self {
+        CAPTURES_IN_PROGRESS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        CaptureInProgress
+    }
+}
+
+impl Drop for CaptureInProgress {
+    fn drop(&mut self) {
+        CAPTURES_IN_PROGRESS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn is_capture_in_progress() -> bool {
+    CAPTURES_IN_PROGRESS.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
 #[tauri::command]
 async fn take_screenshot_interactive(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
+    let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
 
     let mut args = vec!["-i".to_string()];
@@ -596,7 +626,7 @@ fn get_exclude_shadow(app: &tauri::AppHandle) -> bool {
 }
 
 /// 設定からタイマー秒数を取得（デフォルト5秒）
-fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
+pub(crate) fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
     app.store("settings.json")
         .ok()
         .and_then(|store| store.get("timer_delay"))
@@ -611,6 +641,7 @@ fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
 async fn take_screenshot_timer(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
+    let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
     let delay = get_timer_delay(&app).to_string();
 
@@ -931,14 +962,36 @@ struct FrontendHandshake {
 #[derive(Default)]
 struct HandshakeInner {
     frontend_ready: bool,
-    capture_pending: bool,
+    /// frontend-ready より前に予約された撮影。後から来た予約が勝つ
+    capture_pending: Option<CaptureKind>,
     /// frontend-ready より前に届いた「開くべき画像」のパス
     pending_files: Vec<String>,
 }
 
+/// 撮影の種類
+///
+/// do-capture の payload として、フロントの `captureScreen()` に実行させる
+/// コマンド名を渡す。**予約 (capture_pending) にも種類ごと持たせる。** メニューバーの
+/// 「タイマー付きで撮影」がコールド起動の直後に押されると、種類を持たない予約では
+/// 通常の撮影に化けるため
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaptureKind {
+    Interactive,
+    Timer,
+}
+
+impl CaptureKind {
+    fn command(self) -> &'static str {
+        match self {
+            CaptureKind::Interactive => "take_screenshot_interactive",
+            CaptureKind::Timer => "take_screenshot_timer",
+        }
+    }
+}
+
 /// frontend-ready 受信時に取り出す、溜まっていた仕事
 struct PendingWork {
-    capture: bool,
+    capture: Option<CaptureKind>,
     files: Vec<String>,
 }
 
@@ -955,19 +1008,19 @@ impl FrontendHandshake {
         let mut s = self.lock();
         s.frontend_ready = true;
         PendingWork {
-            capture: std::mem::take(&mut s.capture_pending),
+            capture: s.capture_pending.take(),
             files: std::mem::take(&mut s.pending_files),
         }
     }
 
     /// キャプチャーを要求する。frontend が ready 済みなら true (即 emit すべき)、
     /// 未 ready なら予約だけして false を返す (frontend-ready 受信時に emit される)。
-    fn request_capture(&self) -> bool {
+    fn request_capture(&self, kind: CaptureKind) -> bool {
         let mut s = self.lock();
         if s.frontend_ready {
             true
         } else {
-            s.capture_pending = true;
+            s.capture_pending = Some(kind);
             false
         }
     }
@@ -986,7 +1039,7 @@ impl FrontendHandshake {
 
     /// frontend-ready より前にキャプチャーを予約する (--capture コールド起動用)。
     fn set_capture_pending(&self) {
-        self.lock().capture_pending = true;
+        self.lock().capture_pending = Some(CaptureKind::Interactive);
     }
 
     fn is_ready(&self) -> bool {
@@ -994,7 +1047,7 @@ impl FrontendHandshake {
     }
 
     fn is_capture_pending(&self) -> bool {
-        self.lock().capture_pending
+        self.lock().capture_pending.is_some()
     }
 
     fn is_open_pending(&self) -> bool {
@@ -1002,12 +1055,17 @@ impl FrontendHandshake {
     }
 }
 
+/// フロントの描画が終わっているか (frontend-ready を受け取ったか)
+pub(crate) fn is_frontend_ready(app: &tauri::AppHandle) -> bool {
+    app.state::<FrontendHandshake>().is_ready()
+}
+
 /// フロントエンドにキャプチャー開始 (do-capture) を通知する。
 /// ウィンドウは show しない (撮影完了後に captureScreen() が show する)。
 /// frontend が未 ready の場合 (コールド起動) は予約だけ行い、frontend-ready 受信時に emit する。
-fn request_capture(app: &tauri::AppHandle) {
-    if app.state::<FrontendHandshake>().request_capture() {
-        let _ = app.emit("do-capture", ());
+pub(crate) fn request_capture(app: &tauri::AppHandle, kind: CaptureKind) {
+    if app.state::<FrontendHandshake>().request_capture(kind) {
+        let _ = app.emit("do-capture", kind.command());
     }
 }
 
@@ -1109,7 +1167,7 @@ pub fn run() {
             }
             // --capture: 再起動時に点滅させず、そのままキャプチャーを開始する
             if args.iter().any(|a| a == "--capture") {
-                request_capture(app);
+                request_capture(app, CaptureKind::Interactive);
                 return;
             }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
@@ -1182,6 +1240,8 @@ pub fn run() {
             app.on_menu_event(move |app, event| {
                 if event.id() == "preferences" {
                     let _ = open_preferences_window(app);
+                } else {
+                    menu_bar::handle_menu_event(app, event.id().as_ref());
                 }
             });
 
@@ -1192,11 +1252,11 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     ocr::run_headless_ocr(&handle, true).await;
                 });
-            } else if let Err(e) = auto_copy::setup_tray(app.handle()) {
-                // メニューバーのアイコン (撮影後の自動コピーの切り替え)。
+            } else if let Err(e) = menu_bar::sync(app.handle()) {
+                // メニューバーに常駐する設定なら、ここでアイコンを置く。
                 // ヘッドレス OCR は終わり次第プロセスごと終了するので、置いても一瞬で消えるだけ。
-                // 置けなくても撮影には関係ないので、起動は止めない
-                eprintln!("[flashcap] Failed to set up the menu bar icon: {}", e);
+                // 置けなくてもウインドウからは全部操作できるので、起動は止めない
+                eprintln!("[flashcap] {}", e);
             }
 
             // 通常起動時はメインウィンドウを表示してアクティブにする
@@ -1234,12 +1294,12 @@ pub fn run() {
                     if !work.files.is_empty() {
                         let _ = handle_cb.emit("open-file", work.files);
                     }
-                    if work.capture {
+                    if let Some(kind) = work.capture {
                         // キャプチャーが予約済み: do-capture を送る。
                         // captureScreen 側は撮影前に hide を呼ぶが、ウィンドウは
                         // visible:false のままなので hide は no-op。撮影完了後に
                         // show される。ここではウィンドウを表示しない。
-                        let _ = handle_cb.emit("do-capture", ());
+                        let _ = handle_cb.emit("do-capture", kind.command());
                     } else if !headless_ocr_requested() {
                         // 通常起動: フロント描画完了を待って表示する。
                         // ヘッドレス OCR 中は出さない (撮影に写り込むため)。
@@ -1284,7 +1344,18 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .on_window_event(|window, event| {
+            // メニューバーに常駐している間は、メインウインドウを閉じても終了せず隠すだけにする。
+            // 閉じるとウインドウ (= フロントの WebView) ごと破棄され、メニューバーからの
+            // 撮影を受け取る相手がいなくなる
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && menu_bar::is_shown(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -1336,7 +1407,7 @@ pub fn run() {
                             // コールド起動時は frontend-ready を待ってから emit される
                             // (request_capture 内のハンドシェイクで取りこぼしを防ぐ)。
                             Some("capture") => {
-                                request_capture(app);
+                                request_capture(app, CaptureKind::Interactive);
                                 return;
                             }
                             _ => {}
@@ -1477,7 +1548,7 @@ mod tests {
         assert!(immediate.is_none(), "未 ready なのに即 emit しようとしている");
         let work = handshake.mark_ready();
         assert_eq!(work.files, vec!["/tmp/a.png".to_string()]);
-        assert!(!work.capture);
+        assert!(work.capture.is_none());
     }
 
     #[test]
@@ -1511,9 +1582,31 @@ mod tests {
             first.files,
             vec!["/tmp/a.png".to_string(), "/tmp/b.png".to_string()]
         );
-        assert!(first.capture);
+        assert_eq!(first.capture, Some(CaptureKind::Interactive));
         assert!(second.files.is_empty());
-        assert!(!second.capture);
+        assert!(second.capture.is_none());
+    }
+
+    #[test]
+    fn a_held_capture_keeps_its_kind() {
+        // Arrange: コールド起動の直後にメニューバーの「タイマー付きで撮影」が押された
+        let handshake = FrontendHandshake::default();
+
+        // Act
+        let immediate = handshake.request_capture(CaptureKind::Timer);
+
+        // Assert: 通常の撮影に化けずに、タイマー付きのまま frontend-ready で渡る
+        assert!(!immediate, "未 ready なのに即 emit しようとしている");
+        assert!(handshake.is_capture_pending());
+        assert_eq!(handshake.mark_ready().capture, Some(CaptureKind::Timer));
+        assert!(
+            handshake.request_capture(CaptureKind::Interactive),
+            "ready 後は即 emit する"
+        );
+        assert!(
+            handshake.mark_ready().capture.is_none(),
+            "ready 後の要求を預かっている"
+        );
     }
 
     #[test]
