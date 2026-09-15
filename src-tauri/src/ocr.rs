@@ -176,6 +176,8 @@ async fn screencapture_and_ocr(app: &tauri::AppHandle) -> Result<String, String>
     // work が生きている間だけ一時ディレクトリが存在する。以降どこで抜けても
     // (キャンセル含む) drop が撮影結果ごと消すので、明示的な後始末は書かない
     let work = create_ocr_workdir()?;
+    // 範囲を選んでいる間はメニューバーからの撮影・録画を受け付けない (menu_bar.rs)
+    let capturing = crate::CaptureInProgress::start();
 
     let status = tokio::process::Command::new("screencapture")
         .arg("-i")
@@ -186,6 +188,7 @@ async fn screencapture_and_ocr(app: &tauri::AppHandle) -> Result<String, String>
         .status()
         .await
         .map_err(|e| format!("Failed to run screencapture: {}", e))?;
+    drop(capturing);
 
     if !status.success() {
         return Err("Screenshot was cancelled".to_string());

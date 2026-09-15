@@ -192,30 +192,42 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
 }
 
 fn run(app: &tauri::AppHandle, action: MenuAction) {
+    if action == MenuAction::Quit {
+        app.exit(0);
+        return;
+    }
+
     // フロントの描画前 (コールド起動の直後) に受け付けるのは、撮影 (ハンドシェイクが
     // frontend-ready まで預かる) と Quit だけ。録画と OCR をここで始めると、途中で
     // frontend-ready 側がメインウインドウを出してしまい、範囲選択や撮影に写り込む。
     // Open も、描画前に出すと白いウインドウが見えるだけ (描画が終われば向こうが出す)
-    let queued_or_immediate = matches!(
-        action,
-        MenuAction::Capture | MenuAction::CaptureWithTimer | MenuAction::Quit
-    );
-    if !queued_or_immediate && !crate::is_frontend_ready(app) {
+    let queued = matches!(action, MenuAction::Capture | MenuAction::CaptureWithTimer);
+    if !queued && !crate::is_frontend_ready(app) {
         return;
     }
 
-    // **録画中 (書き出し中を含む) は撮影も録画も始めずにメインウインドウを出す。** ウインドウのツールバーも
-    // 録画中は撮影ボタンを無効にしている。停止ボタンはメインウインドウにしか無く、
-    // 範囲選択を終えると start_video_recording が録画中のものを止めて差し替えてしまう
-    let starts_capture = matches!(
-        action,
-        MenuAction::Capture
-            | MenuAction::CaptureWithTimer
-            | MenuAction::RecordVideo
-            | MenuAction::RecordVideoWithTimer
-    );
-    if starts_capture && crate::video::is_recording(app) {
+    // **録画中 (書き出し中を含む) は何も始めずにメインウインドウを出す。** 停止ボタンは
+    // メインウインドウにしか無く、範囲選択を終えると start_video_recording が録画中の
+    // ものを止めて差し替えてしまう。ツールバーも録画中は撮影ボタンを無効にしている
+    if crate::video::is_recording(app) {
         show_main_window(app);
+        return;
+    }
+
+    // 録画の範囲を選んでいる間 (タイマー付きのカウントダウン中を含む) は、Open だけを
+    // 「範囲選択をやめてメインウインドウに戻る」として受け付ける。カウントダウン中の
+    // オーバーレイはクリックを透過するので、他のアプリを触った後は Esc が届かず、
+    // ここがキャンセルの手段になる
+    if crate::video::is_selecting_region(app) {
+        if action == MenuAction::OpenMainWindow {
+            crate::video::cancel_region_selection(app.clone());
+        }
+        return;
+    }
+
+    // 撮影 / OCR の範囲を選んでいる間は何もしない。メインウインドウを出すと撮影に写り込み、
+    // 撮影を始めると screencapture が 2 つ並ぶ
+    if crate::is_capture_in_progress() {
         return;
     }
 
@@ -228,7 +240,7 @@ fn run(app: &tauri::AppHandle, action: MenuAction) {
         MenuAction::RecordVideo => start_recording(app, None),
         MenuAction::RecordVideoWithTimer => start_recording(app, Some(crate::get_timer_delay(app))),
         MenuAction::CopyTextOnScreen => copy_text_on_screen(app),
-        MenuAction::Quit => app.exit(0),
+        MenuAction::Quit => unreachable!("Quit は先頭で処理済み"),
     }
 }
 

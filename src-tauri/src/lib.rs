@@ -559,10 +559,39 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
     })
 }
 
+/// 撮影 (screencapture の対話選択) が進行中の数
+///
+/// メニューバーのメニューはフロントの `isCapturing` を見られないので、撮影コマンドの側で
+/// 数える。撮影中に別の撮影・録画・OCR を始めたりメインウインドウを出したりすると、
+/// 進行中の撮影に写り込むか、screencapture が 2 つ並ぶ (menu_bar.rs)
+static CAPTURES_IN_PROGRESS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// 撮影中の印。生きている間だけ CAPTURES_IN_PROGRESS に数える (エラーやキャンセルで抜けても戻る)
+pub(crate) struct CaptureInProgress;
+
+impl CaptureInProgress {
+    pub(crate) fn start() -> Self {
+        CAPTURES_IN_PROGRESS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        CaptureInProgress
+    }
+}
+
+impl Drop for CaptureInProgress {
+    fn drop(&mut self) {
+        CAPTURES_IN_PROGRESS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn is_capture_in_progress() -> bool {
+    CAPTURES_IN_PROGRESS.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
 #[tauri::command]
 async fn take_screenshot_interactive(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
+    let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
 
     let mut args = vec!["-i".to_string()];
@@ -612,6 +641,7 @@ pub(crate) fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
 async fn take_screenshot_timer(
     app: tauri::AppHandle,
 ) -> Result<ScreenshotResult, String> {
+    let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
     let delay = get_timer_delay(&app).to_string();
 
@@ -1325,7 +1355,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

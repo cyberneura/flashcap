@@ -38,6 +38,9 @@
   let countdown = $state<number | null>(null);
   // タイマー付き録画の待ち秒数 (URL の delay)。0 ならタイマー無し
   let delaySeconds = 0;
+  // タイマー付き録画のカウントダウン中。画面を暗くせず、クリックを透過させる
+  // (待つ間に画面を整えるためのタイマーなので、操作を奪わない)
+  let passThrough = $state(false);
   // カウントダウン中に cancel された場合に録画開始を中断するフラグ
   let aborted = false;
 
@@ -231,6 +234,13 @@
     // カウントダウン。途中で cancel された場合は録画を始めない。
     // タイマー付き録画 (delaySeconds > 0) はその秒数を 1 秒刻みで、通常は 3-2-1 を短く刻む
     aborted = false;
+    if (delaySeconds > 0) {
+      passThrough = true;
+      // クリックの透過と、他のディスプレイのオーバーレイを閉じるのは Rust 側
+      invoke("release_region_selector_for_countdown").catch((err) =>
+        console.error("Failed to release the region selector:", err)
+      );
+    }
     const from = delaySeconds > 0 ? delaySeconds : 3;
     const step = delaySeconds > 0 ? 1000 : 700;
     for (let n = from; n >= 1; n--) {
@@ -323,13 +333,15 @@
   onpointerenter={() => (cursorInside = true)}
   onpointerleave={() => (cursorInside = false)}
 >
-  <!-- 全体を薄暗くし、選択範囲だけ穴を開ける -->
-  <div
-    class="absolute inset-0 bg-black/35"
-    style={hasSelection
-      ? `clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${rectX}px ${rectY}px, ${rectX}px ${rectY + rectH}px, ${rectX + rectW}px ${rectY + rectH}px, ${rectX + rectW}px ${rectY}px, ${rectX}px ${rectY}px);`
-      : ""}
-  ></div>
+  <!-- 全体を薄暗くし、選択範囲だけ穴を開ける (タイマーのカウントダウン中は暗くしない) -->
+  {#if !passThrough}
+    <div
+      class="absolute inset-0 bg-black/35"
+      style={hasSelection
+        ? `clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${rectX}px ${rectY}px, ${rectX}px ${rectY + rectH}px, ${rectX + rectW}px ${rectY + rectH}px, ${rectX + rectW}px ${rectY}px, ${rectX}px ${rectY}px);`
+        : ""}
+    ></div>
+  {/if}
 
   {#if hasSelection}
     <!-- 選択枠 (内側はドラッグで移動) -->
@@ -397,7 +409,15 @@
   {/if}
 
   <!-- カウントダウン -->
-  {#if countdown != null}
+  {#if countdown != null && passThrough}
+    <!-- タイマー付き: 画面の操作を邪魔しないよう、枠の外に小さく出す -->
+    <div
+      class="absolute bg-neutral-900/90 text-white text-sm rounded-lg px-3 py-1.5 shadow-lg pointer-events-none tabular-nums"
+      style="left:{barLeft}px;top:{barTop}px;"
+    >
+      Recording starts in {countdown}s · Cancel from the menu bar (Open FlashCap)
+    </div>
+  {:else if countdown != null}
     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
       <div class="text-white text-[120px] font-bold drop-shadow-lg">{countdown}</div>
     </div>

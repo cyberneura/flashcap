@@ -463,6 +463,38 @@ pub fn broadcast_region_selecting(app: tauri::AppHandle, origin: String) {
     }
 }
 
+/// 録画の範囲選択オーバーレイが開いているか
+pub fn is_selecting_region(app: &tauri::AppHandle) -> bool {
+    app.webview_windows()
+        .keys()
+        .any(|label| label.starts_with("region-selector"))
+}
+
+/// タイマー付き録画のカウントダウンに入ったオーバーレイを、画面の操作を妨げない状態にする
+///
+/// タイマーは「範囲を決めた後、録画が始まるまでに画面を整える」ためのもの。オーバーレイが
+/// 全ディスプレイを暗くしてクリックを奪ったままだと、待つ間に何も操作できない。
+/// 呼んだオーバーレイはクリックを透過させ (選択枠とカウントダウンだけを描く)、
+/// 他のディスプレイのオーバーレイは閉じる。キャンセルは、このオーバーレイにフォーカスが
+/// 残っている間の Esc か、メニューバーの Open FlashCap で行う
+#[tauri::command]
+pub fn release_region_selector_for_countdown(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if !window.label().starts_with("region-selector") {
+        return Err("Only a region selector can be released".to_string());
+    }
+    for (label, other) in app.webview_windows() {
+        if label.starts_with("region-selector") && label != window.label() {
+            let _ = other.close();
+        }
+    }
+    window
+        .set_ignore_cursor_events(true)
+        .map_err(|e| format!("Failed to let clicks through the region selector: {}", e))
+}
+
 /// 範囲選択をキャンセルする (オーバーレイを閉じてメインを戻す)
 #[tauri::command]
 pub fn cancel_region_selection(app: tauri::AppHandle) {
