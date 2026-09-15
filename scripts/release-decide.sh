@@ -36,7 +36,13 @@ status=$(http_status "repos/${GH_REPO}/releases/tags/v${VERSION}")
 case "$status" in
   404) ;;
   200)
-    if [ "$(gh api "repos/${GH_REPO}/releases/tags/v${VERSION}" --jq '.draft')" != "true" ]; then
+    # 代入で受ける: `[ "$(gh ...)" ]` の中だと gh の失敗が空文字になり、set -e が効かない。
+    draft=$(gh api "repos/${GH_REPO}/releases/tags/v${VERSION}" --jq '.draft')
+    if [ "$draft" != "true" ] && [ "$draft" != "false" ]; then
+      echo "::error::could not read whether v${VERSION} is a draft (got '${draft}'). Not guessing." >&2
+      exit 1
+    fi
+    if [ "$draft" = "false" ]; then
       echo "v${VERSION} is already released." >&2
       echo false
       exit 0
