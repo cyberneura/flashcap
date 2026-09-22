@@ -27,6 +27,7 @@ const TRAY_ID: &str = "menu-bar";
 
 /// メニューバーのアイコン (36x36 のテンプレート画像。scripts/make-tray-icons.py で生成)。
 /// tray-icon crate が高さ 18pt に揃えるので、Retina で等倍になる
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const ICON_PNG: &[u8] = include_bytes!("../icons/tray/menu-bar.png");
 
 /// メニューの項目
@@ -85,6 +86,18 @@ impl MenuAction {
         }
     }
 
+    /// この OS で使える項目か。録画 (screencapture -v) と OCR (Vision Framework) は
+    /// macOS にしか無いので、他の OS ではメニューに出さない
+    fn is_available(self) -> bool {
+        cfg!(target_os = "macos")
+            || !matches!(
+                self,
+                MenuAction::RecordVideo
+                    | MenuAction::RecordVideoWithTimer
+                    | MenuAction::CopyTextOnScreen
+            )
+    }
+
     /// この項目の後に区切り線を入れるか
     fn separator_after(self) -> bool {
         matches!(
@@ -134,11 +147,11 @@ pub(crate) fn sync(app: &tauri::AppHandle) -> Result<(), String> {
             .map_err(|e| format!("Failed to update the menu bar menu: {}", e));
     }
 
-    let icon = Image::from_bytes(ICON_PNG)
-        .map_err(|e| format!("Failed to load the menu bar icon: {}", e))?;
+    let icon = tray_icon(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
-        .icon_as_template(true)
+        // テンプレート画像 (OS が色を塗る) は macOS だけ。Windows はアプリのアイコンをそのまま出す
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("FlashCap")
         .menu(&menu)
         .show_menu_on_left_click(true)
@@ -151,6 +164,21 @@ pub(crate) fn sync(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// メニューバーのアイコン。macOS は黒一色のテンプレート画像 (色は OS が付ける)
+#[cfg(target_os = "macos")]
+fn tray_icon(_app: &tauri::AppHandle) -> Result<Image<'static>, String> {
+    Image::from_bytes(ICON_PNG).map_err(|e| format!("Failed to load the menu bar icon: {}", e))
+}
+
+/// Windows の通知領域はテンプレート画像を塗り替えないので、黒一色のままだと暗い
+/// タスクバーで見えなくなる。アプリのアイコンをそのまま使う
+#[cfg(not(target_os = "macos"))]
+fn tray_icon(app: &tauri::AppHandle) -> Result<Image<'static>, String> {
+    app.default_window_icon()
+        .map(|icon| icon.clone().to_owned())
+        .ok_or_else(|| "The app has no icon to show in the notification area".to_string())
+}
+
 /// Preferences から、設定を書き換えた後に呼ぶ
 #[tauri::command]
 pub fn sync_menu_bar(app: tauri::AppHandle) -> Result<(), String> {
@@ -160,7 +188,7 @@ pub fn sync_menu_bar(app: tauri::AppHandle) -> Result<(), String> {
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let timer_delay = crate::get_timer_delay(app);
     let menu = Menu::new(app)?;
-    for action in MenuAction::ALL {
+    for action in MenuAction::ALL.into_iter().filter(|a| a.is_available()) {
         let item = MenuItem::with_id(
             app,
             action.menu_id(),
@@ -186,7 +214,7 @@ fn show_main_window(app: &tauri::AppHandle) {
 /// アプリ全体のメニューイベントのうち、このメニューの項目だけを処理する
 /// (lib.rs の `app.on_menu_event` から、アプリメニューの Preferences... と一緒に届く)
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
-    if let Some(action) = MenuAction::from_menu_id(id) {
+    if let Some(action) = MenuAction::from_menu_id(id).filter(|a| a.is_available()) {
         run(app, action);
     }
 }

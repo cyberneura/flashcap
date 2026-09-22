@@ -55,9 +55,9 @@ concurrency:
   queue: max
 
 jobs:
-  # ビルドに macOS ランナーを使う前に、その version がまだリリースされておらず、
+  # ビルドに macOS / Windows ランナーを使う前に、その version がまだリリースされておらず、
   # 公開中の最新より新しいことを確かめる。ここが false を返す限り、main への push の
-  # たびに macOS ランナーが動くことはない。
+  # たびに macOS / Windows ランナーが動くことはない。
   # PR ではリリース判定そのものが無意味なので走らせない。この job が skipped に
   # なると、依存している build / publish も (always() を使っていないので) skipped に
   # なる — PR では test だけが動く。
@@ -109,9 +109,11 @@ jobs:
   # リリースビルドの門番。方針: cyberneura/cyberneura-github-actions の
   # docs/build-requires-tests.md
   #
-  # runs-on を build と同じ macOS にしてあるのは方針のルール 4 による。lib.rs は
-  # screencapture / sips / NSPasteboard を叩く macOS 専用コードで、ubuntu では
-  # そもそもコンパイルが通らない (通ったとしても配布物と別のコードを検査したことになる)。
+  # runs-on を build と同じ macOS / Windows にしてあるのは方針のルール 4 による。
+  # 撮影・OCR・録画は OS ごとに #[cfg(...)] で別の実装になっていて (macOS は
+  # screencapture / sips / Vision、Windows は xcap と ACL 前提のファイル操作)、
+  # 他の OS では 1 行もコンパイルされない。ubuntu で cargo test を回しても、
+  # 配布物に入るコードの一部を検査しないまま通してしまう。
   test:
     # push / dispatch では、実際にリリースする version の時だけ走らせる。plan を
     # 通さず無条件に走らせると、リリースを伴わない main への push のたびに
@@ -125,7 +127,11 @@ jobs:
           && (github.event_name == 'pull_request'
               || (needs.plan.result == 'success'
                   && needs.plan.outputs.release == 'true')) }}
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -175,17 +181,92 @@ jobs:
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  # flashcap は macOS 専用アプリ (screencapture / Vision Framework 依存) なので
-  # macOS のみビルドする。Intel / Apple Silicon 両対応の universal dmg を配布する。
+  # matrix の全ジョブが成果物を上げる先の draft Release を、ビルドの前に 1 つだけ用意する。
+  #
+  # tauri-action に tagName だけを渡すと、各ジョブがビルド後に「その tag の Release を
+  # 一覧から探し、無ければ作る」。macOS と Windows のビルドがほぼ同時に終わると (キャッシュが
+  # 効いた再実行など) 両方が「無い」と判断し、同じ tag の draft が 2 つできる。publish は
+  # そのうち片方しか公開できず、もう片方のプラットフォームの成果物が Release から欠ける。
+  # ここで作った id を releaseId で渡せば、tauri-action は探しも作りもせずそこへ上げる
+  # (queryfolio の release.yml と同じ構成。CYBERNEURA-DEV-771)。
+  #
+  # 失敗した run が残した draft は再利用し、target_commitish をこの run の commit に
+  # 直す (draft を最初に作った run の commit のまま公開すると、tag が中身と食い違う)。
+  draft:
+    # test を通らないうちは draft を作らない (失敗するたびに空の draft が残るため)。
+    needs: [plan, test]
+    if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Find or create the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.plan.outputs.version }}
+        run: |
+          # draft は tag からは引けない (releases/tags/<tag> は 404 を返す) ので一覧から探す。
+          # contents: write のトークンなら一覧に draft も含まれる。
+          found=$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')
+          published=$(printf '%s\n' "$found" | awk '$2 == "false" { n++ } END { print n + 0 }')
+          drafts=$(printf '%s\n' "$found" | awk '$2 == "true" { print $1 }')
+          draft_count=$(printf '%s\n' "$found" | awk '$2 == "true" { n++ } END { print n + 0 }')
+          if [ "$published" -gt 0 ]; then
+            echo "::error::${TAG} is already published, but plan decided to release it. Not touching it."
+            exit 1
+          fi
+          # どれに上げるべきかを決められない。黙って 1 つ選ぶと、残りの draft と成果物が
+          # 分かれたまま公開される。不要な draft を消してから再実行する。
+          if [ "$draft_count" -gt 1 ]; then
+            echo "::error::found ${draft_count} draft releases for ${TAG} (ids: $(echo $drafts)). Delete all but one, then re-run."
+            exit 1
+          fi
+          if [ "$draft_count" -eq 1 ]; then
+            id="$drafts"
+            gh api -X PATCH "repos/${GH_REPO}/releases/${id}" \
+              -f target_commitish="${GITHUB_SHA}" --silent
+            echo "Reusing draft ${id} for ${TAG} (target set to ${GITHUB_SHA})."
+          else
+            id=$(gh api -X POST "repos/${GH_REPO}/releases" \
+              -f tag_name="${TAG}" -f name="FlashCap ${TAG}" \
+              -F draft=true -F prerelease=false \
+              -f target_commitish="${GITHUB_SHA}" --jq '.id')
+            echo "Created draft ${id} for ${TAG}."
+          fi
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            echo "::error::could not get the id of the draft release for ${TAG} (got '${id}')."
+            exit 1
+          fi
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
   build:
     # test を通らずにビルドしない。needs は同じ run の job にしか効かないので、
     # テストを別 workflow に切り出さないこと。
-    needs: [plan, test]
+    needs: [plan, test, draft]
     # PR では成果物を作らない (Apple の証明書を PR のコードに触らせないためでもある)。
     # PR では plan が skipped なので下の判定だけでも止まるが、証明書を扱う job なので
     # イベント名でも明示的に止める。
     if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Intel / Apple Silicon 両対応の universal dmg。Developer ID 署名 + 公証。
+          - platform: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles dmg
+          # Windows は署名なしの NSIS インストーラー (.exe) のみ。MSI は作らない。
+          # 録画と OCR は macOS 専用なので、Windows 版には入らない (UI からも隠す)。
+          - platform: windows-latest
+            rust-targets: ''
+            args: --bundles nsis
+    runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
     # Rust キャッシュが空の状態での universal (2 アーキ) ビルドに加えて、
@@ -222,7 +303,7 @@ jobs:
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-16
         with:
           toolchain: stable
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust-targets }}
 
       - name: Cache Rust (cargo + target)
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -237,6 +318,7 @@ jobs:
       # フォールバックして ad-hoc 署名になり、APPLE_ID 等が空だと公証も行われないまま
       # Release が公開されてしまう (見た目は成功する)。ここで先に落とす。
       - name: Verify signing secrets are present
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -262,6 +344,7 @@ jobs:
       # 証明書をインポートしないため、ビルド前にこのステップで用意しておく。
       # keychain のパスワードは使い捨てなので Secret にせずその場で生成する。
       - name: Import Apple Developer certificate
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -291,14 +374,13 @@ jobs:
           }
           rm "$RUNNER_TEMP/certificate.p12"
 
-      # tauri.conf.json の version から v<version> タグの Release を作成し、
-      # ビルド成果物をアップロードする。ビルドが途中で失敗しても不完全な Release が
-      # 公開されないよう draft で作成し、成功後に publish ジョブで公開する。
-      # 公開済みバージョンと同じ version でここまで来ると、tauri-action が draft 状態の
-      # 不一致でエラーになる。plan が公開済みの version を止めるので通常は起きない。
-      # 失敗した run が残した draft は、tauri-action が tag 名で探して再利用し、同名の
-      # asset を差し替える (target_commitish は draft を作った時のまま。publish で直す)。
-      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う。
+      # draft ジョブが用意した draft Release (releaseId) にビルド成果物をアップロードする。
+      # ビルドが途中で失敗しても不完全な Release が公開されないよう、全プラットフォームの
+      # 成功後に publish ジョブで公開する。releaseId を渡すと tauri-action は Release を
+      # 探しも作りもしないので、tagName / releaseName / releaseDraft は渡さない
+      # (Release の名前と tag は draft ジョブが決める)。再実行では同名の asset を差し替える。
+      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う
+      # (macOS のジョブにだけ渡す。Windows では空文字にして露出させない)。
       # このジョブは Apple の秘密鍵入り証明書を keychain に置くため、`uses:` は
       # すべて可変タグではなく commit SHA に固定してある (タグが差し替えられると
       # 証明書や secrets を抜かれるサプライチェーン攻撃が成立するため)。
@@ -307,10 +389,10 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
         with:
           # tauriScript を明示しないと、tauri-action は pnpm プロジェクトに対して
           # `pnpm tauri build` を実行する (runner.ts: usesPnpm -> Runner('pnpm', ['tauri']))。
@@ -320,12 +402,10 @@ jobs:
           # Secret ではなくローカル用にハードコードされた identity で署名しようとする。
           # `pnpm exec tauri` は package.json のスクリプトを経由せず CLI を直接叩くので、
           # Secret の値がそのまま効く。ローカルの `pnpm tauri build` は従来どおり。
+          # (インラインの env 代入は Windows のシェルでは構文エラーにもなる)
           tauriScript: pnpm exec tauri
-          tagName: v__VERSION__
-          releaseName: FlashCap v__VERSION__
-          releaseDraft: true
-          prerelease: false
-          args: --target universal-apple-darwin --bundles dmg
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          args: ${{ matrix.args }}
 
   # ビルド・アップロードが成功した時のみ draft を公開する。
   # 失敗した場合は draft のまま残る (不完全な Release は公開されない)。
@@ -342,10 +422,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # --target: 再利用した draft は、最初に draft を作った run の commit を target に
-      # 持ったまま。失敗後に別の commit で作り直した場合、そのまま公開すると tag が
-      # 古い commit に付き、中身 (この run の commit でビルドした dmg) と食い違う。
-      # tag は draft を公開した時に作られるので、ここで target を合わせれば足りる。
+      # --target: draft ジョブも target をこの run の commit に直しているが、publish までの
+      # 間に誰かが draft を編集しうるので、公開の直前にもう一度合わせる。tag は draft を
+      # 公開した時に作られるので、ここで target を合わせれば tag と中身が食い違わない。
       #
       # 公開直前に plan と同じ判定をやり直す。「Re-run failed jobs」は成功済みの plan を
       # 再実行せず当時の release=true を使い回すので、その間に新しい version が

@@ -8,6 +8,7 @@
     TextSettings,
   } from "$lib/types";
   import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
+  import { isWindows, shortcutLabel } from "$lib/platform";
 
   let {
     arrowToolActive,
@@ -502,7 +503,7 @@
       class="tool-btn"
       onclick={onCopyPath}
       aria-label="Copy file path"
-      data-tooltip="Copy file path (⌘C)"
+      data-tooltip="Copy file path ({shortcutLabel('C')})"
     >
       {#if copyPathSuccess}
         <i class="bi bi-check-lg"></i>
@@ -514,7 +515,7 @@
       class="tool-btn"
       onclick={onCopyImage}
       aria-label="Copy image"
-      data-tooltip="Copy image (⌘⇧C)"
+      data-tooltip="Copy image ({shortcutLabel('C', { shift: true })})"
     >
       {#if copyImageSuccess}
         <i class="bi bi-check-lg"></i>
@@ -526,7 +527,8 @@
 
   <div class="toolbar-divider"></div>
 
-  {#if !videoMode}
+  <!-- OCR は macOS の Vision Framework に頼っていて、Windows には無い -->
+  {#if !videoMode && !isWindows}
   {#if filePath}
     <button
       class="tool-btn"
@@ -568,7 +570,10 @@
   </button>
   {/if}
 
+  <!-- Windows は OCR ボタンを出さないので、直前の区切り線と二重になる -->
+  {#if !isWindows}
   <div class="toolbar-divider"></div>
+  {/if}
 
   <!-- 撮影後の自動コピー。図柄は「範囲選択の四隅 + コピーするもの」で、選択に合わせて変わる -->
   <div class="relative" bind:this={autoCopyEl}>
@@ -651,10 +656,12 @@
     onanimationend={onHighlightEnd}
     disabled={isCapturing}
     aria-label="Capture new area"
-    data-tooltip="Capture new area"
+    data-tooltip={isWindows ? "Capture the screen under the cursor" : "Capture new area"}
   >
     <i class="bi bi-camera"></i>
   </button>
+  <!-- 録画は screencapture -v に頼っていて、Windows には無い -->
+  {#if !isWindows}
   <button
     class="tool-btn"
     onclick={onCaptureVideo}
@@ -664,6 +671,7 @@
   >
     <i class="bi bi-record-circle"></i>
   </button>
+  {/if}
 </div>
 
 <style>

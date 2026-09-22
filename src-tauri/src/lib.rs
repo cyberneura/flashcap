@@ -10,7 +10,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command;
+#[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
@@ -49,12 +51,21 @@ pub(crate) fn flashcap_temp_dir() -> PathBuf {
 /// **既に在るディレクトリの mode は変えない。** ユーザーが custom: で指定した
 /// 既存フォルダの権限を、こちらの都合で締めてしまわないため。flashcap 自身の
 /// 作業ディレクトリを締め直したい場合は ensure_private_flashcap_dir() を使う。
+#[cfg(unix)]
 pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(dir)
+}
+
+/// Windows には Unix の mode が無い。作ったディレクトリは親の ACL を継承するので、
+/// 既定の置き場 (%TEMP%\flashcap。%TEMP% は %LOCALAPPDATA%\Temp でユーザー専用) は
+/// 他のアカウントから読めない。custom: の任意フォルダは、そのフォルダの親の ACL 次第
+#[cfg(not(unix))]
+pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
 }
 
 /// dir とその祖先に、自分以外のアカウントが手を出せる要素が無いことを確かめる
@@ -80,6 +91,7 @@ pub(crate) fn create_private_dir<P: AsRef<Path>>(dir: P) -> std::io::Result<()> 
 /// ACL で他ユーザーに開かれた要素はここを通る。また、この検査と実際の書き込みの間で
 /// パスを完全に固定しているわけではない (それには openat/O_NOFOLLOW でハンドルを
 /// 握り続ける必要がある)。いずれも残存リスクであって、この関数が塞いだ範囲ではない。
+#[cfg(unix)]
 fn reject_if_others_can_meddle(dir: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
@@ -136,8 +148,6 @@ fn reject_if_others_can_meddle(dir: &Path) -> std::io::Result<()> {
 /// ACL で他ユーザーに開かれたディレクトリはここを通る。これは残存リスクであって
 /// この関数が塞いだ範囲ではない。塞ぐなら chmod -N まで踏み込むこと。
 pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-
     // 置き場に至る道のどこかが自分以外にも書けるなら、この先の検査は意味を持たない。
     // 「stat して chmod して使う」はパス名を辿り直す 3 手なので、その間にどこかの
     // 要素を差し替えられると、検査した対象と実際に書く先が別物になる (TOCTOU)。
@@ -146,8 +156,11 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
     // macOS の GUI プロセスは launchd がユーザー専用の TMPDIR (0700) を必ず渡すので、
     // ここに引っかかるのは TMPDIR を落とした異常な起動か、/var 以下が壊れている
     // マシンだけ。その場合は /tmp へ黙って落ちるより、撮らずに止まる方が正しい。
-    let parent = std::env::temp_dir();
-    reject_if_others_can_meddle(&parent)?;
+    //
+    // Windows は mode と uid の代わりに ACL で守られていて、この検査は当てはまらない。
+    // %TEMP% (%LOCALAPPDATA%\Temp) はユーザー専用の ACL を持つので、そこに頼る。
+    #[cfg(unix)]
+    reject_if_others_can_meddle(&std::env::temp_dir())?;
 
     let dir = flashcap_temp_dir();
     create_private_dir(&dir)?;
@@ -170,7 +183,11 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
     // 信頼できるディレクトリ」の中に残り、以降の書き込みがそのリンク先へ抜ける。
     // 先に 0700 にしてしまえば他人はもうエントリを追加できないので、その後の
     // 片付けが取りこぼしなく終わる。
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
 
     // 締める前に他人が置いていったものを片付ける。
     //
@@ -197,10 +214,6 @@ pub(crate) fn ensure_private_flashcap_dir() -> std::io::Result<PathBuf> {
 /// ここは flashcap が自分で作る一時ファイルしか置かない場所なので、消して困る
 /// ものは無い。逆に残すと、締め直した後の書き込みが他人の仕掛けを踏む。
 fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
-    use std::os::unix::fs::MetadataExt;
-
-    // SAFETY: getuid は常に成功し、シグナル安全で副作用を持たない
-    let self_uid = unsafe { libc::getuid() };
     let mut removed_any = false;
 
     for entry in std::fs::read_dir(dir)? {
@@ -209,7 +222,7 @@ fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
         // symlink_metadata はリンクを辿らない
         let meta = std::fs::symlink_metadata(&path)?;
         let is_symlink = meta.file_type().is_symlink();
-        if !is_symlink && meta.uid() == self_uid {
+        if !is_symlink && is_owned_by_self(&meta) {
             continue;
         }
         let removed = if !is_symlink && meta.file_type().is_dir() {
@@ -234,6 +247,21 @@ fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
     Ok(removed_any)
 }
 
+/// エントリの所有者が自分か
+#[cfg(unix)]
+fn is_owned_by_self(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: getuid は常に成功し、シグナル安全で副作用を持たない
+    meta.uid() == unsafe { libc::getuid() }
+}
+
+/// Windows の所有者は ACL 側の概念で、std からは引けない。%TEMP% はユーザー専用なので
+/// 他のアカウントがエントリを置くことはできず、ここでは symlink だけを片付ける
+#[cfg(not(unix))]
+fn is_owned_by_self(_meta: &std::fs::Metadata) -> bool {
+    true
+}
+
 /// 外部コマンドの出力先に使う、使い捨ての専用サブディレクトリ
 ///
 /// ここで確保するのは**名前**の方。ファイルではなくディレクトリを mkdir で作る。
@@ -247,6 +275,7 @@ fn purge_foreign_entries(dir: &Path) -> std::io::Result<bool> {
 /// 画面に映っていたものを残さないための後始末は、途中で抜ける経路が多く手で書くと
 /// 必ず漏れる (特に **Future がキャンセルされた場合は、以降の行が 1 行も動かない**)。
 /// drop に載せておけば、キャンセルでも早期 return でも同じように消える。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct PrivateWorkdir {
     dir: PathBuf,
     /// 外部コマンドに渡す出力先 (dir の中の固定名)
@@ -270,6 +299,7 @@ impl Drop for PrivateWorkdir {
 /// 使わないこと。** TMPDIR が未設定の実行環境では /tmp (mode 1777) に落ち、
 /// 画面に映っていたものが同じ Mac の別アカウントから読める状態になる。
 /// 基底の用意に失敗したら、書き込まずにエラーを返す (撮らずに止まる方が正しい)。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn create_private_workdir(
     prefix: &str,
     file_name: &str,
@@ -286,20 +316,19 @@ pub(crate) fn create_private_workdir(
 ///
 /// 名前は PID + ナノ秒。PID だけだと同一プロセス内の同時実行が衝突する。
 /// 衝突しても mkdir が弾くので、取り違えではなく取り直しになる。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn reserve_private_workdir(
     base: &Path,
     prefix: &str,
     file_name: &str,
 ) -> Result<PrivateWorkdir, String> {
-    use std::os::unix::fs::DirBuilderExt;
-
     for _ in 0..16 {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
         let dir = base.join(format!("{}-{}-{}", prefix, std::process::id(), ts));
-        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        match create_exclusive_private_dir(&dir) {
             Ok(()) => {
                 let path = dir.join(file_name);
                 return Ok(PrivateWorkdir { dir, path });
@@ -309,6 +338,21 @@ fn reserve_private_workdir(
         }
     }
     Err(format!("Failed to reserve a temp directory for {}", prefix))
+}
+
+/// 1 階層だけ作る (既存なら AlreadyExists)。Unix では所有者専用の 0700 で作る
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn create_exclusive_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(dir)
+}
+
+/// Windows は親 (ユーザー専用の %TEMP%\flashcap) の ACL を継承する
+#[cfg(not(unix))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn create_exclusive_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(dir)
 }
 
 /// 保存先を書き込める状態にして返す
@@ -340,8 +384,8 @@ pub(crate) fn prepare_save_directory(app: &tauri::AppHandle) -> Result<String, S
     // 実体で突き合わせて拾い直す (canonicalize は実在しないパスに失敗するので、
     // 作った後に呼ぶ)。解決できなければ字句比較の結果をそのまま採る。
     if let (Ok(resolved), Ok(temp)) = (
-        std::fs::canonicalize(&dir),
-        std::fs::canonicalize(flashcap_temp_dir()),
+        dunce::canonicalize(&dir),
+        dunce::canonicalize(flashcap_temp_dir()),
     ) {
         if resolved == temp {
             return ensure_private_flashcap_dir()
@@ -366,7 +410,9 @@ fn get_save_directory(app: &tauri::AppHandle) -> String {
 
     match setting.as_str() {
         "tmp" => default_save_directory(),
-        "macos_default" => get_macos_screenshot_dir(),
+        // 設定値の文字列は互換のため "macos_default" のまま。Windows では
+        // Win+PrintScreen の保存先 (ピクチャ\スクリーンショット) を指す
+        "macos_default" => get_os_screenshot_dir(),
         s if s.starts_with("custom:") => s.strip_prefix("custom:").unwrap().to_string(),
         _ => default_save_directory(),
     }
@@ -388,8 +434,13 @@ fn get_default_save_directory() -> String {
 #[tauri::command]
 fn open_save_directory(app: tauri::AppHandle) -> Result<(), String> {
     let dir = prepare_save_directory(&app)?;
+    open_directory(&app, &dir)
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory(_app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
     let status = Command::new("open")
-        .arg(&dir)
+        .arg(dir)
         .status()
         .map_err(|e| format!("Failed to open save directory '{}': {}", dir, e))?;
     if !status.success() {
@@ -398,8 +449,19 @@ fn open_save_directory(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// macOS 以外は opener プラグインに任せる。Windows の explorer.exe は成功しても
+/// 終了コード 1 を返すので、`open` と同じように終了コードで判定できない
+#[cfg(not(target_os = "macos"))]
+fn open_directory(app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(dir, None::<&str>)
+        .map_err(|e| format!("Failed to open save directory '{}': {}", dir, e))
+}
+
 /// macOS の screencapture デフォルト保存先を取得
-fn get_macos_screenshot_dir() -> String {
+#[cfg(target_os = "macos")]
+fn get_os_screenshot_dir() -> String {
     Command::new("defaults")
         .args(["read", "com.apple.screencapture", "location"])
         .output()
@@ -418,6 +480,21 @@ fn get_macos_screenshot_dir() -> String {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(default_save_directory)
         })
+}
+
+/// Windows の Win+PrintScreen の保存先 (ピクチャ\スクリーンショット) を取得
+///
+/// フォルダの実体は既知フォルダ (FOLDERID_Screenshots) で移動できるが、それを引くには
+/// Shell API (SHGetKnownFolderPath) が要る。既定の場所で足りるので、ピクチャ直下の
+/// Screenshots を返す (表示名は「スクリーンショット」でも、実際のフォルダ名は Screenshots)。
+/// ユーザーがフォルダを移動していた場合は追従しない。
+#[cfg(not(target_os = "macos"))]
+fn get_os_screenshot_dir() -> String {
+    dirs::picture_dir()
+        .map(|p| p.join("Screenshots"))
+        .or_else(dirs::desktop_dir)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(default_save_directory)
 }
 
 /// 撮影結果の保存先パスを組み立てる
@@ -485,6 +562,7 @@ fn resize_window_for_image(app: &tauri::AppHandle, width: usize, height: usize) 
 /// 中間 PNG は変換元の画像そのものなので、他アカウントから読める場所に置かない。
 /// work が生きている間だけ作業ディレクトリが存在し、以降どこで抜けても drop が
 /// 中間 PNG ごと消すので、明示的な後始末は書かない。
+#[cfg(target_os = "macos")]
 fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
     let work = create_private_workdir("heic", "converted.png")?;
 
@@ -508,13 +586,22 @@ fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String>
     Ok((png_data, img.width(), img.height()))
 }
 
+/// sips は macOS にしか無く、image crate も HEIC を読めない
+#[cfg(not(target_os = "macos"))]
+fn convert_heic_to_png(_source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
+    Err("HEIC / HEIF images can only be opened on macOS".to_string())
+}
+
 /// 画像ファイルを読み込んで ScreenshotResult を生成
 fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
     if !std::path::Path::new(&file_path).exists() {
         return Err("Image file does not exist".to_string());
     }
 
-    let absolute_path = std::fs::canonicalize(&file_path)
+    // std::fs::canonicalize は Windows で \\?\C:\... (verbatim パス) を返し、それがパス欄や
+    // コピーしたパスにそのまま出る。dunce は通常のパスで表せる時はその形で返す
+    // (Unix では std と同じ)。突き合わせる側もすべて dunce で揃えること
+    let absolute_path = dunce::canonicalize(&file_path)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or(file_path);
 
@@ -594,11 +681,33 @@ async fn take_screenshot_interactive(
     let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
 
+    capture_screen_to(&app, &file_path, None).await?;
+
+    let result = load_image_result(file_path)?;
+    auto_copy::copy_after_capture(&app, &result);
+    resize_window_for_image(&app, result.width, result.height);
+    Ok(result)
+}
+
+/// 画面を撮って file_path に PNG で書く (macOS: screencapture の対話選択)
+///
+/// delay_seconds があればタイマー付き (-T)。ユーザーが範囲選択を Esc で取り消すと
+/// screencapture は非 0 で終わるので、"cancelled" を含むエラーにする
+/// (フロントはこの文字列でキャンセルとエラーを見分ける)。
+#[cfg(target_os = "macos")]
+async fn capture_screen_to(
+    app: &tauri::AppHandle,
+    file_path: &str,
+    delay_seconds: Option<u32>,
+) -> Result<(), String> {
     let mut args = vec!["-i".to_string()];
-    if get_exclude_shadow(&app) {
+    if get_exclude_shadow(app) {
         args.push("-o".to_string());
     }
-    args.push(file_path.clone());
+    if let Some(delay) = delay_seconds {
+        args.extend(["-T".to_string(), delay.to_string()]);
+    }
+    args.push(file_path.to_string());
 
     let status = tokio::process::Command::new("screencapture")
         .args(&args)
@@ -609,14 +718,76 @@ async fn take_screenshot_interactive(
     if !status.success() {
         return Err("Screenshot was cancelled".to_string());
     }
+    Ok(())
+}
 
-    let result = load_image_result(file_path)?;
-    auto_copy::copy_after_capture(&app, &result);
-    resize_window_for_image(&app, result.width, result.height);
-    Ok(result)
+/// 画面を撮って file_path に PNG で書く (Windows: マウスカーソルのあるモニター全体)
+///
+/// Windows には screencapture -i に当たる「範囲を選ばせて撮る」コマンドが無いので、
+/// モニター 1 枚を丸ごと撮る。範囲はメインウインドウのトリミング (crop) で切り出す。
+///
+/// 撮る前に少し待つ。フロントの captureScreen() は hide() の完了を待ってから
+/// このコマンドを呼ぶが、Windows はウインドウを消すアニメーションが hide() の
+/// 戻りより後まで残り、すぐ撮ると消えかけの自分が写り込む。
+#[cfg(windows)]
+async fn capture_screen_to(
+    app: &tauri::AppHandle,
+    file_path: &str,
+    delay_seconds: Option<u32>,
+) -> Result<(), String> {
+    const HIDE_SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+    let delay = delay_seconds
+        .map(|s| std::time::Duration::from_secs(u64::from(s)))
+        .unwrap_or_default()
+        .max(HIDE_SETTLE);
+    tokio::time::sleep(delay).await;
+
+    // タイマーの間にカーソルを動かしたモニターを撮れるよう、待った後で位置を取る
+    let cursor = app
+        .cursor_position()
+        .map_err(|e| format!("Failed to get the cursor position: {}", e))?;
+    let (x, y) = (cursor.x.round() as i32, cursor.y.round() as i32);
+    let file_path = PathBuf::from(file_path);
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let monitor = xcap::Monitor::from_point(x, y)
+            .or_else(|_| {
+                // カーソルの位置がどのモニターにも入らない (取り外した直後等) 時は
+                // プライマリを撮る
+                xcap::Monitor::all()?
+                    .into_iter()
+                    .find(|m| m.is_primary().unwrap_or(false))
+                    .ok_or_else(|| xcap::XCapError::new("No primary monitor"))
+            })
+            .map_err(|e| format!("Failed to find a monitor to capture: {}", e))?;
+        let image = monitor
+            .capture_image()
+            .map_err(|e| format!("Failed to capture the screen: {}", e))?;
+
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .map_err(|e| format!("Failed to encode the screenshot: {}", e))?;
+        // 名前 (flashcap-<秒>.png) が予測できるので、撮影結果も symlink を辿らずに書く
+        write_without_following_symlinks(&file_path, &png.into_inner())
+            .map_err(|e| format!("Failed to write the screenshot: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Screen capture task failed: {}", e))?
+}
+
+/// macOS と Windows 以外は配布していない。コンパイルを通すためだけの実装
+#[cfg(not(any(target_os = "macos", windows)))]
+async fn capture_screen_to(
+    _app: &tauri::AppHandle,
+    _file_path: &str,
+    _delay_seconds: Option<u32>,
+) -> Result<(), String> {
+    Err("Screen capture is not supported on this platform".to_string())
 }
 
 /// ウィンドウキャプチャー時のドロップシャドウを除外するか（デフォルト true）
+#[cfg(target_os = "macos")]
 fn get_exclude_shadow(app: &tauri::AppHandle) -> bool {
     app.store("settings.json")
         .ok()
@@ -643,23 +814,8 @@ async fn take_screenshot_timer(
 ) -> Result<ScreenshotResult, String> {
     let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
-    let delay = get_timer_delay(&app).to_string();
 
-    let mut args = vec!["-i".to_string()];
-    if get_exclude_shadow(&app) {
-        args.push("-o".to_string());
-    }
-    args.extend(["-T".to_string(), delay, file_path.clone()]);
-
-    let status = tokio::process::Command::new("screencapture")
-        .args(&args)
-        .status()
-        .await
-        .map_err(|e| format!("Failed to run screencapture: {}", e))?;
-
-    if !status.success() {
-        return Err("Screenshot was cancelled".to_string());
-    }
+    capture_screen_to(&app, &file_path, Some(get_timer_delay(&app))).await?;
 
     let result = load_image_result(file_path)?;
     auto_copy::copy_after_capture(&app, &result);
@@ -690,7 +846,7 @@ impl OpenedImages {
         // load_image_result は canonicalize に失敗した場合だけ元のパスを返すので、
         // ここでも解決を試みる。実体で突き合わせないと write 側の canonicalize 済み
         // パスと一致せず、上書きが許可されない
-        let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = &dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let Ok(mut paths) = self.inner.lock() else {
             return;
         };
@@ -730,6 +886,7 @@ fn load_image_file(
 ///
 /// `std::fs::write` は symlink を辿るので、書き込み先の名前が予測できる場所では
 /// 使えない。`O_NOFOLLOW` を付けると、対象が symlink だった時点で ELOOP になる。
+#[cfg(unix)]
 fn write_without_following_symlinks(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -739,6 +896,44 @@ fn write_without_following_symlinks(path: &Path, bytes: &[u8]) -> std::io::Resul
         .create(true)
         .truncate(true)
         .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(bytes)
+}
+
+/// Windows 版。O_NOFOLLOW の代わりに FILE_FLAG_OPEN_REPARSE_POINT で開く
+///
+/// このフラグで開くと、対象が symlink (reparse point) でもリンク先へは辿らない。
+/// ただし「リンク自体を開いて書く」ことになり、Unix のように失敗はしないので、
+/// 先に symlink_metadata で見て symlink なら書かずにエラーにする (エラーの形を
+/// Unix 版と揃えるため)。検査と open の間に最終要素を差し替えられても、open が
+/// リンクを辿らないのでリンク先には書かない。
+///
+/// **守っているのは最終要素だけ** (Unix の O_NOFOLLOW と同じ範囲)。途中のディレクトリを
+/// junction / mount point に差し替えられると、その先へ書くことになる。既定の置き場
+/// (%TEMP%\flashcap) はユーザー専用の ACL で他人が差し替えられないことに頼っており、
+/// custom: の任意フォルダはそのフォルダの ACL 次第 (残存リスク)。
+#[cfg(windows)]
+fn write_without_following_symlinks(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{} is a symbolic link; refusing to write through it",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)?;
     file.write_all(bytes)
 }
@@ -786,7 +981,7 @@ fn write_image_to_file(
 ) -> Result<(), String> {
     // 注釈済み画像もスクリーンショットと同じ中身なので、撮影と同じ経路で用意する。
     // 併せて、保存先がまだ無い場合に canonicalize が失敗して書き出せない問題も消える
-    let save_dir = std::fs::canonicalize(prepare_save_directory(&app)?)
+    let save_dir = dunce::canonicalize(prepare_save_directory(&app)?)
         .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
     write_image_within(&save_dir, &opened.snapshot(), &path, &data_base64)
 }
@@ -802,13 +997,13 @@ fn write_image_within(
     path: &str,
     data_base64: &str,
 ) -> Result<(), String> {
-    let target = std::fs::canonicalize(path)
+    let target = dunce::canonicalize(path)
         .or_else(|_| {
             // ファイルが未作成の場合、親ディレクトリで検証
             std::path::Path::new(path)
                 .parent()
                 .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))
-                .and_then(std::fs::canonicalize)
+                .and_then(dunce::canonicalize)
                 .map(|p| p.join(std::path::Path::new(path).file_name().unwrap()))
         })
         .map_err(|e| format!("Failed to resolve path: {}", e))?;
@@ -899,6 +1094,7 @@ fn encode_for_target_format(target: &Path, png_bytes: Vec<u8>) -> Result<Vec<u8>
 }
 
 /// sips で PNG を HEIC へ変換する (macOS 専用。convert_heic_to_png の逆方向)
+#[cfg(target_os = "macos")]
 fn convert_png_to_heic(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
     let work = create_private_workdir("encode", "source.png")?;
     std::fs::write(&work.path, png_bytes)
@@ -919,6 +1115,11 @@ fn convert_png_to_heic(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
     }
 
     std::fs::read(&converted).map_err(|e| format!("Failed to read the converted image: {}", e))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_png_to_heic(_png_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    Err("Saving as HEIC / HEIF is only supported on macOS".to_string())
 }
 
 /// flashcap://ocr でヘッドレス OCR が要求されたか。
@@ -1107,10 +1308,23 @@ fn is_supported_image_path(path: &Path) -> bool {
 /// captureScreen() が並走して、後に終わった方が表示を上書きする)。
 fn image_args_for_startup<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
     let args: Vec<String> = args.into_iter().collect();
-    if args.iter().any(|a| a == "--capture") {
+    if args.iter().any(|a| is_capture_arg(a)) {
         return Vec::new();
     }
     collect_image_args(args)
+}
+
+/// argv のこの要素が「撮影を始めよ」の指示か
+///
+/// `--capture` に加えて `flashcap://capture` も受ける。macOS は URL スキームを
+/// `RunEvent::Opened` で渡すので argv には来ないが、Windows は URL を開くと
+/// その URL を引数にして flashcap.exe を起動する (起動中なら single-instance が
+/// 既存のインスタンスへ転送する)。
+fn is_capture_arg(arg: &str) -> bool {
+    arg == "--capture"
+        || tauri::Url::parse(arg)
+            .map(|url| url.scheme() == "flashcap" && url.host_str() == Some("capture"))
+            .unwrap_or(false)
 }
 
 /// コマンドライン引数から、実在する対応画像ファイルだけを取り出す
@@ -1127,6 +1341,15 @@ fn collect_image_args<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
         .collect()
 }
 
+/// プリファレンスウィンドウを開く (フロントの Ctrl+, から)
+///
+/// macOS はアプリメニューの Preferences... (⌘,) から開くが、macOS 以外にはアプリメニューを
+/// 置かないので (setup 参照)、ショートカットをフロントで拾ってここを呼ぶ
+#[tauri::command]
+fn open_preferences(app: tauri::AppHandle) -> Result<(), String> {
+    open_preferences_window(&app).map_err(|e| format!("Failed to open Preferences: {}", e))
+}
+
 /// プリファレンスウィンドウを開く (既に開いていればフォーカス)
 fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("preferences") {
@@ -1141,6 +1364,70 @@ fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         .center()
         .build()?;
 
+    Ok(())
+}
+
+/// macOS のアプリメニュー (FlashCap / Edit / Window)
+///
+/// macOS 以外には置かない。Windows ではメニューがウインドウの中にメニューバーとして
+/// 付き、Edit の Ctrl+C / Ctrl+V / Ctrl+Z がアクセラレーターとして WebView より先に
+/// 奪われる (画像のコピーや undo をフロントの keydown で処理しているため、効かなくなる)。
+#[cfg(target_os = "macos")]
+fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
+    let preferences = MenuItem::with_id(
+        handle,
+        "preferences",
+        "Preferences...",
+        true,
+        Some("CmdOrCtrl+,"),
+    )?;
+
+    let app_submenu = Submenu::with_items(
+        handle,
+        handle.package_info().name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(handle, None, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &preferences,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::services(handle, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::hide(handle, None)?,
+            &PredefinedMenuItem::hide_others(handle, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::quit(handle, None)?,
+        ],
+    )?;
+
+    let edit_submenu = Submenu::with_items(
+        handle,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(handle, None)?,
+            &PredefinedMenuItem::redo(handle, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::cut(handle, None)?,
+            &PredefinedMenuItem::copy(handle, None)?,
+            &PredefinedMenuItem::paste(handle, None)?,
+            &PredefinedMenuItem::select_all(handle, None)?,
+        ],
+    )?;
+
+    let window_submenu = Submenu::with_items(
+        handle,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(handle, None)?,
+            &PredefinedMenuItem::maximize(handle, None)?,
+            &PredefinedMenuItem::close_window(handle, None)?,
+        ],
+    )?;
+
+    let menu = Menu::with_items(handle, &[&app_submenu, &edit_submenu, &window_submenu])?;
+    handle.set_menu(menu)?;
     Ok(())
 }
 
@@ -1166,7 +1453,7 @@ pub fn run() {
                 return;
             }
             // --capture: 再起動時に点滅させず、そのままキャプチャーを開始する
-            if args.iter().any(|a| a == "--capture") {
+            if args.iter().any(|a| is_capture_arg(a)) {
                 request_capture(app, CaptureKind::Interactive);
                 return;
             }
@@ -1184,58 +1471,9 @@ pub fn run() {
             }
         }))
         .setup(|app| {
-            let handle = app.handle();
-
             // macOS ネイティブメニュー
-            let preferences =
-                MenuItem::with_id(handle, "preferences", "Preferences...", true, Some("CmdOrCtrl+,"))?;
-
-            let app_submenu = Submenu::with_items(
-                handle,
-                app.package_info().name.clone(),
-                true,
-                &[
-                    &PredefinedMenuItem::about(handle, None, None)?,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &preferences,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::services(handle, None)?,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::hide(handle, None)?,
-                    &PredefinedMenuItem::hide_others(handle, None)?,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::quit(handle, None)?,
-                ],
-            )?;
-
-            let edit_submenu = Submenu::with_items(
-                handle,
-                "Edit",
-                true,
-                &[
-                    &PredefinedMenuItem::undo(handle, None)?,
-                    &PredefinedMenuItem::redo(handle, None)?,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::cut(handle, None)?,
-                    &PredefinedMenuItem::copy(handle, None)?,
-                    &PredefinedMenuItem::paste(handle, None)?,
-                    &PredefinedMenuItem::select_all(handle, None)?,
-                ],
-            )?;
-
-            let window_submenu = Submenu::with_items(
-                handle,
-                "Window",
-                true,
-                &[
-                    &PredefinedMenuItem::minimize(handle, None)?,
-                    &PredefinedMenuItem::maximize(handle, None)?,
-                    &PredefinedMenuItem::close_window(handle, None)?,
-                ],
-            )?;
-
-            let menu = Menu::with_items(handle, &[&app_submenu, &edit_submenu, &window_submenu])?;
-            app.set_menu(menu)?;
+            #[cfg(target_os = "macos")]
+            set_app_menu(app.handle())?;
 
             app.on_menu_event(move |app, event| {
                 if event.id() == "preferences" {
@@ -1272,7 +1510,7 @@ pub fn run() {
                 // --capture コールド起動: frontend-ready 受信前にキャプチャーを予約しておく。
                 // (URL スキーム capture のコールド起動は RunEvent::Opened → request_capture が
                 //  同じ予約を行う)
-                if std::env::args().any(|a| a == "--capture") {
+                if std::env::args().any(|a| is_capture_arg(&a)) {
                     app.state::<FrontendHandshake>().set_capture_pending();
                 }
 
@@ -1355,7 +1593,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, open_preferences, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -1643,6 +1881,18 @@ mod tests {
             "--capture と同時に画像を開こうとしている: {with_capture:?}"
         );
         assert_eq!(without_capture, vec![path]);
+    }
+
+    #[test]
+    fn the_capture_url_is_a_capture_request_like_the_flag() {
+        // Windows は flashcap://capture を argv で渡してくる
+        assert!(is_capture_arg("--capture"));
+        assert!(is_capture_arg("flashcap://capture"));
+        assert!(is_capture_arg("flashcap://capture/"));
+        assert!(!is_capture_arg("flashcap://ocr"));
+        assert!(!is_capture_arg("https://capture"));
+        assert!(!is_capture_arg("/tmp/capture.png"));
+        assert!(image_args_for_startup(vec!["flashcap://capture".to_string()]).is_empty());
     }
 
     #[test]
@@ -2028,5 +2278,98 @@ mod tests {
             "上限を超えた分は古い方から落ちる"
         );
         assert!(snapshot.contains(&dir.join(format!("f{}.png", OPENED_IMAGES_LIMIT - 1))));
+    }
+}
+
+/// Windows 専用の実装 (Unix の mode / O_NOFOLLOW の代わり) のテスト。Windows の CI で走る
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// テスト用の一時ディレクトリ。Drop で消す。
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "flashcap-test-{}-{}-{tag}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            create_private_dir(&base).expect("failed to create test dir");
+            Self(base)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn write_creates_and_overwrites_regular_files() {
+        let tmp = TempDir::new("overwrite");
+        let path = tmp.0.join("shot.png");
+        write_without_following_symlinks(&path, b"first").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        write_without_following_symlinks(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+    }
+
+    #[test]
+    fn write_refuses_to_follow_a_symlink() {
+        let tmp = TempDir::new("nofollow");
+        let victim = tmp.0.join("victim.txt");
+        std::fs::write(&victim, b"original").unwrap();
+        let link = tmp.0.join("link.png");
+        // symlink の作成には権限 (管理者か開発者モード) が要る。作れない環境では
+        // 攻撃側も作れないので、検査するものが無い
+        if std::os::windows::fs::symlink_file(&victim, &link).is_err() {
+            eprintln!("skipped: this account cannot create symbolic links");
+            return;
+        }
+
+        assert!(write_without_following_symlinks(&link, b"attacker").is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"original");
+    }
+
+    #[test]
+    fn the_working_directory_can_be_prepared() {
+        let dir = ensure_private_flashcap_dir().expect("failed to prepare the working directory");
+        assert!(dir.is_dir());
+        assert_eq!(dir, flashcap_temp_dir());
+    }
+
+    #[test]
+    fn reserved_workdir_is_removed_on_drop() {
+        let tmp = TempDir::new("workdir");
+        let work = reserve_private_workdir(&tmp.0, "heic", "converted.png")
+            .expect("failed to reserve workdir");
+        let dir = work.path.parent().unwrap().to_path_buf();
+        assert!(dir.is_dir());
+        assert!(!work.path.exists(), "出力ファイルはまだ作らない");
+
+        let other = reserve_private_workdir(&tmp.0, "heic", "converted.png")
+            .expect("failed to reserve second workdir");
+        assert_ne!(work.path, other.path);
+
+        drop(work);
+        assert!(!dir.exists(), "drop で消えていない");
+    }
+
+    #[test]
+    fn the_os_screenshot_directory_is_an_absolute_path() {
+        assert!(Path::new(&get_os_screenshot_dir()).is_absolute());
+    }
+
+    #[test]
+    fn heic_is_refused_instead_of_being_written_as_png() {
+        // 拡張子と中身が食い違うファイルを作らない (上書きなので原本が戻せなくなる)
+        let err = encode_for_target_format(Path::new("C:\\photo.heic"), Vec::new()).unwrap_err();
+        assert!(err.contains("only supported on macOS"), "{}", err);
     }
 }
