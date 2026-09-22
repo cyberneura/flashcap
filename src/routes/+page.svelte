@@ -19,6 +19,7 @@
   import { largestAspectRect, refitToAspect } from "$lib/cropAspect";
   import Toolbar from "$lib/Toolbar.svelte";
   import VideoTrimmer from "$lib/VideoTrimmer.svelte";
+  import { isModKey, isWindows } from "$lib/platform";
 
   let arrowOverlayRef = $state<ReturnType<typeof ArrowOverlay> | null>(null);
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
@@ -457,24 +458,30 @@
       } else if (e.key === "Enter" && cropToolActive) {
         e.preventDefault();
         applyCrop();
-      } else if (e.metaKey && e.shiftKey && e.key === "c") {
+      // Shift を押すと Windows の e.key は大文字になる ("C")。小文字に揃えて比べる
+      } else if (isModKey(e) && e.shiftKey && e.key.toLowerCase() === "c") {
         e.preventDefault();
         copyImage();
-      } else if (e.metaKey && e.key === "v") {
+      } else if (isModKey(e) && e.key === "v") {
         const tag = (e.target as HTMLElement)?.tagName;
         const isEditable = (e.target as HTMLElement)?.isContentEditable;
         if (tag === "INPUT" || tag === "TEXTAREA" || isEditable) return;
         e.preventDefault();
         pasteImage();
-      } else if (e.metaKey && e.key === "c") {
+      } else if (isModKey(e) && e.key === "c") {
         e.preventDefault();
         copyPath();
-      } else if (e.metaKey && e.key === "s") {
+      } else if (isModKey(e) && e.key === "s") {
         e.preventDefault();
         saveImage();
-      } else if (e.metaKey && e.key === "z") {
+      } else if (isModKey(e) && e.key === "z") {
         e.preventDefault();
         undo();
+      } else if (isWindows && isModKey(e) && e.key === ",") {
+        // macOS はアプリメニューの Preferences... (⌘,) が受ける。Windows には
+        // アプリメニューを置かないので (lib.rs の set_app_menu)、ここで開く
+        e.preventDefault();
+        invoke("open_preferences").catch((err) => console.error("Failed to open Preferences:", err));
       }
     }
     window.addEventListener("keydown", handleKeydown);

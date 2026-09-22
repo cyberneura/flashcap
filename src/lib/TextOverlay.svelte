@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TextAnnotation, TextSettings } from "./types";
+  import { isModKey } from "./platform";
   import {
     exceedsDragSlop,
     hitsText,
@@ -239,8 +240,8 @@
       commitEditing();
       return;
     }
-    // Cmd+Enter で確定
-    if (e.key === "Enter" && e.metaKey && !(e as any).isComposing) {
+    // Cmd+Enter (Windows は Ctrl+Enter) で確定
+    if (e.key === "Enter" && isModKey(e) && !(e as any).isComposing) {
       e.preventDefault();
       commitEditing();
       return;

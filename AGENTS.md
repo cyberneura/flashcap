@@ -1,6 +1,6 @@
 # FlashCap - Project Guide
 
-macOS screenshot capture & annotation app.
+Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 added Windows).
 
 ## Commands
 
@@ -263,6 +263,46 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 - ヘッドレス OCR (`--capture-screen-text` のコールド起動) ではアイコンを置かない
   (終わり次第プロセスごと終了するので、一瞬出て消えるだけになる)。
 
+## Windows 版 (CYBERNEURA-DEV-841)
+
+macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) に頼る箇所は
+`#[cfg(target_os = "macos")]` で分け、Windows 側を別実装にしてある。
+
+- **撮影はカーソルのあるモニター全体** (`capture_screen_to` の Windows 版。xcap)。
+  Windows には `screencapture -i` に当たる「範囲を選ばせて撮る」コマンドが無いので、
+  切り出しはメインウインドウのトリミングで行う。hide の後 300ms 待ってから撮る
+  (消えかけのウインドウが写り込むため)。タイマーは待つだけで、カーソル位置は待った後に取る。
+- **録画・OCR・通知は macOS 専用**。フロントは `src/lib/platform.ts` の `isWindows`
+  (WebView の UA で判定) でボタンを出さず、Rust もメニューバー (Windows では通知領域)
+  の項目から外し (`MenuAction::is_available`)、コマンドが呼ばれてもエラーを返す。
+  `ocr::notify` は Windows では何もしない。HEIC は開けも保存もできない (sips が無い)。
+- **アプリメニューは macOS だけ** (`set_app_menu`)。Windows ではメニューがウインドウの
+  メニューバーになり、Edit の Ctrl+C / Ctrl+V / Ctrl+Z がアクセラレーターとして
+  WebView の keydown より先に奪われる。Preferences は `+page.svelte` が Ctrl+, を拾って
+  `open_preferences` を呼ぶ。
+- **ショートカットは `isModKey`** (macOS は ⌘、Windows は Ctrl)。Shift を押した時の
+  `e.key` は Windows だと大文字になるので、Ctrl+Shift+C は小文字に揃えて比べる。
+- **ファイルの守り方が違う**。Unix の mode / uid / O_NOFOLLOW は Windows に無いので、
+  `create_private_dir` などは cfg で分けてある。Windows は %TEMP% (ユーザー専用の ACL)
+  に頼り、`write_without_following_symlinks` は symlink を先に弾いたうえで
+  `FILE_FLAG_OPEN_REPARSE_POINT` で開く。
+- **canonicalize は `dunce::canonicalize`**。std は Windows で `\\?\C:\...` を返し、
+  パス欄やコピーしたパスにそれが出る。突き合わせ (`OpenedImages` と `write_image_within`)
+  も同じ関数で揃えること。
+- `flashcap://capture` は Windows では argv で届く (`is_capture_arg`)。`flashcap://ocr` は無い。
+- **`src-tauri/tauri.windows.conf.json`** が Windows のビルドでだけ重なる
+  (HEIC の関連付けと ocr.swift の同梱を外している)。
+- トレイのアイコンは Windows ではアプリのアイコン (`menu_bar::tray_icon`)。macOS の
+  テンプレート画像は黒一色なので、暗いタスクバーで見えなくなる。
+- `icons/icon.ico` は 16〜256 の 6 サイズ入り。作り直す時は
+  `pnpm exec tauri icon src-tauri/icons/icon.png -o <一時ディレクトリ>` から icon.ico だけを
+  取る (出力先を icons/ にすると icns まで作り直される)。
+- **Linux から Windows ターゲットを検査できる**。`rustup target add x86_64-pc-windows-msvc`
+  のうえ `cargo check --target x86_64-pc-windows-msvc`。ただし tauri-build が
+  リソースコンパイラ (`llvm-rc`) を要求して止まるので、出力ファイルを空で作るだけの
+  `llvm-rc` を PATH に置く (check はリンクしないので中身は要らない)。
+  Windows 専用のテスト (`mod windows_tests`) は CI の Windows ランナーでしか走らない。
+
 ## Rust Commands (src-tauri/src/lib.rs)
 
 - `take_screenshot_interactive` - Standard interactive capture (`screencapture -i`)
@@ -313,21 +353,25 @@ version を採番して main へ push し、その run を watch するだけ。
   `build` / `publish` は `needs.plan.outputs.release == 'true'` で止める。
 - **`workflow_dispatch` は失敗した run の再実行用に残してある**。`plan` を通るので公開済み version は
   出せず、main 以外の ref からの dispatch は `plan` が拒否する。
-- **macOS のみビルドする**。screencapture / Vision Framework 依存の macOS 専用アプリなので
-  Windows ビルドは作らない。成果物は `--target universal-apple-darwin --bundles dmg` の
-  `flashcap_<version>_universal.dmg` (x86_64 + arm64)。
-- **draft → publish の 2 ジョブ構成**。tauri-action はビルド前に Release を作るため、
-  `releaseDraft: false` だとビルド失敗時に空の Release が公開されてしまう。draft で作り、
-  build 成功後に publish ジョブが `gh release edit --draft=false --latest` で公開する。
-  失敗時は draft のまま残る。
+- **macOS と Windows をビルドする** (build の matrix)。macOS は
+  `--target universal-apple-darwin --bundles dmg` の `flashcap_<version>_universal.dmg`
+  (x86_64 + arm64、署名 + 公証)。Windows は `--bundles nsis` の
+  `flashcap_<version>_x64-setup.exe` (署名なし)。test も同じ 2 OS の matrix で走る。
+  Apple の Secret は macOS のジョブにだけ渡す (Windows では空文字)。
+- **draft Release はビルド前の `draft` ジョブが 1 つ作り、tauri-action には `releaseId` で渡す**
+  (queryfolio と同じ構成)。tagName 方式だと、macOS と Windows がほぼ同時に終わった時に
+  両方が「無い」と判断して同じ tag の draft を 2 つ作る。失敗した run が残した draft は
+  再利用し、target をその run の commit に直す。
+- **draft → build → publish の構成**。build が全プラットフォーム成功した後に、publish ジョブが
+  `gh release edit --draft=false --latest` で公開する。失敗時は draft のまま残る。
 - **リリース済みの version は二度と出ない**。公開済みと同じ version で build まで進むと
   tauri-action が draft 状態の不一致でエラーになるが、`plan` がそこへ行かせない。
   build 失敗で残った draft (tag がまだ無いので `plan` からは 404 に見える) は、次の push か
-  dispatch で同じ version のまま埋め直される (tauri-action が tag 名で draft を探して再利用し、
-  同名 asset を差し替える)。
-- **publish の `--target "${GITHUB_SHA}"` は消さない**。再利用された draft の `target_commitish` は
-  最初に draft を作った run の commit のままで、tag は公開時にそこへ作られる。失敗後に別 commit で
-  作り直すと、tag と dmg の中身が別の commit を指すことになる。
+  dispatch で同じ version のまま埋め直される (`draft` ジョブが一覧から探して再利用し、
+  tauri-action が同名 asset を差し替える)。
+- **publish の `--target "${GITHUB_SHA}"` は消さない**。`draft` ジョブも target を直しているが、
+  tag は公開時に target へ作られるので、公開の直前にもう一度合わせておく。ずれると tag と
+  成果物の中身が別の commit を指すことになる。
 - **`tauriScript: pnpm exec tauri` は消さない**。省略すると tauri-action は pnpm プロジェクトに
   対して `pnpm tauri build` を実行し、`package.json` の `tauri` スクリプトが持つインラインの
   `APPLE_SIGNING_IDENTITY=...` が workflow の env を上書きしてしまう (シェルのインライン代入は

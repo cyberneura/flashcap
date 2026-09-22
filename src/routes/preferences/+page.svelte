@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { load, type Store } from "@tauri-apps/plugin-store";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { isWindows } from "$lib/platform";
 
   type SaveMode = "tmp" | "macos_default" | "custom";
 
@@ -179,8 +180,13 @@
         class="mt-0.5 accent-blue-600"
       />
       <div>
-        <div class="text-sm font-medium">macOS Default</div>
-        <div class="text-xs text-gray-500 mt-0.5">System screenshot save location (Desktop or custom)</div>
+        {#if isWindows}
+          <div class="text-sm font-medium">Windows Default</div>
+          <div class="text-xs text-gray-500 mt-0.5">Pictures\Screenshots (where Windows saves Win+PrtScn screenshots)</div>
+        {:else}
+          <div class="text-sm font-medium">macOS Default</div>
+          <div class="text-xs text-gray-500 mt-0.5">System screenshot save location (Desktop or custom)</div>
+        {/if}
       </div>
     </label>
 
@@ -263,6 +269,8 @@
         {/each}
       </select>
     </div>
+    <!-- Windows はモニター全体を撮るので、ウインドウの影という概念が無い -->
+    {#if !isWindows}
     <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-[#2d2d2d] transition-colors">
       <input
         type="checkbox"
@@ -275,11 +283,12 @@
         <div class="text-xs text-gray-500 mt-0.5">Remove drop shadow when capturing a window</div>
       </div>
     </label>
+    {/if}
   </section>
 
   <section class="mt-8">
     <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
-      Menu Bar
+      {isWindows ? "Notification Area" : "Menu Bar"}
     </h3>
     <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-[#2d2d2d] transition-colors">
       <input
@@ -289,10 +298,17 @@
         class="accent-blue-600"
       />
       <div>
-        <div class="text-sm font-medium">Keep FlashCap in the menu bar</div>
-        <div class="text-xs text-gray-500 mt-0.5">
-          Capture, record, and copy text from the menu bar. Closing the window keeps FlashCap running.
-        </div>
+        {#if isWindows}
+          <div class="text-sm font-medium">Keep FlashCap in the notification area</div>
+          <div class="text-xs text-gray-500 mt-0.5">
+            Capture from the notification area icon. Closing the window keeps FlashCap running.
+          </div>
+        {:else}
+          <div class="text-sm font-medium">Keep FlashCap in the menu bar</div>
+          <div class="text-xs text-gray-500 mt-0.5">
+            Capture, record, and copy text from the menu bar. Closing the window keeps FlashCap running.
+          </div>
+        {/if}
       </div>
     </label>
   </section>

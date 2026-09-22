@@ -519,6 +519,11 @@ pub fn start_video_recording(
     width: i32,
     height: i32,
 ) -> Result<String, String> {
+    // 録画は screencapture -v に頼っている。Windows のフロントは録画ボタンを出さないが、
+    // 呼ばれた時に存在しないコマンドを起動しようとして分かりにくく落ちないよう先に断る
+    if !cfg!(target_os = "macos") {
+        return Err("Screen recording is only available on macOS".to_string());
+    }
     // 上限は最大級のディスプレイ構成でも届かない防御値
     if !(1..=16384).contains(&width) || !(1..=16384).contains(&height) {
         return Err("Invalid recording region".to_string());

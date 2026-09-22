@@ -1,9 +1,15 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Deserialize;
 use std::process::Stdio;
+#[cfg(target_os = "macos")]
 use tauri::Manager;
 
+/// OCR は macOS の Vision Framework (swift スクリプト) に頼っていて、他の OS には無い
+#[cfg(not(target_os = "macos"))]
+const OCR_UNSUPPORTED: &str = "Text recognition (OCR) is only available on macOS";
+
 /// macOS 通知センターに通知を表示
+#[cfg(target_os = "macos")]
 pub(crate) fn notify(title: &str, body: &str) {
     let _ = std::process::Command::new("osascript")
         .args([
@@ -17,7 +23,13 @@ pub(crate) fn notify(title: &str, body: &str) {
         .output();
 }
 
+/// 通知の仕組みが osascript しか無いので、macOS 以外は何も出さない
+/// (Windows の通知センターへ出すには tauri-plugin-notification とアプリの登録が要る)
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn notify(_title: &str, _body: &str) {}
+
 /// テキストをクリップボードにコピー (pbcopy)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     let mut child = std::process::Command::new("pbcopy")
@@ -45,6 +57,7 @@ pub fn show_notification(title: String, body: String) {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct OcrRegion {
     pub x: f64,
     pub y: f64,
@@ -53,6 +66,7 @@ pub struct OcrRegion {
 }
 
 /// Swift スクリプトのパスを取得（開発時は resources/ 直下、ビルド時はバンドルリソース）
+#[cfg(target_os = "macos")]
 fn get_ocr_script_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     // Tauri のリソースディレクトリから取得
     let resource_path = app
@@ -82,6 +96,7 @@ fn get_ocr_script_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Str
 }
 
 /// OCR を実行して認識テキストを返す
+#[cfg(target_os = "macos")]
 async fn recognize_text(
     app: &tauri::AppHandle,
     png_data: &[u8],
@@ -138,6 +153,17 @@ async fn recognize_text(
     Ok(text)
 }
 
+#[cfg(not(target_os = "macos"))]
+async fn recognize_text(
+    _app: &tauri::AppHandle,
+    _png_data: &[u8],
+    _region: Option<OcrRegion>,
+    _img_width: u32,
+    _img_height: u32,
+) -> Result<String, String> {
+    Err(OCR_UNSUPPORTED.to_string())
+}
+
 /// 表示中の画像から OCR でテキスト抽出
 #[tauri::command]
 pub async fn ocr_image(
@@ -167,11 +193,13 @@ pub async fn ocr_image(
 /// (TMPDIR が無くて /tmp に落ちた場合も、そのディレクトリ自体を締めてから使う)。
 ///
 /// 名前の確保のしかたと後始末 (drop) の詳細は crate::create_private_workdir を参照。
+#[cfg(target_os = "macos")]
 fn create_ocr_workdir() -> Result<crate::PrivateWorkdir, String> {
     crate::create_private_workdir("ocr", "capture.png")
 }
 
 /// screencapture -i → 一時ファイル → OCR の共通処理
+#[cfg(target_os = "macos")]
 async fn screencapture_and_ocr(app: &tauri::AppHandle) -> Result<String, String> {
     // work が生きている間だけ一時ディレクトリが存在する。以降どこで抜けても
     // (キャンセル含む) drop が撮影結果ごと消すので、明示的な後始末は書かない
@@ -205,6 +233,12 @@ async fn screencapture_and_ocr(app: &tauri::AppHandle) -> Result<String, String>
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
     recognize_text(app, &png_data, None, img.width(), img.height()).await
+}
+
+/// screencapture が無いので撮影もしない (撮った後の OCR ができないため)
+#[cfg(not(target_os = "macos"))]
+async fn screencapture_and_ocr(_app: &tauri::AppHandle) -> Result<String, String> {
+    Err(OCR_UNSUPPORTED.to_string())
 }
 
 /// screencapture -i で新規キャプチャ → OCR → テキストのみ返す

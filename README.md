@@ -2,7 +2,7 @@
 
 ![](./src-tauri/icons/128x128@2x.png)
 
-A macOS screenshot capture & annotation app.
+A screenshot capture & annotation app for macOS and Windows.
 
 ![](./documents/images/flashcap-20260130-104529.png)
 
@@ -14,13 +14,30 @@ A macOS screenshot capture & annotation app.
 brew install --cask cyberneura/tap/flashcap
 ```
 
-### Manual download
+### Manual download (macOS)
 
 Get the latest `flashcap_x.y.z_universal.dmg` from the
 [Releases](https://github.com/cyberneura/flashcap/releases) page and drag the app into
 `/Applications`.
 
-## First launch
+### Windows
+
+Get the latest `flashcap_x.y.z_x64-setup.exe` from the
+[Releases](https://github.com/cyberneura/flashcap/releases) page and run it.
+The installer is not code-signed, so SmartScreen warns on first run
+("Windows protected your PC" → More info → Run anyway).
+
+The Windows version differs from the macOS one:
+
+- A capture takes the whole monitor under the mouse cursor (Windows has no
+  equivalent of `screencapture -i`). Use the crop tool to cut out the area you need.
+- Screen recording and OCR are macOS-only and are not shown.
+- No notifications (e.g. after auto-copy).
+- HEIC / HEIF images cannot be opened.
+- Shortcuts use Ctrl instead of ⌘ (Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+S / Ctrl+Z,
+  Ctrl+, for Preferences).
+
+## First launch (macOS)
 
 Both methods install the same app from the same dmg. It is signed with a
 Developer ID certificate and notarized by Apple, so it passes Gatekeeper — no
@@ -37,17 +54,18 @@ fails, install them with `xcode-select --install`.
 
 ## Features
 
-- Screenshot capture (interactive area selection)
+- Screenshot capture (interactive area selection on macOS, the monitor under the cursor on Windows)
 - Timer capture (configurable delay: 3/5/10 seconds)
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
 - Mask tool (mosaic, blur, fill) with resize/move handles
 - Crop tool (drag to select, Enter to apply, annotations move with the image)
-- OCR text recognition (macOS Vision Framework, Japanese/English)
+- OCR text recognition (macOS only: Vision Framework, Japanese/English)
 - Clipboard integration (copy path or image)
 - Auto-copy each capture (off / file path / image data) from the toolbar, with a notification
 - Optional menu bar icon (Preferences) to capture, record, and copy text on screen without opening the window
 - Drag & drop to external apps (e.g. Slack)
-- Configurable save location (tmp / macOS default / custom folder)
+- Screen recording (macOS only)
+- Configurable save location (tmp / OS default / custom folder)
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation)
 - Preferences window (save location, timer delay, menu bar icon)
 
@@ -71,6 +89,9 @@ open "flashcap://ocr"
 open "flashcap://capture"
 ```
 
+On Windows only `flashcap://capture` is supported (it arrives as a command-line
+argument, like `--capture`).
+
 ## Tech Stack
 
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript
@@ -82,7 +103,7 @@ open "flashcap://capture"
 - Rust (stable)
 - Node.js
 - pnpm
-- macOS
+- macOS or Windows
 
 ## Development
 
@@ -106,7 +127,8 @@ pnpm check
 ## Release
 
 A push to `main` whose `src-tauri/tauri.conf.json` version has no published GitHub Release yet,
-and is newer than the latest one, builds and publishes it (signed + notarized universal dmg). `pnpm release` bumps the
+and is newer than the latest one, builds and publishes it (signed + notarized universal dmg,
+and an unsigned Windows NSIS installer). `pnpm release` bumps the
 version, pushes it to `main`, and watches that build until the Release is published.
 Bumping the version in a pull request and merging it releases the same way.
 
