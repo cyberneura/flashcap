@@ -1469,16 +1469,26 @@ pub fn run() {
                 request_capture(app, CaptureKind::Interactive);
                 return;
             }
+            // flashcap://capture (Windows): 撮影はせず、前に出して撮影ボタンを点滅させる。
+            // 理由は is_capture_url のコメント。
+            // **撮影中 (タイマーのカウントダウンや hide 後の待ちを含む) は何もしない。**
+            // ここで show すると撮影中のモニター全体に自分が写り込む。URL は外から
+            // いつでも開けるので、メニューバーの経路 (menu_bar.rs) と同じく弾く
+            if args.iter().any(|a| is_capture_url(a)) {
+                if is_capture_in_progress() {
+                    return;
+                }
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+                let _ = app.emit("reactivate", ());
+                return;
+            }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.set_focus();
-            }
-            // flashcap://capture (Windows): 撮影はせず、前に出して撮影ボタンを点滅させる。
-            // 理由は is_capture_url のコメント
-            if args.iter().any(|a| is_capture_url(a)) {
-                let _ = app.emit("reactivate", ());
-                return;
             }
             // args[0] はバイナリパス。args[1..] がファイルパス
             let file_paths = collect_image_args(args.iter().skip(1).cloned());

@@ -291,6 +291,7 @@ macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) 
   も同じ関数で揃えること。
 - `flashcap://capture` は Windows では argv で届く (`is_capture_url`)。**Windows では撮影を
   始めず、ウインドウを前に出して撮影ボタンを点滅させるだけ** (CYBERNEURA-DEV-852)。
+  撮影中 (`is_capture_in_progress`) に届いた URL は無視する (前に出すと撮影に写り込む)。
   Windows の撮影はモニター全体の即時撮影でユーザーの操作を挟まないため、URL で撮影させると
   任意の Web ページやメールのリンクから非対話で画面を撮らせられる。`--capture`
   (`is_capture_arg`。Web からは渡せない) は従来どおり即撮影。`flashcap://ocr` は無い。
