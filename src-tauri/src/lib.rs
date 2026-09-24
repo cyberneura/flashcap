@@ -1141,7 +1141,7 @@ fn headless_ocr_requested() -> bool {
 /// フロント (WebView) の準備待ちハンドシェイク状態
 ///
 /// キャプチャー開始経路 (--capture コールド / single-instance 再起動 /
-/// flashcap://capture) は、いずれも「ウィンドウは show せず do-capture のみ送り、
+/// macOS の flashcap://capture) は、いずれも「ウィンドウは show せず do-capture のみ送り、
 /// 表示は captureScreen() の撮影完了後 show に一任する」設計に統一している。
 /// ただしコールド起動 (WebView 未ロード) では do-capture が登録前のリスナーに届かず
 /// 取りこぼすため、frontend-ready 受信を待ってから emit する必要がある。
@@ -1167,6 +1167,8 @@ struct HandshakeInner {
     capture_pending: Option<CaptureKind>,
     /// frontend-ready より前に届いた「開くべき画像」のパス
     pending_files: Vec<String>,
+    /// frontend-ready より前に届いた「撮影ボタンを点滅させよ」(Windows の flashcap://capture)
+    reactivate_pending: bool,
 }
 
 /// 撮影の種類
@@ -1194,6 +1196,7 @@ impl CaptureKind {
 struct PendingWork {
     capture: Option<CaptureKind>,
     files: Vec<String>,
+    reactivate: bool,
 }
 
 impl FrontendHandshake {
@@ -1211,6 +1214,20 @@ impl FrontendHandshake {
         PendingWork {
             capture: s.capture_pending.take(),
             files: std::mem::take(&mut s.pending_files),
+            reactivate: std::mem::take(&mut s.reactivate_pending),
+        }
+    }
+
+    /// 撮影ボタンの点滅 (reactivate) を要求する。frontend が ready 済みなら true
+    /// (即 show + emit すべき)、未 ready なら予約だけして false を返す
+    /// (frontend-ready 受信時の表示に続けて emit される)。
+    fn request_reactivate(&self) -> bool {
+        let mut s = self.lock();
+        if s.frontend_ready {
+            true
+        } else {
+            s.reactivate_pending = true;
+            false
         }
     }
 
@@ -1308,7 +1325,7 @@ fn is_supported_image_path(path: &Path) -> bool {
 /// captureScreen() が並走して、後に終わった方が表示を上書きする)。
 fn image_args_for_startup<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
     let args: Vec<String> = args.into_iter().collect();
-    if args.iter().any(|a| is_capture_arg(a)) {
+    if args.iter().any(|a| is_capture_arg(a) || is_capture_url(a)) {
         return Vec::new();
     }
     collect_image_args(args)
@@ -1316,15 +1333,27 @@ fn image_args_for_startup<I: IntoIterator<Item = String>>(args: I) -> Vec<String
 
 /// argv のこの要素が「撮影を始めよ」の指示か
 ///
-/// `--capture` に加えて `flashcap://capture` も受ける。macOS は URL スキームを
-/// `RunEvent::Opened` で渡すので argv には来ないが、Windows は URL を開くと
-/// その URL を引数にして flashcap.exe を起動する (起動中なら single-instance が
-/// 既存のインスタンスへ転送する)。
+/// **`--capture` だけ。** ローカルのショートカットやランチャーから渡すもので、
+/// Web ページからは渡せない。`flashcap://capture` は `is_capture_url` で別に判定する。
 fn is_capture_arg(arg: &str) -> bool {
     arg == "--capture"
-        || tauri::Url::parse(arg)
-            .map(|url| url.scheme() == "flashcap" && url.host_str() == Some("capture"))
-            .unwrap_or(false)
+}
+
+/// argv のこの要素が `flashcap://capture` か
+///
+/// macOS は URL スキームを `RunEvent::Opened` で渡すので argv には来ないが、
+/// Windows は URL を開くとその URL を引数にして flashcap.exe を起動する
+/// (起動中なら single-instance が既存のインスタンスへ転送する)。
+///
+/// **これでは撮影を始めない (CYBERNEURA-DEV-852)。** Windows 版の撮影は
+/// モニター全体の即時撮影で、macOS の `screencapture -i` のような
+/// ユーザーの操作を挟まない。URL は任意の Web ページやメールのリンクから開けるので、
+/// ここで撮影すると外部から非対話で画面を撮らせられる。ウインドウを前に出して
+/// 撮影ボタンを点滅させるだけにし、撮影はユーザーのボタン押下に任せる。
+fn is_capture_url(arg: &str) -> bool {
+    tauri::Url::parse(arg)
+        .map(|url| url.scheme() == "flashcap" && url.host_str() == Some("capture"))
+        .unwrap_or(false)
 }
 
 /// コマンドライン引数から、実在する対応画像ファイルだけを取り出す
@@ -1457,6 +1486,26 @@ pub fn run() {
                 request_capture(app, CaptureKind::Interactive);
                 return;
             }
+            // flashcap://capture (Windows): 撮影はせず、前に出して撮影ボタンを点滅させる。
+            // 理由は is_capture_url のコメント。
+            // **撮影中 (タイマーのカウントダウンや hide 後の待ちを含む) は何もしない。**
+            // ここで show すると撮影中のモニター全体に自分が写り込む。URL は外から
+            // いつでも開けるので、メニューバーの経路 (menu_bar.rs) と同じく弾く。
+            // コールド起動の途中 (frontend-ready 前) に届いた時は、未描画のウインドウを出さず
+            // リスナーも無いので、予約して frontend-ready 側の表示に任せる
+            if args.iter().any(|a| is_capture_url(a)) {
+                if is_capture_in_progress() {
+                    return;
+                }
+                if app.state::<FrontendHandshake>().request_reactivate() {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                    let _ = app.emit("reactivate", ());
+                }
+                return;
+            }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
@@ -1508,10 +1557,16 @@ pub fn run() {
                 let handle = app.handle().clone();
 
                 // --capture コールド起動: frontend-ready 受信前にキャプチャーを予約しておく。
-                // (URL スキーム capture のコールド起動は RunEvent::Opened → request_capture が
-                //  同じ予約を行う)
+                // (macOS の URL スキーム capture のコールド起動は RunEvent::Opened →
+                //  request_capture が同じ予約を行う。Windows の flashcap://capture は argv で
+                //  来るが、is_capture_arg に当たらないので予約せず、通常の起動として表示し、
+                //  起動中に受けた時と同じく撮影ボタンを点滅させる)
                 if std::env::args().any(|a| is_capture_arg(&a)) {
                     app.state::<FrontendHandshake>().set_capture_pending();
+                }
+                if std::env::args().any(|a| is_capture_url(&a)) {
+                    // まだ ready ではないので必ず予約になる
+                    app.state::<FrontendHandshake>().request_reactivate();
                 }
 
                 // コールド起動の引数で渡された画像 (ターミナルからの `flashcap foo.png`)。
@@ -1545,13 +1600,19 @@ pub fn run() {
                             let _ = w.show();
                             let _ = w.set_focus();
                         }
+                        // flashcap://capture のコールド起動 (Windows) か、起動途中に
+                        // single-instance で届いた場合: 撮影はせず撮影ボタンを点滅させる。
+                        // reactivate のリスナーは frontend-ready より先に登録される
+                        if work.reactivate {
+                            let _ = handle_cb.emit("reactivate", ());
+                        }
                     }
                 });
 
                 // フェイルセーフ: frontend-ready が一定時間来ない場合
                 // (WebView の JS ロード失敗・onMount 到達前の例外等) は
                 // ウィンドウが永久に非表示のままになるため、強制的に表示する。
-                // ただしキャプチャー予約中 (--capture / flashcap://capture のコールド起動)
+                // ただしキャプチャー予約中 (--capture / macOS の flashcap://capture のコールド起動)
                 // は表示しない。低速環境で frontend-ready が2秒を超えてから届くと
                 // show → captureScreen の hide で点滅するため。予約中に frontend が
                 // 永久に来ない場合はそもそも captureScreen が動かずキャプチャー不能なので、
@@ -1826,6 +1887,25 @@ mod tests {
     }
 
     #[test]
+    fn a_reactivate_before_ready_is_held_and_delivered_once() {
+        // Arrange: コールド起動の途中に flashcap://capture が届いた (Windows)
+        let handshake = FrontendHandshake::default();
+
+        // Act
+        let immediate = handshake.request_reactivate();
+        let first = handshake.mark_ready();
+        let second = handshake.mark_ready();
+
+        // Assert: その場では emit させず、frontend-ready で 1 度だけ渡る
+        assert!(!immediate);
+        assert!(first.reactivate);
+        assert!(!second.reactivate);
+        // ready 後は即 emit させ、預かり分としては残さない
+        assert!(handshake.request_reactivate());
+        assert!(!handshake.mark_ready().reactivate, "二重に配送されている");
+    }
+
+    #[test]
     fn a_held_capture_keeps_its_kind() {
         // Arrange: コールド起動の直後にメニューバーの「タイマー付きで撮影」が押された
         let handshake = FrontendHandshake::default();
@@ -1873,6 +1953,8 @@ mod tests {
         // Act
         let with_capture =
             image_args_for_startup(vec!["--capture".to_string(), path.clone()]);
+        let with_capture_url =
+            image_args_for_startup(vec!["flashcap://capture".to_string(), path.clone()]);
         let without_capture = image_args_for_startup(vec![path.clone()]);
 
         // Assert: single-instance 経路と同じ優先順位 (capture ならファイルは見ない)
@@ -1880,18 +1962,29 @@ mod tests {
             with_capture.is_empty(),
             "--capture と同時に画像を開こうとしている: {with_capture:?}"
         );
+        assert!(
+            with_capture_url.is_empty(),
+            "flashcap://capture と同時に画像を開こうとしている: {with_capture_url:?}"
+        );
         assert_eq!(without_capture, vec![path]);
     }
 
     #[test]
-    fn the_capture_url_is_a_capture_request_like_the_flag() {
-        // Windows は flashcap://capture を argv で渡してくる
+    fn the_capture_url_is_not_a_capture_request_like_the_flag() {
+        // Windows は flashcap://capture を argv で渡してくる。Web から開ける URL なので、
+        // --capture と違って撮影は始めない (CYBERNEURA-DEV-852)
         assert!(is_capture_arg("--capture"));
-        assert!(is_capture_arg("flashcap://capture"));
-        assert!(is_capture_arg("flashcap://capture/"));
-        assert!(!is_capture_arg("flashcap://ocr"));
-        assert!(!is_capture_arg("https://capture"));
-        assert!(!is_capture_arg("/tmp/capture.png"));
+        assert!(!is_capture_arg("flashcap://capture"));
+        assert!(!is_capture_arg("flashcap://capture/"));
+
+        assert!(is_capture_url("flashcap://capture"));
+        assert!(is_capture_url("flashcap://capture/"));
+        assert!(!is_capture_url("--capture"));
+        assert!(!is_capture_url("flashcap://ocr"));
+        assert!(!is_capture_url("https://capture"));
+        assert!(!is_capture_url("/tmp/capture.png"));
+
+        // URL で起動された時も、argv の画像は開かない (従来どおり)
         assert!(image_args_for_startup(vec!["flashcap://capture".to_string()]).is_empty());
     }
 

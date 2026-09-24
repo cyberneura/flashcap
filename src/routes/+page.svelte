@@ -412,7 +412,7 @@
 
     // バックエンドへの準備完了通知。コールド起動 (WebView 未ロード) で取りこぼす
     // イベントはバックエンドが frontend-ready まで預かるので、預かり対象の
-    // リスナー (do-capture / open-file) が **全部** 登録され終わってから一度だけ送る。
+    // リスナー (do-capture / open-file / reactivate) が **全部** 登録され終わってから一度だけ送る。
     // do-capture の登録だけを待って送ると、open-file の登録が間に合う保証が無い。
     // **預かり対象のイベントを増やしたら、この配列にも足すこと。**
     //
@@ -423,7 +423,9 @@
     // 逆に allSettled では、失敗した側の預かり分が「届け先が無いまま consume される」。
     // それでも all より被害が小さいので許容する (all は両方失われる)。listen が reject
     // するのは IPC 自体が壊れている時で、その状態では下の emit も届かない
-    Promise.allSettled([unlistenDoCapture, unlistenOpenFile]).then(() => {
+    // reactivate は預からないが、flashcap://capture のコールド起動 (Windows) では
+    // frontend-ready の直後に届くので、登録を待ってから送る
+    Promise.allSettled([unlistenDoCapture, unlistenOpenFile, unlisten]).then(() => {
       emit("frontend-ready");
     });
 

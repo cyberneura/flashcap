@@ -48,7 +48,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 frontend-ready を待ってから emit することで、これを 1 箇所で防いでいる。預かる仕事は 2 種類:
 
 - **キャプチャー開始** — 3経路 (`--capture` コールド起動 / single-instance 再起動 /
-  `flashcap://capture` URL スキーム)。`request_capture()` 経由。
+  macOS の `flashcap://capture` URL スキーム)。`request_capture()` 経由。
 - **画像を開く** — Finder の「このアプリケーションで開く」/ Dock へのドロップ
   (どちらも `RunEvent::Opened`)、single-instance の argv、コールド起動の argv。
   `request_open_files()` 経由。
@@ -289,7 +289,12 @@ macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) 
 - **canonicalize は `dunce::canonicalize`**。std は Windows で `\\?\C:\...` を返し、
   パス欄やコピーしたパスにそれが出る。突き合わせ (`OpenedImages` と `write_image_within`)
   も同じ関数で揃えること。
-- `flashcap://capture` は Windows では argv で届く (`is_capture_arg`)。`flashcap://ocr` は無い。
+- `flashcap://capture` は Windows では argv で届く (`is_capture_url`)。**Windows では撮影を
+  始めず、ウインドウを前に出して撮影ボタンを点滅させるだけ** (CYBERNEURA-DEV-852)。
+  撮影中 (`is_capture_in_progress`) に届いた URL は無視する (前に出すと撮影に写り込む)。
+  Windows の撮影はモニター全体の即時撮影でユーザーの操作を挟まないため、URL で撮影させると
+  任意の Web ページやメールのリンクから非対話で画面を撮らせられる。`--capture`
+  (`is_capture_arg`。Web からは渡せない) は従来どおり即撮影。`flashcap://ocr` は無い。
 - **`src-tauri/tauri.windows.conf.json`** が Windows のビルドでだけ重なる
   (HEIC の関連付けと ocr.swift の同梱を外している)。
 - トレイのアイコンは Windows ではアプリのアイコン (`menu_bar::tray_icon`)。macOS の
