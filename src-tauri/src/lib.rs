@@ -1528,10 +1528,12 @@ pub fn run() {
                 // --capture コールド起動: frontend-ready 受信前にキャプチャーを予約しておく。
                 // (macOS の URL スキーム capture のコールド起動は RunEvent::Opened →
                 //  request_capture が同じ予約を行う。Windows の flashcap://capture は argv で
-                //  来るが、is_capture_arg に当たらないので予約せず、通常の起動として表示する)
+                //  来るが、is_capture_arg に当たらないので予約せず、通常の起動として表示し、
+                //  起動中に受けた時と同じく撮影ボタンを点滅させる)
                 if std::env::args().any(|a| is_capture_arg(&a)) {
                     app.state::<FrontendHandshake>().set_capture_pending();
                 }
+                let started_by_capture_url = std::env::args().any(|a| is_capture_url(&a));
 
                 // コールド起動の引数で渡された画像 (ターミナルからの `flashcap foo.png`)。
                 // 起動中に同じコマンドを叩くと single-instance 側が argv で受けて開けるのに、
@@ -1563,6 +1565,12 @@ pub fn run() {
                         if let Some(w) = handle_cb.get_webview_window("main") {
                             let _ = w.show();
                             let _ = w.set_focus();
+                        }
+                        // flashcap://capture のコールド起動 (Windows): 撮影はせず、
+                        // single-instance 経路と同じく撮影ボタンを点滅させる。
+                        // reactivate のリスナーは frontend-ready より先に登録される
+                        if started_by_capture_url {
+                            let _ = handle_cb.emit("reactivate", ());
                         }
                     }
                 });
