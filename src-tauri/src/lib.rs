@@ -1167,6 +1167,8 @@ struct HandshakeInner {
     capture_pending: Option<CaptureKind>,
     /// frontend-ready より前に届いた「開くべき画像」のパス
     pending_files: Vec<String>,
+    /// frontend-ready より前に届いた「撮影ボタンを点滅させよ」(Windows の flashcap://capture)
+    reactivate_pending: bool,
 }
 
 /// 撮影の種類
@@ -1194,6 +1196,7 @@ impl CaptureKind {
 struct PendingWork {
     capture: Option<CaptureKind>,
     files: Vec<String>,
+    reactivate: bool,
 }
 
 impl FrontendHandshake {
@@ -1211,6 +1214,20 @@ impl FrontendHandshake {
         PendingWork {
             capture: s.capture_pending.take(),
             files: std::mem::take(&mut s.pending_files),
+            reactivate: std::mem::take(&mut s.reactivate_pending),
+        }
+    }
+
+    /// 撮影ボタンの点滅 (reactivate) を要求する。frontend が ready 済みなら true
+    /// (即 show + emit すべき)、未 ready なら予約だけして false を返す
+    /// (frontend-ready 受信時の表示に続けて emit される)。
+    fn request_reactivate(&self) -> bool {
+        let mut s = self.lock();
+        if s.frontend_ready {
+            true
+        } else {
+            s.reactivate_pending = true;
+            false
         }
     }
 
@@ -1473,16 +1490,20 @@ pub fn run() {
             // 理由は is_capture_url のコメント。
             // **撮影中 (タイマーのカウントダウンや hide 後の待ちを含む) は何もしない。**
             // ここで show すると撮影中のモニター全体に自分が写り込む。URL は外から
-            // いつでも開けるので、メニューバーの経路 (menu_bar.rs) と同じく弾く
+            // いつでも開けるので、メニューバーの経路 (menu_bar.rs) と同じく弾く。
+            // コールド起動の途中 (frontend-ready 前) に届いた時は、未描画のウインドウを出さず
+            // リスナーも無いので、予約して frontend-ready 側の表示に任せる
             if args.iter().any(|a| is_capture_url(a)) {
                 if is_capture_in_progress() {
                     return;
                 }
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
+                if app.state::<FrontendHandshake>().request_reactivate() {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                    let _ = app.emit("reactivate", ());
                 }
-                let _ = app.emit("reactivate", ());
                 return;
             }
             // 既に起動中のインスタンスに対して再度起動コマンドが来た場合
@@ -1543,7 +1564,10 @@ pub fn run() {
                 if std::env::args().any(|a| is_capture_arg(&a)) {
                     app.state::<FrontendHandshake>().set_capture_pending();
                 }
-                let started_by_capture_url = std::env::args().any(|a| is_capture_url(&a));
+                if std::env::args().any(|a| is_capture_url(&a)) {
+                    // まだ ready ではないので必ず予約になる
+                    app.state::<FrontendHandshake>().request_reactivate();
+                }
 
                 // コールド起動の引数で渡された画像 (ターミナルからの `flashcap foo.png`)。
                 // 起動中に同じコマンドを叩くと single-instance 側が argv で受けて開けるのに、
@@ -1576,10 +1600,10 @@ pub fn run() {
                             let _ = w.show();
                             let _ = w.set_focus();
                         }
-                        // flashcap://capture のコールド起動 (Windows): 撮影はせず、
-                        // single-instance 経路と同じく撮影ボタンを点滅させる。
+                        // flashcap://capture のコールド起動 (Windows) か、起動途中に
+                        // single-instance で届いた場合: 撮影はせず撮影ボタンを点滅させる。
                         // reactivate のリスナーは frontend-ready より先に登録される
-                        if started_by_capture_url {
+                        if work.reactivate {
                             let _ = handle_cb.emit("reactivate", ());
                         }
                     }
@@ -1860,6 +1884,25 @@ mod tests {
         assert_eq!(first.capture, Some(CaptureKind::Interactive));
         assert!(second.files.is_empty());
         assert!(second.capture.is_none());
+    }
+
+    #[test]
+    fn a_reactivate_before_ready_is_held_and_delivered_once() {
+        // Arrange: コールド起動の途中に flashcap://capture が届いた (Windows)
+        let handshake = FrontendHandshake::default();
+
+        // Act
+        let immediate = handshake.request_reactivate();
+        let first = handshake.mark_ready();
+        let second = handshake.mark_ready();
+
+        // Assert: その場では emit させず、frontend-ready で 1 度だけ渡る
+        assert!(!immediate);
+        assert!(first.reactivate);
+        assert!(!second.reactivate);
+        // ready 後は即 emit させ、預かり分としては残さない
+        assert!(handshake.request_reactivate());
+        assert!(!handshake.mark_ready().reactivate, "二重に配送されている");
     }
 
     #[test]
