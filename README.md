@@ -89,8 +89,11 @@ open "flashcap://ocr"
 open "flashcap://capture"
 ```
 
-On Windows only `flashcap://capture` is supported (it arrives as a command-line
-argument, like `--capture`).
+On Windows only `flashcap://capture` is supported, and it does not take a
+screenshot by itself: it brings the window to the front and highlights the capture
+button. Windows captures the whole monitor without any selection step, so a link on
+a web page must not be able to trigger it. Use `flashcap --capture` from a local
+shortcut or launcher to start a capture directly.
 
 ## Tech Stack
 
