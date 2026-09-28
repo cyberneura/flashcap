@@ -184,9 +184,11 @@ mod tests {
         }
     }
 
-    /// pnpm-lock.yaml の importers の `.` (このプロジェクト) が dependencies に選んだ
-    /// (name, version)。`name:` → `specifier:` → `version:` の 3 行で並ぶ
-    fn resolved_npm_versions(lock: &str) -> Vec<(String, String)> {
+    /// pnpm-lock.yaml の importers の `.` (このプロジェクト) が `section`
+    /// (`dependencies` / `devDependencies`) に選んだ (name, version)。
+    /// `name:` → `specifier:` → `version:` の 3 行で並ぶ
+    fn resolved_npm_versions(lock: &str, section: &str) -> Vec<(String, String)> {
+        let heading = format!("    {section}:");
         let importer = lock
             .split("\nimporters:\n")
             .nth(1)
@@ -199,7 +201,7 @@ mod tests {
         let mut in_dependencies = false;
         for line in importer.lines() {
             if line.starts_with("    ") && !line.starts_with("     ") {
-                in_dependencies = line == "    dependencies:";
+                in_dependencies = line == heading;
                 continue;
             }
             if !in_dependencies {
@@ -303,7 +305,7 @@ mod tests {
             "parsed deps: {deps:?}"
         );
         let lock = lf(include_str!("../../pnpm-lock.yaml"));
-        let resolved = resolved_npm_versions(&lock);
+        let resolved = resolved_npm_versions(&lock, "dependencies");
         assert_eq!(
             resolved.len(),
             deps.len(),
@@ -311,17 +313,38 @@ mod tests {
         );
         let locked = locked_npm_packages(&lock);
         let listed = packages_in_notices(&lf(THIRD_PARTY_NOTICES), "npm");
-        // 生成スクリプトの BUNDLED_RUNTIME (devDependencies / 推移依存だが bundle に入るもの)
-        for bundled in ["svelte", "@sveltejs/kit", "tailwindcss", "esm-env"] {
-            assert!(
-                listed.iter().any(|(name, _)| name == bundled),
-                "{bundled} is bundled into the web view but not listed: {listed:?}"
-            );
-        }
+        // 生成スクリプトの BUNDLED_RUNTIME (devDependencies / 推移依存だが bundle に入るもの)。
+        // devDependencies は importer の解決 version と比べる。推移依存は lock に 1 つの
+        // version しか無いことを前提に、それと比べる (2 つ以上になったらここで落ちるので、
+        // どの version が bundle されるかを確かめてテストを直す)
+        let dev_resolved = resolved_npm_versions(&lock, "devDependencies");
+        let bundled: Vec<(String, String)> = ["svelte", "@sveltejs/kit", "tailwindcss", "esm-env"]
+            .iter()
+            .map(|name| {
+                let version = match dev_resolved.iter().find(|(n, _)| n == name) {
+                    Some((_, version)) => version.clone(),
+                    None => {
+                        let versions: Vec<&String> = locked
+                            .iter()
+                            .filter(|(n, _)| n == name)
+                            .map(|(_, v)| v)
+                            .collect();
+                        assert_eq!(
+                            versions.len(),
+                            1,
+                            "{name} has several versions in pnpm-lock.yaml: {versions:?}"
+                        );
+                        versions[0].clone()
+                    }
+                };
+                (name.to_string(), version)
+            })
+            .collect();
 
         // Act
         let missing: Vec<&(String, String)> = resolved
             .iter()
+            .chain(bundled.iter())
             .filter(|entry| !listed.contains(entry))
             .collect();
         let unknown: Vec<&(String, String)> = listed
@@ -351,7 +374,7 @@ mod tests {
 
         // Act
         let listed = packages_in_notices(&lf(&notices), "rust");
-        let resolved = resolved_npm_versions(&lf(lock));
+        let resolved = resolved_npm_versions(&lf(lock), "dependencies");
         let locked = locked_npm_packages(&lf(lock));
 
         // Assert
