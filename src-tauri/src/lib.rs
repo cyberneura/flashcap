@@ -5,6 +5,7 @@ mod auto_copy;
 mod licenses;
 mod menu_bar;
 mod ocr;
+mod region_capture;
 mod video;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -722,10 +723,11 @@ async fn capture_screen_to(
     Ok(())
 }
 
-/// 画面を撮って file_path に PNG で書く (Windows: マウスカーソルのあるモニター全体)
+/// 画面を撮って file_path に PNG で書く (Windows: マウスカーソルのあるモニターの上で範囲を選ばせる)
 ///
 /// Windows には screencapture -i に当たる「範囲を選ばせて撮る」コマンドが無いので、
-/// モニター 1 枚を丸ごと撮る。範囲はメインウインドウのトリミング (crop) で切り出す。
+/// 先にモニター 1 枚を丸ごと撮り、その静止画の上で矩形を選ばせて切り出す
+/// (region_capture.rs。Enter で選ばずにモニター全体、Esc でやめる)。
 ///
 /// 撮る前に少し待つ。フロントの captureScreen() は hide() の完了を待ってから
 /// このコマンドを呼ぶが、Windows はウインドウを消すアニメーションが hide() の
@@ -750,23 +752,14 @@ async fn capture_screen_to(
     let (x, y) = (cursor.x.round() as i32, cursor.y.round() as i32);
     let file_path = PathBuf::from(file_path);
 
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let monitor = xcap::Monitor::from_point(x, y)
-            .or_else(|_| {
-                // カーソルの位置がどのモニターにも入らない (取り外した直後等) 時は
-                // プライマリを撮る
-                xcap::Monitor::all()?
-                    .into_iter()
-                    .find(|m| m.is_primary().unwrap_or(false))
-                    .ok_or_else(|| xcap::XCapError::new("No primary monitor"))
-            })
-            .map_err(|e| format!("Failed to find a monitor to capture: {}", e))?;
-        let image = monitor
-            .capture_image()
-            .map_err(|e| format!("Failed to capture the screen: {}", e))?;
+    let (image, geometry) = tauri::async_runtime::spawn_blocking(move || capture_monitor_at(x, y))
+        .await
+        .map_err(|e| format!("Screen capture task failed: {}", e))??;
+    let selected = region_capture::select_region(app, image, geometry).await?;
 
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let mut png = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgba8(image)
+        selected
             .write_to(&mut png, image::ImageFormat::Png)
             .map_err(|e| format!("Failed to encode the screenshot: {}", e))?;
         // 名前 (flashcap-<秒>.png) が予測できるので、撮影結果も symlink を辿らずに書く
@@ -775,6 +768,36 @@ async fn capture_screen_to(
     })
     .await
     .map_err(|e| format!("Screen capture task failed: {}", e))?
+}
+
+/// (x, y) を含むモニター全体を撮り、オーバーレイを重ねる位置 (物理ピクセル) と一緒に返す
+#[cfg(windows)]
+fn capture_monitor_at(
+    x: i32,
+    y: i32,
+) -> Result<(image::RgbaImage, region_capture::OverlayGeometry), String> {
+    let monitor = xcap::Monitor::from_point(x, y)
+        .or_else(|_| {
+            // カーソルの位置がどのモニターにも入らない (取り外した直後等) 時は
+            // プライマリを撮る
+            xcap::Monitor::all()?
+                .into_iter()
+                .find(|m| m.is_primary().unwrap_or(false))
+                .ok_or_else(|| xcap::XCapError::new("No primary monitor"))
+        })
+        .map_err(|e| format!("Failed to find a monitor to capture: {}", e))?;
+    let image = monitor
+        .capture_image()
+        .map_err(|e| format!("Failed to capture the screen: {}", e))?;
+    // オーバーレイはモニターにぴったり重ねる。大きさは撮れた画像の寸法 (物理ピクセル)
+    let position_error = |e: xcap::XCapError| format!("Failed to get the monitor position: {}", e);
+    let geometry = region_capture::OverlayGeometry {
+        x: monitor.x().map_err(position_error)?,
+        y: monitor.y().map_err(position_error)?,
+        width: image.width(),
+        height: image.height(),
+    };
+    Ok((image, geometry))
 }
 
 /// macOS と Windows 以外は配布していない。コンパイルを通すためだけの実装
@@ -1476,6 +1499,7 @@ pub fn run() {
         .manage(video::RecordingState::default())
         .manage(FrontendHandshake::default())
         .manage(OpenedImages::default())
+        .manage(region_capture::RegionCaptureState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
@@ -1666,7 +1690,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

@@ -8,7 +8,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -24,6 +24,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
   - `src/lib/CropOverlay.svelte` - Crop selection overlay
   - `src/lib/edgeSnap.ts` - Edge detection for snapping the crop frame to lines in the image
   - `src/lib/cropAspect.ts` - Aspect-ratio geometry for the crop frame (pure functions)
+  - `src/lib/regionSelect.ts` - Geometry for the Windows capture-area overlay (`src/routes/capture-region/+page.svelte`)
 - **Types**: `src/lib/types.ts`
 - **Preferences**: `src/routes/preferences/+page.svelte`
 - **Third-Party Licenses**: `src/routes/licenses/+page.svelte` (see 依存ライブラリのライセンス表示)
@@ -269,10 +270,26 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) に頼る箇所は
 `#[cfg(target_os = "macos")]` で分け、Windows 側を別実装にしてある。
 
-- **撮影はカーソルのあるモニター全体** (`capture_screen_to` の Windows 版。xcap)。
-  Windows には `screencapture -i` に当たる「範囲を選ばせて撮る」コマンドが無いので、
-  切り出しはメインウインドウのトリミングで行う。hide の後 300ms 待ってから撮る
-  (消えかけのウインドウが写り込むため)。タイマーは待つだけで、カーソル位置は待った後に取る。
+- **撮影はカーソルのあるモニターの上で矩形を選ばせる** (`capture_screen_to` の Windows 版 +
+  `src-tauri/src/region_capture.rs` + `src/routes/capture-region/+page.svelte`。CYBERNEURA-DEV-882)。
+  Windows には `screencapture -i` に当たるコマンドが無いので、先にモニター全体を xcap で撮り、
+  その静止画を枠なし・最前面のオーバーレイ (`capture-region-<n>`) にモニターの物理座標で重ねて
+  矩形を引かせ、撮ってあった画像から切り出す。離した時点で確定、Enter でモニター全体、
+  Esc / 右クリック / Alt+F4 でやめる (`"cancelled"` を含むエラー)。選べるのはカーソルのある
+  モニターだけ。hide の後 300ms 待ってから撮る (消えかけのウインドウが写り込むため)。
+  タイマーは待つだけで、カーソル位置は待った後に取る。
+  - **切り取りツール (`ms-screenclip:`) は使わない。** 結果がクリップボード経由でしか返らず
+    (ユーザーのクリップボードを上書きする)、Esc でやめたことをアプリから知る手段が無く、
+    ツール自体がアンインストールできて版ごとに挙動も変わるため。
+  - オーバーレイは非表示で作り、画像を描き終えた `capture_region_ready` で出す (先に出すと
+    WebView の白い下地がモニター全体に一瞬出る)。届かなくても 3 秒で Rust が出す
+    (出ないままだと Esc で抜ける手段が無い)。
+  - コマンド (`capture_region_*`) は **進行中の選択のラベルと一致するウインドウからしか受け付けない**。
+    ラベルに撮影ごとの番号を付けているのは、閉じかけの前回のウインドウの `Destroyed` が
+    次の選択を取り消さないため。
+  - 矩形の丸め (端数は外側へ・画像の内側に収める) はフロントの `src/lib/regionSelect.ts`
+    (表示用、`tests/region-select.test.mts`) と Rust の `crop_bounds` (切り出し用、Linux の
+    `cargo test` で走る) の両方にある。
 - **録画・OCR・通知は macOS 専用**。フロントは `src/lib/platform.ts` の `isWindows`
   (WebView の UA で判定) でボタンを出さず、Rust もメニューバー (Windows では通知領域)
   の項目から外し (`MenuAction::is_available`)、コマンドが呼ばれてもエラーを返す。
@@ -293,8 +310,9 @@ macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) 
 - `flashcap://capture` は Windows では argv で届く (`is_capture_url`)。**Windows では撮影を
   始めず、ウインドウを前に出して撮影ボタンを点滅させるだけ** (CYBERNEURA-DEV-852)。
   撮影中 (`is_capture_in_progress`) に届いた URL は無視する (前に出すと撮影に写り込む)。
-  Windows の撮影はモニター全体の即時撮影でユーザーの操作を挟まないため、URL で撮影させると
-  任意の Web ページやメールのリンクから非対話で画面を撮らせられる。`--capture`
+  当初は Windows の撮影が操作を挟まない即時撮影だったため (任意の Web ページやメールのリンクから
+  非対話で画面を撮らせられる)。0.6.0 で範囲選択が入った後も、リンクからオーバーレイを
+  画面いっぱいに出させない (Enter 1 回でモニター全体が撮れる) ためにこの挙動を残している。`--capture`
   (`is_capture_arg`。Web からは渡せない) は従来どおり即撮影。`flashcap://ocr` は無い。
 - **`src-tauri/tauri.windows.conf.json`** が Windows のビルドでだけ重なる
   (HEIC の関連付けと ocr.swift の同梱を外している)。

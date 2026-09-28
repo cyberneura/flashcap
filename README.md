@@ -29,8 +29,10 @@ The installer is not code-signed, so SmartScreen warns on first run
 
 The Windows version differs from the macOS one:
 
-- A capture takes the whole monitor under the mouse cursor (Windows has no
-  equivalent of `screencapture -i`). Use the crop tool to cut out the area you need.
+- A capture freezes the monitor under the mouse cursor and lets you drag a rectangle
+  on it (Windows has no equivalent of `screencapture -i`, so FlashCap draws its own
+  selection overlay). Press Enter to take the whole monitor, Esc or right-click to
+  cancel. Only the monitor under the cursor can be selected from.
 - Screen recording and OCR are macOS-only and are not shown.
 - No notifications (e.g. after auto-copy).
 - HEIC / HEIF images cannot be opened.
@@ -54,7 +56,7 @@ fails, install them with `xcode-select --install`.
 
 ## Features
 
-- Screenshot capture (interactive area selection on macOS, the monitor under the cursor on Windows)
+- Screenshot capture with interactive area selection (on Windows, within the monitor under the cursor)
 - Timer capture (configurable delay: 3/5/10 seconds)
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
 - Mask tool (mosaic, blur, fill) with resize/move handles
@@ -91,8 +93,8 @@ open "flashcap://capture"
 
 On Windows only `flashcap://capture` is supported, and it does not take a
 screenshot by itself: it brings the window to the front and highlights the capture
-button. Windows captures the whole monitor without any selection step, so a link on
-a web page must not be able to trigger it. Use `flashcap --capture` from a local
+button, so a link on a web page cannot put the capture overlay over your screen
+(where a single Enter would take the whole monitor). Use `flashcap --capture` from a local
 shortcut or launcher to start a capture directly.
 
 ## Tech Stack
