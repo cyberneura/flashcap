@@ -300,9 +300,13 @@ macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) 
   (HEIC の関連付けと ocr.swift の同梱を外している)。
 - トレイのアイコンは Windows ではアプリのアイコン (`menu_bar::tray_icon`)。macOS の
   テンプレート画像は黒一色なので、暗いタスクバーで見えなくなる。
-- `icons/icon.ico` は 16〜256 の 6 サイズ入り。作り直す時は
-  `pnpm exec tauri icon src-tauri/icons/icon.png -o <一時ディレクトリ>` から icon.ico だけを
-  取る (出力先を icons/ にすると icns まで作り直される)。
+- `icons/icon.ico` は 16〜256 の 6 サイズ入りで、**余白の無いフルサイズ** (CYBERNEURA-DEV-885)。
+  マスターの `icon.png` は macOS の Dock に合わせて周囲に約 10% の透明な余白があり、
+  そのまま ico にするとタスクバーで一回り小さく見える。作り直す時は
+  `uv run scripts/make-windows-icon.py` (マスターの不透明な範囲 = 角丸の板だけを切り出して
+  ico にする。icns には触らない)。**`pnpm exec tauri icon` で ico を作り直さないこと** —
+  余白付きのマスターから作るので小さいアイコンに戻る。exe・ウインドウ・タスクバー・
+  インストーラー・通知領域 (`default_window_icon()`) はすべてこの ico を使う。
 - **Linux から Windows ターゲットを検査できる**。`rustup target add x86_64-pc-windows-msvc`
   のうえ `cargo check --target x86_64-pc-windows-msvc`。ただし tauri-build が
   リソースコンパイラ (`llvm-rc`) を要求して止まるので、出力ファイルを空で作るだけの
