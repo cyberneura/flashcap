@@ -1,6 +1,6 @@
 [package]
 name = "flashcap"
-version = "0.5.1"
+version = "0.6.0"
 description = "A Tauri App"
 authors = ["you"]
 license = "MIT"
@@ -34,7 +34,7 @@ tauri-plugin-single-instance = "2.3.7"
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"
 dirs = "6"
-tokio = { version = "1", features = ["process", "time"] }
+tokio = { version = "1", features = ["process", "time", "sync"] }
 tauri-plugin-deep-link = "2.4.7"
 # Windows で canonicalize が \\?\ 付きのパスを返さないようにする (lib.rs の load_image_result)
 dunce = "1"

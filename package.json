@@ -1,6 +1,6 @@
 {
   "name": "flashcap",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts",
+    "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts && node --experimental-strip-types tests/region-select.test.mts",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "APPLE_SIGNING_IDENTITY='Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)' tauri",
     "release": "bash scripts/release.sh",

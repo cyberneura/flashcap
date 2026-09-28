@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-region",
+  "description": "Windows の撮影範囲選択オーバーレイ用の最小権限。clipboard/store/dialog/drag/opener は付与しない",
+  "windows": ["capture-region-*"],
+  "permissions": ["core:default"]
+}
