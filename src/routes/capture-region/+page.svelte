@@ -162,7 +162,11 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="flex items-center gap-3 bg-black/75 text-white text-sm px-4 py-2 rounded-xl shadow-lg pointer-events-auto cursor-default"
-        onpointerdown={(e) => e.stopPropagation()}
+        onpointerdown={(e) => {
+          // 左クリックはボタンの操作なので範囲の引き始めにしない。右クリックはどこで押しても
+          // やめる操作なので、外側のハンドラへ通す
+          if (e.button !== 2) e.stopPropagation();
+        }}
       >
         {#if failed}
           <span>Could not prepare the capture: {failed}</span>
