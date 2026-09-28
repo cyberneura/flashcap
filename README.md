@@ -151,6 +151,7 @@ src/                          # SvelteKit frontend
   routes/
     +page.svelte              # Main capture UI
     preferences/+page.svelte  # Preferences page
+    licenses/+page.svelte     # Third-Party Licenses window
   lib/
     ArrowOverlay.svelte       # Arrow annotation overlay
     MaskOverlay.svelte        # Mask (mosaic/blur/fill) overlay
@@ -158,6 +159,27 @@ src/                          # SvelteKit frontend
     types.ts                  # Shared types
 src-tauri/                    # Rust backend (Tauri)
   src/lib.rs                  # Tauri commands & app setup
+  src/licenses.rs             # Embeds THIRD-PARTY-NOTICES.txt
+```
+
+## License
+
+FlashCap is released under the [MIT License](./LICENSE).
+
+## Third-party licenses
+
+`THIRD-PARTY-NOTICES.txt` lists the licenses of the libraries bundled into the app: every
+Rust crate compiled into the macOS and Windows binaries, the npm packages named in
+`dependencies` in `package.json`, and the parts of the dev toolchain that end up in the
+web view bundle (the Svelte / SvelteKit runtime and Tailwind CSS). It is compiled into
+the app and shown by **FlashCap > Third-Party Licenses...** in the macOS menu bar, or by
+the **Third-Party Licenses** button in Preferences (macOS and Windows). Regenerate it
+after adding or updating a dependency; the Rust tests fail if a direct dependency is
+missing from it.
+
+```bash
+cargo install cargo-about --locked --features cli   # once
+pnpm notices
 ```
 
 ## Note for AI Assistants

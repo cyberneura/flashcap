@@ -134,6 +134,16 @@
     }
   }
 
+  // Windows にはアプリメニューが無いので、ライセンス一覧の入口をここにも置く
+  // (macOS はアプリメニューの About の直下にもある)
+  async function openThirdPartyLicenses() {
+    try {
+      await invoke("open_third_party_licenses");
+    } catch (e) {
+      console.error("Failed to open Third-Party Licenses:", e);
+    }
+  }
+
   async function onModeChange(mode: SaveMode) {
     saveMode = mode;
     if (mode === "custom" && !customPath) {
@@ -311,5 +321,23 @@
         {/if}
       </div>
     </label>
+  </section>
+
+  <section class="mt-8">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
+      About
+    </h3>
+    <div class="flex items-center gap-3 px-3 py-2.5">
+      <div class="flex-1">
+        <div class="text-sm font-medium">Open source licenses</div>
+        <div class="text-xs text-gray-500 mt-0.5">Libraries bundled with FlashCap and their licenses</div>
+      </div>
+      <button
+        class="px-3.5 py-1.5 bg-[#2d2d2d] hover:bg-[#3d3d3d] text-white text-[13px] rounded-md cursor-pointer whitespace-nowrap border border-[#3d3d3d]"
+        onclick={openThirdPartyLicenses}
+      >
+        Third-Party Licenses
+      </button>
+    </div>
   </section>
 </div>

@@ -1,6 +1,6 @@
 {
   "name": "flashcap",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "APPLE_SIGNING_IDENTITY='Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)' tauri",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "notices": "bash scripts/generate-third-party-notices.sh"
   },
   "license": "MIT",
   "dependencies": {

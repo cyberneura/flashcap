@@ -26,6 +26,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
   - `src/lib/cropAspect.ts` - Aspect-ratio geometry for the crop frame (pure functions)
 - **Types**: `src/lib/types.ts`
 - **Preferences**: `src/routes/preferences/+page.svelte`
+- **Third-Party Licenses**: `src/routes/licenses/+page.svelte` (see 依存ライブラリのライセンス表示)
 
 ## Key Details
 
@@ -307,6 +308,28 @@ macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) 
   リソースコンパイラ (`llvm-rc`) を要求して止まるので、出力ファイルを空で作るだけの
   `llvm-rc` を PATH に置く (check はリンクしないので中身は要らない)。
   Windows 専用のテスト (`mod windows_tests`) は CI の Windows ランナーでしか走らない。
+
+## 依存ライブラリのライセンス表示 (src-tauri/src/licenses.rs)
+
+`THIRD-PARTY-NOTICES.txt` は `scripts/generate-third-party-notices.sh` (`pnpm notices`) の生成物で、
+`licenses.rs` が `include_str!` で埋め込み、`licenses` ウインドウ (`src/routes/licenses/+page.svelte`)
+に出す。入口は macOS のアプリメニュー (About の直下の Third-Party Licenses...) と、Preferences の
+About 節のボタン (Windows にはアプリメニューが無いため)。**手で編集しない。**
+
+- **依存を足す・上げる時は流し直してコミットする**。直接依存 (Cargo.toml / package.json) が
+  Cargo.lock / pnpm-lock.yaml の解決 version で載っていないと `cargo test` が落ちる
+  (Dependabot の PR も notices を更新しないので落ちる。同じブランチで再生成をコミットする)。
+- Rust 側は cargo-about (`cargo install cargo-about --locked --features cli`。`--features cli` が
+  無いとバイナリが入らない)。`src-tauri/about.toml` の `targets` で配布ターゲット
+  (macOS の aarch64 / x86_64 と Windows x64) だけに絞っている。Linux 専用の crate は載らない。
+  flashcap 自身は `publish = false` + `[private] ignore = true` で除いている。
+  `accepted` に無いライセンスの crate が入ると `--fail` で止まる。**accepted を黙って広げない**
+  (GPL / LGPL / AGPL 系は配布条件が変わるので人間に確認する)。
+- npm 側は `package.json` の `dependencies` と、スクリプトの `BUNDLED_RUNTIME`
+  (svelte / @sveltejs/kit / esm-env / tailwindcss。devDependencies や推移依存だが client bundle に
+  入る)。フロントの依存を変えて bundle に入るものが増えたら `BUNDLED_RUNTIME` に足す。
+- `@crabnebula/tauri-plugin-drag` の npm パッケージは package.json に license も repository も
+  書いていないので、スクリプトの `MISSING_METADATA` で同じリポジトリの Rust crate に合わせている。
 
 ## Rust Commands (src-tauri/src/lib.rs)
 
