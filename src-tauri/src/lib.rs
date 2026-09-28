@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)]
 
 mod auto_copy;
+mod licenses;
 mod menu_bar;
 mod ocr;
 mod video;
@@ -1411,12 +1412,21 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         Some("CmdOrCtrl+,"),
     )?;
 
+    let third_party_licenses = MenuItem::with_id(
+        handle,
+        licenses::MENU_ID,
+        "Third-Party Licenses...",
+        true,
+        None::<&str>,
+    )?;
+
     let app_submenu = Submenu::with_items(
         handle,
         handle.package_info().name.clone(),
         true,
         &[
             &PredefinedMenuItem::about(handle, None, None)?,
+            &third_party_licenses,
             &PredefinedMenuItem::separator(handle)?,
             &preferences,
             &PredefinedMenuItem::separator(handle)?,
@@ -1527,6 +1537,8 @@ pub fn run() {
             app.on_menu_event(move |app, event| {
                 if event.id() == "preferences" {
                     let _ = open_preferences_window(app);
+                } else if event.id() == licenses::MENU_ID {
+                    let _ = licenses::open_window(app);
                 } else {
                     menu_bar::handle_menu_event(app, event.id().as_ref());
                 }
@@ -1654,7 +1666,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, open_preferences, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
+        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

@@ -1,8 +1,11 @@
 [package]
 name = "flashcap"
-version = "0.4.1"
+version = "0.5.0"
 description = "A Tauri App"
 authors = ["you"]
+license = "MIT"
+# crates.io には出さない。cargo-about が自分自身を一覧に載せないための印でもある (about.toml の private)
+publish = false
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
