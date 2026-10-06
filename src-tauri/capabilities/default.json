@@ -10,7 +10,6 @@
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-read-image",
     "drag:default",
-    "store:default",
     "dialog:default",
     "core:window:allow-hide",
     "core:window:allow-show"

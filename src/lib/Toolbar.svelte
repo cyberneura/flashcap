@@ -9,6 +9,8 @@
   } from "$lib/types";
   import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
   import { isWindows, shortcutLabel } from "$lib/platform";
+  import ShellCommandMenu from "$lib/ShellCommandMenu.svelte";
+  import type { ShellCommand } from "$lib/shellCommands";
 
   let {
     arrowToolActive,
@@ -56,6 +58,9 @@
     onHighlightEnd,
     autoCopyMode,
     onChangeAutoCopyMode,
+    shellCommands,
+    onRunShellCommand,
+    onOpenShellLogs,
   }: {
     arrowToolActive: boolean;
     maskToolActive: boolean;
@@ -103,6 +108,10 @@
     /** null = 設定をまだ読めていない (ボタンを押せない) */
     autoCopyMode: AutoCopyMode | null;
     onChangeAutoCopyMode: (mode: AutoCopyMode) => void;
+    /** 実行できるものだけ。空ならボタンを出さない */
+    shellCommands: ShellCommand[];
+    onRunShellCommand: (command: ShellCommand) => void;
+    onOpenShellLogs: () => void;
   } = $props();
 
   const AUTO_COPY_OPTIONS: { mode: AutoCopyMode; label: string }[] = [
@@ -671,6 +680,12 @@
   >
     <i class="bi bi-record-circle"></i>
   </button>
+  {/if}
+
+  <!-- シェル実行は macOS のみ (src-tauri/src/shell_command.rs) -->
+  {#if !isWindows && !videoMode && filePath && shellCommands.length > 0}
+    <div class="toolbar-divider"></div>
+    <ShellCommandMenu commands={shellCommands} onRun={onRunShellCommand} onOpenLogs={onOpenShellLogs} />
   {/if}
 </div>
 

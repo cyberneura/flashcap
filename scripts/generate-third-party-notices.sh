@@ -57,6 +57,7 @@ const BUNDLED_RUNTIME = [
   ["@sveltejs/kit", null],
   ["tailwindcss", null],
   ["esm-env", "svelte"],
+  ["runed", "svelte-sonner"],
 ];
 
 // package.json に license も repository も書いていない package。表記は同じリポジトリの

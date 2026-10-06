@@ -41,6 +41,7 @@ pub(crate) fn open_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         .inner_size(640.0, 560.0)
         .min_inner_size(400.0, 300.0)
         .resizable(true)
+        .theme(Some(tauri::Theme::Dark))
         // ページ (bg-[#1a1a1a]) が描かれる前の白い画面を出さない
         .background_color(tauri::window::Color(0x1a, 0x1a, 0x1a, 0xff))
         .center()

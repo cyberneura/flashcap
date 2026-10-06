@@ -2,7 +2,7 @@
 //!
 //! 「コピーしない / パスをコピー / 画像をコピー」の選択は、メインウインドウの
 //! ツールバーのボタン (`src/lib/Toolbar.svelte`) で行う。選んだ値はフロントが
-//! `settings.json` (tauri-plugin-store) の `auto_copy_on_capture` に書き、
+//! 設定ファイル (`config.rs`) の `auto_copy_on_capture` に書き、
 //! ここでは撮影のたびにそれを読むだけ。
 //!
 //! 自動コピーの対象は「撮影」(take_screenshot_interactive / take_screenshot_timer)
@@ -14,11 +14,10 @@ use std::sync::Mutex;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::image::Image;
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use tauri_plugin_store::StoreExt;
 
 use crate::ScreenshotResult;
 
-/// settings.json のキー。値は AutoCopyMode::as_setting() の文字列。
+/// 設定ファイルのキー。値は AutoCopyMode::as_setting() の文字列。
 /// フロント (`src/routes/+page.svelte` の AUTO_COPY_KEY) と揃えること
 const STORE_KEY: &str = "auto_copy_on_capture";
 
@@ -70,11 +69,8 @@ impl AutoCopyMode {
     }
 }
 
-fn current_mode(app: &tauri::AppHandle) -> AutoCopyMode {
-    let value = app
-        .store("settings.json")
-        .ok()
-        .and_then(|store| store.get(STORE_KEY))
+fn current_mode() -> AutoCopyMode {
+    let value = crate::config::get(STORE_KEY)
         .and_then(|v| v.as_str().map(String::from));
     AutoCopyMode::from_setting(value.as_deref())
 }
@@ -88,7 +84,7 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
     // コピーしない設定の撮影でも番号は進める。先の撮影のコピーが後から終わって、
     // 後の撮影の直後にクリップボードを書き換えるのを防ぐため
     let generation = next_capture_generation();
-    let mode = current_mode(app);
+    let mode = current_mode();
     if mode == AutoCopyMode::None {
         return;
     }

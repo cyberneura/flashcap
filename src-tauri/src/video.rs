@@ -433,7 +433,7 @@ fn open_region_selector_impl(
 
 /// 範囲選択オーバーレイの URL。待ち秒数はオーバーレイのカウントダウンに渡す
 ///
-/// 秒数は 60 で頭打ちにする。設定の選択肢は 3 / 5 / 10 秒だが、settings.json を
+/// 秒数は 60 で頭打ちにする。設定の選択肢は 3 / 5 / 10 秒だが、config.json を
 /// 手で書き換えられると、Esc 以外で止められないカウントダウンが延々と続くため
 fn region_selector_url(qx: f64, qy: f64, delay_seconds: Option<u32>) -> String {
     match delay_seconds {

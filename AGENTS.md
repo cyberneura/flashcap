@@ -8,7 +8,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -41,7 +41,50 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - Mask tool: mosaic, blur, fill modes with 8-direction resize handles
 - Timer capture: `screencapture -i -T <delay>` via async Rust command (delay configurable in Preferences)
 - Clipboard copy support (image-png feature enabled)
-- Settings stored via `tauri-plugin-store` (`settings.json`)
+- Settings stored in `~/.config/flashcap/config.json` (see 設定ファイル)
+- ダークテーマ固定。`src/app.css` で html / body の背景と `color-scheme: dark` を当て
+  (スクロールの跳ね返りで白が見えないように)、ウインドウは `theme: Dark` + `backgroundColor`
+  (main は tauri.conf.json、Preferences / Licenses は WebviewWindowBuilder) で枠と描画前の下地も暗くする。
+  ウインドウを足したら同じ 2 つを付けること。
+
+## 設定ファイル (src-tauri/src/config.rs + src/lib/config.ts)
+
+設定はすべて `~/.config/flashcap/config.json` (macOS / Windows 共通) の 1 ファイルに、
+キーと値のフラットな JSON オブジェクトとして持つ。Preferences の項目、自動コピー、
+ツールの設定 (`arrow_settings` / `mask_settings` / `shape_settings` / `text_settings` /
+`crop_snap`)、シェルコマンド (`shell_commands`) がここに入る。tauri-plugin-store と
+localStorage は使わない。
+
+- **ホームフォルダの実パスを書かない** (マシン間で共有するため)。パスはフロントが
+  `collapseHome()` (`src/lib/homePath.ts`) で `~` に畳んでから保存し、Rust の
+  `config::expand_home()` で展開する。パスを持つ設定を増やしたら両方を通すこと。
+- Rust の読み手 (`config::get`) はキャッシュせず毎回ファイルを読む。手で書き換えた内容や
+  別マシンから同期された内容をそのまま拾うため。
+- 書き込みは `config_set` の 1 キー単位で、Rust 側のロックの中で「読む → 差し替える →
+  一時ファイルに書いて rename」する。**JSON が壊れていたら書かない** (上書きすると他の
+  設定が全部消える)。config.json が symlink (dotfiles 管理) でもリンクを壊さないよう、
+  リンク先の実体の隣で rename する。
+- 書いた後に `config-changed` (payload はキー) を全ウインドウへ emit する。メインウインドウは
+  Preferences のキー (`PREFERENCE_KEYS`) だけ読み直す。
+- ツールの設定は変更のたびに `setConfigDebounced` でまとめて書く。**読み込みが終わるまで
+  (`configLoaded`) は書かない** — 起動直後の既定値で保存値を上書きしてしまうため。
+
+## シェルコマンド (src-tauri/src/shell_command.rs + src/lib/ShellCommandMenu.svelte)
+
+Preferences で「名前・シェル・コマンド」を複数登録し、画像を開いている時にツールバー右端の
+ターミナルボタンから実行する。macOS のみ (Windows はボタンも設定欄も出さない)。
+
+- **画像のパスは環境変数 `IMAGE_PATH` で渡し、文字列置換しない。** コマンド中の
+  `${IMAGE_PATH}` はシェル自身が展開する。置換だと Finder から開いた `a;rm -rf ~.png` の
+  ようなファイル名がコマンドとして実行される。
+- シェルは `-l -c` (ログインシェル) で、ホームフォルダを cwd にして起動する。GUI アプリの
+  PATH には Homebrew が無いので、`~/.zprofile` 等を読ませるため。
+- フロントは id と画像のパスだけを渡し、中身は Rust が設定ファイルから引き直す。
+- 実行前に `saveCompositeToFile()` で注釈・トリミングを焼き込む (パスのコピーと同じ)。
+- ログは `$TMPDIR/flashcap/shell-logs/` に 1 実行 1 ファイル (stdout + stderr、先頭に
+  コマンドと IMAGE_PATH、末尾に終了ステータス)。シェルが起動できなかった時もログに書いて
+  失敗として返す。完了・失敗は svelte-sonner のトーストで出し、「View log」で開ける。
+  `open_shell_log` はログの置き場の直下のファイルしか開かない。
 
 ## Frontend Ready Handshake (src-tauri/src/lib.rs)
 
@@ -131,7 +174,7 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   `imageRevision` の更新はデコード待ちの後なので、その隙に crop を開き直されると
   「世代が一致 (どちらも旧世代)」が成立して検出が空のまま早期 return し、その後 revision が
   上がっても再検出されない (吸着が黙って効かなくなる)。
-- ON/OFF は crop ツールバーの磁石トグル。`localStorage` の `flashcap-crop-snap` に持つ。
+- ON/OFF は crop ツールバーの磁石トグル。設定ファイルの `crop_snap` に持つ。
 
 ### 縦横比の固定 (src/lib/cropAspect.ts)
 
@@ -195,7 +238,7 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   ボタンの図柄 (範囲選択の四隅 + コピーするもの) が選択に合わせて変わる。
   **最初はメニューバーに置いていたが、依頼者の意図はアプリ内のツールバーだった**ので移した。
   メニューバーのアイコンは下の「メニューバーへの常駐」で別の用途に使っている。
-- 選択はフロント (`+page.svelte` の `changeAutoCopyMode`) が `settings.json` の
+- 選択はフロント (`+page.svelte` の `changeAutoCopyMode`) が設定ファイルの
   `auto_copy_on_capture` (`none` / `path` / `image`) に保存し、Rust は撮影のたびに読むだけ。
   **未設定・未知の値は `none`** (フロントの `parseAutoCopyMode` と Rust の `from_setting` の両方)
   — この機能より前から使っている人の撮影で、いきなりクリップボードを書き換え始めないため。
@@ -214,12 +257,12 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 
 ## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
 
-- Preferences の「Keep FlashCap in the menu bar」(`settings.json` の `show_in_menu_bar`、
+- Preferences の「Keep FlashCap in the menu bar」(設定ファイルの `show_in_menu_bar`、
   未設定は OFF) を ON にすると、メニューバーにアイコンを置く (CYBERNEURA-DEV-761)。
   クリックで Open FlashCap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
   Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit FlashCap。
   N は Preferences の Timer delay。
-- Preferences は store に書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
+- Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
   メニューの秒数を追従させるため)。`sync` は「保存値を読んでアイコンの有無と文言を合わせる」
   だけなので何度呼んでもよい。起動時は setup から呼ぶ。
 - **トレイの `TrayIconBuilder::on_menu_event` は使わない。** そこで登録したハンドラは app 全体の
@@ -348,7 +391,7 @@ About 節のボタン (Windows にはアプリメニューが無いため)。**�
   `accepted` に無いライセンスの crate が入ると `--fail` で止まる。**accepted を黙って広げない**
   (GPL / LGPL / AGPL 系は配布条件が変わるので人間に確認する)。
 - npm 側は `package.json` の `dependencies` と、スクリプトの `BUNDLED_RUNTIME`
-  (svelte / @sveltejs/kit / esm-env / tailwindcss。devDependencies や推移依存だが client bundle に
+  (svelte / @sveltejs/kit / esm-env / tailwindcss / runed。devDependencies や推移依存だが client bundle に
   入る)。フロントの依存を変えて bundle に入るものが増えたら `BUNDLED_RUNTIME` に足す。
 - `@crabnebula/tauri-plugin-drag` の npm パッケージは package.json に license も repository も
   書いていないので、スクリプトの `MISSING_METADATA` で同じリポジトリの Rust crate に合わせている。
@@ -371,7 +414,7 @@ About 節のボタン (Windows にはアプリメニューが無いため)。**�
 - `cargo check` in `src-tauri/` for Rust type check
 - `cargo test` in `src-tauri/` for the Rust unit tests (save-path containment, handshake, encoding)
 - `pnpm check` for Svelte/TypeScript check
-- `pnpm test` for the edge-snap / crop-aspect unit tests (`tests/*.test.mts`)
+- `pnpm test` for the frontend unit tests (`tests/*.test.mts`)
 - Run all four before committing
 - Production build: `cargo build --release` in `src-tauri/` (run before push)
 

@@ -2,10 +2,12 @@
 #![allow(unexpected_cfgs)]
 
 mod auto_copy;
+mod config;
 mod licenses;
 mod menu_bar;
 mod ocr;
 mod region_capture;
+mod shell_command;
 mod video;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -17,7 +19,6 @@ use std::process::Command;
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_store::StoreExt;
 
 const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
 
@@ -367,10 +368,10 @@ fn create_exclusive_private_dir(dir: &Path) -> std::io::Result<()> {
 /// それ以外 (ユーザーが選んだ任意のフォルダ) は無ければ 0700 で作るだけで、
 /// **既存フォルダの権限には触らない** — 意図して共有しているフォルダを、
 /// こちらの都合で締めないため。
-pub(crate) fn prepare_save_directory(app: &tauri::AppHandle) -> Result<String, String> {
+pub(crate) fn prepare_save_directory(_app: &tauri::AppHandle) -> Result<String, String> {
     let managed = |e: std::io::Error, dir: &str| format!("Failed to prepare save directory '{}': {}", dir, e);
 
-    let dir = get_save_directory(app);
+    let dir = get_save_directory();
     if Path::new(&dir) == flashcap_temp_dir() {
         return ensure_private_flashcap_dir()
             .map(|p| p.to_string_lossy().to_string())
@@ -402,11 +403,8 @@ pub(crate) fn prepare_save_directory(app: &tauri::AppHandle) -> Result<String, S
 /// "tmp" -> $TMPDIR/flashcap/
 /// "macos_default" -> macOS のスクリーンショット保存先
 /// "custom:<path>" -> カスタムパス
-fn get_save_directory(app: &tauri::AppHandle) -> String {
-    let setting = app
-        .store("settings.json")
-        .ok()
-        .and_then(|store| store.get("save_directory"))
+fn get_save_directory() -> String {
+    let setting = config::get("save_directory")
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_else(|| "tmp".to_string());
 
@@ -415,7 +413,9 @@ fn get_save_directory(app: &tauri::AppHandle) -> String {
         // 設定値の文字列は互換のため "macos_default" のまま。Windows では
         // Win+PrintScreen の保存先 (ピクチャ\スクリーンショット) を指す
         "macos_default" => get_os_screenshot_dir(),
-        s if s.starts_with("custom:") => s.strip_prefix("custom:").unwrap().to_string(),
+        s if s.starts_with("custom:") => config::expand_home(s.strip_prefix("custom:").unwrap())
+            .to_string_lossy()
+            .to_string(),
         _ => default_save_directory(),
     }
 }
@@ -440,7 +440,7 @@ fn open_save_directory(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_directory(_app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
+pub(crate) fn open_directory(_app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
     let status = Command::new("open")
         .arg(dir)
         .status()
@@ -454,7 +454,7 @@ fn open_directory(_app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
 /// macOS 以外は opener プラグインに任せる。Windows の explorer.exe は成功しても
 /// 終了コード 1 を返すので、`open` と同じように終了コードで判定できない
 #[cfg(not(target_os = "macos"))]
-fn open_directory(app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
+pub(crate) fn open_directory(app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_path(dir, None::<&str>)
@@ -698,12 +698,12 @@ async fn take_screenshot_interactive(
 /// (フロントはこの文字列でキャンセルとエラーを見分ける)。
 #[cfg(target_os = "macos")]
 async fn capture_screen_to(
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
     file_path: &str,
     delay_seconds: Option<u32>,
 ) -> Result<(), String> {
     let mut args = vec!["-i".to_string()];
-    if get_exclude_shadow(app) {
+    if get_exclude_shadow() {
         args.push("-o".to_string());
     }
     if let Some(delay) = delay_seconds {
@@ -812,19 +812,15 @@ async fn capture_screen_to(
 
 /// ウィンドウキャプチャー時のドロップシャドウを除外するか（デフォルト true）
 #[cfg(target_os = "macos")]
-fn get_exclude_shadow(app: &tauri::AppHandle) -> bool {
-    app.store("settings.json")
-        .ok()
-        .and_then(|store| store.get("exclude_shadow"))
+fn get_exclude_shadow() -> bool {
+    config::get("exclude_shadow")
         .and_then(|v| v.as_bool())
         .unwrap_or(true)
 }
 
 /// 設定からタイマー秒数を取得（デフォルト5秒）
-pub(crate) fn get_timer_delay(app: &tauri::AppHandle) -> u32 {
-    app.store("settings.json")
-        .ok()
-        .and_then(|store| store.get("timer_delay"))
+pub(crate) fn get_timer_delay() -> u32 {
+    config::get("timer_delay")
         .and_then(|v| v.as_u64())
         .map(|v| v as u32)
         .unwrap_or(5)
@@ -839,7 +835,7 @@ async fn take_screenshot_timer(
     let _capturing = CaptureInProgress::start();
     let file_path = get_screenshot_path(&app)?;
 
-    capture_screen_to(&app, &file_path, Some(get_timer_delay(&app))).await?;
+    capture_screen_to(&app, &file_path, Some(get_timer_delay())).await?;
 
     let result = load_image_result(file_path)?;
     auto_copy::copy_after_capture(&app, &result);
@@ -1412,7 +1408,10 @@ fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     WebviewWindowBuilder::new(app, "preferences", WebviewUrl::App("/preferences".into()))
         .title("Preferences")
-        .inner_size(500.0, 350.0)
+        .inner_size(560.0, 640.0)
+        .theme(Some(tauri::Theme::Dark))
+        // ページ (bg-[#1a1a1a]) が描かれる前の白い画面を出さない
+        .background_color(tauri::window::Color(0x1a, 0x1a, 0x1a, 0xff))
         .resizable(true)
         .center()
         .build()?;
@@ -1503,7 +1502,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
-        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -1690,7 +1688,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish])
+        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

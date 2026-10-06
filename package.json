@@ -1,6 +1,6 @@
 {
   "name": "flashcap",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts && node --experimental-strip-types tests/region-select.test.mts",
+    "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts && node --experimental-strip-types tests/region-select.test.mts && node --experimental-strip-types tests/home-path.test.mts && node --experimental-strip-types tests/shell-commands.test.mts",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "APPLE_SIGNING_IDENTITY='Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)' tauri",
     "release": "bash scripts/release.sh",
@@ -22,8 +22,8 @@
     "@tauri-apps/plugin-deep-link": "^2.4.7",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-store": "^2.4.2",
-    "bootstrap-icons": "^1.13.1"
+    "bootstrap-icons": "^1.13.1",
+    "svelte-sonner": "^1.2.1"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

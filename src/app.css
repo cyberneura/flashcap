@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+/* ページの外側 (macOS のスクロールの跳ね返りで見える部分) を白くしない。
+   color-scheme はスクロールバーやフォーム部品をダークにする。
+   範囲選択のオーバーレイ (region-select) は自前で transparent に上書きしている */
+html,
+body {
+  background-color: #1a1a1a;
+  color-scheme: dark;
+}
