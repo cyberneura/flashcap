@@ -33,7 +33,7 @@ The Windows version differs from the macOS one:
   on it (Windows has no equivalent of `screencapture -i`, so FlashCap draws its own
   selection overlay). Press Enter to take the whole monitor, Esc or right-click to
   cancel. Only the monitor under the cursor can be selected from.
-- Screen recording and OCR are macOS-only and are not shown.
+- Screen recording, OCR and shell commands are macOS-only and are not shown.
 - No notifications (e.g. after auto-copy).
 - HEIC / HEIF images cannot be opened.
 - Shortcuts use Ctrl instead of ⌘ (Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+S / Ctrl+Z,
@@ -69,7 +69,16 @@ fails, install them with `xcode-select --install`.
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation)
-- Preferences window (save location, timer delay, menu bar icon)
+- Shell commands (macOS only): register commands in Preferences and run them on the open image
+  from the toolbar. The image path is passed as `$IMAGE_PATH` (write `"${IMAGE_PATH}"` with the
+  quotes). Output is logged to `$TMPDIR/flashcap/shell-logs/`
+- Preferences window (save location, timer delay, menu bar icon, shell commands)
+
+## Configuration
+
+All settings live in `~/.config/flashcap/config.json` (macOS and Windows). Paths under your
+home folder are stored as `~/...`, so the file can be shared between machines (a symlink into
+a dotfiles repository works).
 
 ## CLI Options
 

@@ -416,6 +416,13 @@ About 節のボタン (Windows にはアプリメニューが無いため)。**�
 - `pnpm check` for Svelte/TypeScript check
 - `pnpm test` for the frontend unit tests (`tests/*.test.mts`)
 - Run all four before committing
+- GUI の確認をインストール版の FlashCap と並べて行うには、identifier と HOME を分ける
+  (single-instance の socket は identifier から決まり、同じだとインストール版に引き渡されて終わる)。
+  asdf の node shim は HOME に依存するので、node の実体を PATH の先頭に置く:
+  `PATH="<node の実体のディレクトリ>:$PATH" CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup HOME=<scratch> ./node_modules/.bin/tauri dev --config '{"identifier":"com.cyberneura.flashcap.devtest"}' -- -- <画像>`
+  (設定は `<scratch>/.config/flashcap/config.json` になる)。プロジェクト直下のファイル
+  (`flashcap.code-workspace` など) が書き換わると vite が全体をリロードし、起動引数で開いた画像が消える。
+  その時は同じ HOME で `target/debug/flashcap <画像>` をもう一度起動すれば single-instance 経由で開き直せる
 - Production build: `cargo build --release` in `src-tauri/` (run before push)
 
 ## Release (.github/workflows/release.yml + scripts/release.sh)
