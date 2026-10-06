@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
-  import { load, type Store } from "@tauri-apps/plugin-store";
+  import { Toaster, toast } from "svelte-sonner";
   import { writeText, writeImage, readImage } from "@tauri-apps/plugin-clipboard-manager";
   import { confirm } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -20,6 +20,24 @@
   import Toolbar from "$lib/Toolbar.svelte";
   import VideoTrimmer from "$lib/VideoTrimmer.svelte";
   import { isModKey, isWindows } from "$lib/platform";
+  import {
+    flushConfig,
+    isRecord,
+    loadConfig,
+    onConfigChange,
+    rememberConfig,
+    setConfig,
+    setConfigDebounced,
+    type ConfigValues,
+  } from "$lib/config";
+  import {
+    SHELL_COMMANDS_KEY,
+    parseShellCommands,
+    runnableShellCommands,
+    shellCommandLabel,
+    type ShellCommand,
+    type ShellRunResult,
+  } from "$lib/shellCommands";
 
   let arrowOverlayRef = $state<ReturnType<typeof ArrowOverlay> | null>(null);
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
@@ -41,10 +59,12 @@
 
   // 撮影後の自動コピー。コピーするのは Rust 側 (auto_copy.rs) で、ここは選択の表示と保存だけ
   const AUTO_COPY_KEY = "auto_copy_on_capture";
-  // null = settings.json をまだ読めていない。ツールバーのボタンはその間押せない
+  // null = 設定ファイルをまだ読めていない。ツールバーのボタンはその間押せない
   // (押せると、選んだ値が保存されないまま初回の読み込みで保存値に戻される)
   let autoCopyMode = $state<AutoCopyMode | null>(null);
-  let settingsStore: Store | null = null;
+  // 設定ファイルを読み終えたか。読む前にツール設定の既定値を書き戻さないため
+  let configLoaded = $state(false);
+  let shellCommands = $state<ShellCommand[]>([]);
 
   // **未設定・知らない値は "none"** (Rust の from_setting と同じ)。
   // この機能より前から使っている人の撮影で、いきなりクリップボードを書き換え始めないため
@@ -53,15 +73,28 @@
   }
 
   async function changeAutoCopyMode(mode: AutoCopyMode) {
+    const previous = autoCopyMode;
     autoCopyMode = mode;
-    if (!settingsStore) return;
     try {
-      await settingsStore.set(AUTO_COPY_KEY, mode);
-      await settingsStore.save();
+      await setConfig(AUTO_COPY_KEY, mode);
     } catch (e) {
-      // メモリ上の store には入っているので、このセッションの撮影には効く
+      // コピーするかは Rust が設定ファイルから読むので、書けなければ選択は効かない。
+      // 表示だけ変わったままにしない
       console.error("Failed to save the auto-copy setting:", e);
+      autoCopyMode = previous;
+      toast.error("Could not save the setting", { description: String(e) });
     }
+  }
+
+  // Preferences ウインドウが書くキー。変わったら読み直す
+  const PREFERENCE_KEYS = ["timer_delay", "blur_radius", "mosaic_block_size", AUTO_COPY_KEY, SHELL_COMMANDS_KEY];
+
+  function applyPreferences(config: ConfigValues) {
+    if (typeof config.timer_delay === "number") timerDelay = config.timer_delay;
+    if (typeof config.blur_radius === "number") maskSettings.blurRadius = config.blur_radius;
+    if (typeof config.mosaic_block_size === "number") maskSettings.mosaicBlockSize = config.mosaic_block_size;
+    autoCopyMode = parseAutoCopyMode(config[AUTO_COPY_KEY]);
+    shellCommands = runnableShellCommands(parseShellCommands(config[SHELL_COMMANDS_KEY]));
   }
   let imageUrl = $state<string | null>(null);
   let imageBase64 = $state<string | null>(null);
@@ -94,7 +127,7 @@
   // Arrow tool state
   let arrowToolActive = $state(false);
   let arrows = $state<Arrow[]>([]);
-  const ARROW_SETTINGS_KEY = "flashcap-arrow-settings";
+  const ARROW_SETTINGS_KEY = "arrow_settings";
   let arrowSettings = $state<ArrowSettings>({
     color: "#FF0000",
     thickness: 4,
@@ -105,7 +138,7 @@
   // Mask tool state
   let maskToolActive = $state(false);
   let masks = $state<MaskRect[]>([]);
-  const MASK_SETTINGS_KEY = "flashcap-mask-settings";
+  const MASK_SETTINGS_KEY = "mask_settings";
   let maskSettings = $state<MaskSettings>({
     mode: "mosaic",
     color: "#000000",
@@ -116,7 +149,7 @@
   // Shape tool state (rect / ellipse)
   let shapeToolActive = $state(false);
   let shapes = $state<Shape[]>([]);
-  const SHAPE_SETTINGS_KEY = "flashcap-shape-settings";
+  const SHAPE_SETTINGS_KEY = "shape_settings";
   let shapeSettings = $state<ShapeSettings>({
     type: "rect",
     color: "#FF0000",
@@ -128,7 +161,7 @@
   // Text tool state
   let textToolActive = $state(false);
   let textAnnotations = $state<TextAnnotation[]>([]);
-  const TEXT_SETTINGS_KEY = "flashcap-text-settings";
+  const TEXT_SETTINGS_KEY = "text_settings";
   let textSettings = $state<TextSettings>({
     fontSize: 24,
     color: "#FF0000",
@@ -139,7 +172,7 @@
   });
 
   // Crop tool state
-  const CROP_SNAP_KEY = "flashcap-crop-snap";
+  const CROP_SNAP_KEY = "crop_snap";
   let cropToolActive = $state(false);
   let cropRect = $state<CropRect | null>(null);
   // トリミング枠を画像内の境界線に吸着させるか
@@ -302,74 +335,26 @@
       .then((available) => (ffmpegAvailable = available))
       .catch(() => (ffmpegAvailable = false));
 
-    // タイマー設定を読み込み
-    load("settings.json").then(async (store) => {
-      settingsStore = store;
-      const applyStoreSettings = async () => {
-        const savedTimer = await store.get<number>("timer_delay");
-        if (savedTimer != null) timerDelay = savedTimer;
-        const savedBlur = await store.get<number>("blur_radius");
-        if (savedBlur != null) maskSettings.blurRadius = savedBlur;
-        const savedMosaic = await store.get<number>("mosaic_block_size");
-        if (savedMosaic != null) maskSettings.mosaicBlockSize = savedMosaic;
-        autoCopyMode = parseAutoCopyMode(await store.get(AUTO_COPY_KEY));
-      };
-      await applyStoreSettings();
-      // Preferences ウィンドウでの変更を即時反映
-      store.onChange(async (key) => {
-        if (["timer_delay", "blur_radius", "mosaic_block_size", AUTO_COPY_KEY].includes(key)) {
-          await applyStoreSettings();
-        }
+    loadConfig()
+      .then((config) => {
+        applyPreferences(config);
+        applyToolSettings(config);
+        configLoaded = true;
+      })
+      .catch((e) => {
+        console.error("Failed to read the config file:", e);
+        toast.error("Could not read the config file", { description: String(e), duration: 15000 });
       });
+    // Preferences ウィンドウでの変更を即時反映
+    const unlistenConfig = onConfigChange(async (key) => {
+      if (!PREFERENCE_KEYS.includes(key)) return;
+      try {
+        applyPreferences(await loadConfig());
+      } catch (e) {
+        console.error("Failed to read the config file:", e);
+      }
     });
-
-    // Restore arrow settings from localStorage
-    const saved = localStorage.getItem(ARROW_SETTINGS_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        arrowSettings.color = parsed.color ?? arrowSettings.color;
-        arrowSettings.thickness = parsed.thickness ?? arrowSettings.thickness;
-        arrowSettings.whiteStroke = parsed.whiteStroke ?? arrowSettings.whiteStroke;
-        arrowSettings.dropShadow = parsed.dropShadow ?? arrowSettings.dropShadow;
-      } catch { /* ignore invalid JSON */ }
-    }
-
-    const savedMask = localStorage.getItem(MASK_SETTINGS_KEY);
-    if (savedMask) {
-      try {
-        const parsed = JSON.parse(savedMask);
-        maskSettings.mode = parsed.mode ?? maskSettings.mode;
-        maskSettings.color = parsed.color ?? maskSettings.color;
-      } catch { /* ignore invalid JSON */ }
-    }
-
-    const savedShape = localStorage.getItem(SHAPE_SETTINGS_KEY);
-    if (savedShape) {
-      try {
-        const parsed = JSON.parse(savedShape);
-        shapeSettings.type = parsed.type ?? shapeSettings.type;
-        shapeSettings.color = parsed.color ?? shapeSettings.color;
-        shapeSettings.thickness = parsed.thickness ?? shapeSettings.thickness;
-        shapeSettings.whiteStroke = parsed.whiteStroke ?? shapeSettings.whiteStroke;
-        shapeSettings.dropShadow = parsed.dropShadow ?? shapeSettings.dropShadow;
-      } catch { /* ignore invalid JSON */ }
-    }
-
-    cropSnapEnabled = localStorage.getItem(CROP_SNAP_KEY) !== "off";
-
-    const savedText = localStorage.getItem(TEXT_SETTINGS_KEY);
-    if (savedText) {
-      try {
-        const parsed = JSON.parse(savedText);
-        textSettings.fontSize = parsed.fontSize ?? textSettings.fontSize;
-        textSettings.color = parsed.color ?? textSettings.color;
-        textSettings.bold = parsed.bold ?? textSettings.bold;
-        textSettings.italic = parsed.italic ?? textSettings.italic;
-        textSettings.whiteStroke = parsed.whiteStroke ?? textSettings.whiteStroke;
-        textSettings.dropShadow = parsed.dropShadow ?? textSettings.dropShadow;
-      } catch { /* ignore invalid JSON */ }
-    }
+    window.addEventListener("beforeunload", flushConfig);
 
     // 起動時は自動キャプチャーしない (直接キャプチャーは --capture / do-capture で行う)
     updateViewportSize();
@@ -489,6 +474,8 @@
     window.addEventListener("keydown", handleKeydown);
     return () => {
       window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("beforeunload", flushConfig);
+      unlistenConfig.then((fn) => fn());
       unlisten.then((fn) => fn());
       unlistenDoCapture.then((fn) => fn());
       unlistenRecStart.then((fn) => fn());
@@ -499,32 +486,76 @@
     };
   });
 
-  // Persist arrow settings to localStorage on change
+  // ツールの設定は設定ファイルから戻す。手で書き換えられうるので、型の合うものだけ拾う
+  function applyToolSettings(config: ConfigValues) {
+    const pick = <T,>(source: Record<string, unknown>, key: string, fallback: T): T =>
+      typeof source[key] === typeof fallback ? (source[key] as T) : fallback;
+
+    const arrow = config[ARROW_SETTINGS_KEY];
+    if (isRecord(arrow)) {
+      arrowSettings.color = pick(arrow, "color", arrowSettings.color);
+      arrowSettings.thickness = pick(arrow, "thickness", arrowSettings.thickness);
+      arrowSettings.whiteStroke = pick(arrow, "whiteStroke", arrowSettings.whiteStroke);
+      arrowSettings.dropShadow = pick(arrow, "dropShadow", arrowSettings.dropShadow);
+    }
+    const mask = config[MASK_SETTINGS_KEY];
+    if (isRecord(mask)) {
+      maskSettings.mode = pick(mask, "mode", maskSettings.mode);
+      maskSettings.color = pick(mask, "color", maskSettings.color);
+    }
+    const shape = config[SHAPE_SETTINGS_KEY];
+    if (isRecord(shape)) {
+      shapeSettings.type = pick(shape, "type", shapeSettings.type);
+      shapeSettings.color = pick(shape, "color", shapeSettings.color);
+      shapeSettings.thickness = pick(shape, "thickness", shapeSettings.thickness);
+      shapeSettings.whiteStroke = pick(shape, "whiteStroke", shapeSettings.whiteStroke);
+      shapeSettings.dropShadow = pick(shape, "dropShadow", shapeSettings.dropShadow);
+    }
+    const text = config[TEXT_SETTINGS_KEY];
+    if (isRecord(text)) {
+      textSettings.fontSize = pick(text, "fontSize", textSettings.fontSize);
+      textSettings.color = pick(text, "color", textSettings.color);
+      textSettings.bold = pick(text, "bold", textSettings.bold);
+      textSettings.italic = pick(text, "italic", textSettings.italic);
+      textSettings.whiteStroke = pick(text, "whiteStroke", textSettings.whiteStroke);
+      textSettings.dropShadow = pick(text, "dropShadow", textSettings.dropShadow);
+    }
+    cropSnapEnabled = pick(config, CROP_SNAP_KEY, cropSnapEnabled);
+
+    for (const key of [ARROW_SETTINGS_KEY, MASK_SETTINGS_KEY, SHAPE_SETTINGS_KEY, TEXT_SETTINGS_KEY, CROP_SNAP_KEY]) {
+      rememberConfig(key, config[key]);
+    }
+  }
+
+  // ツールの設定は変わるたびに設定ファイルへ (まとめて) 書く
   $effect(() => {
     const { color, thickness, whiteStroke, dropShadow } = arrowSettings;
-    localStorage.setItem(
-      ARROW_SETTINGS_KEY,
-      JSON.stringify({ color, thickness, whiteStroke, dropShadow })
-    );
+    if (!configLoaded) return;
+    setConfigDebounced(ARROW_SETTINGS_KEY, { color, thickness, whiteStroke, dropShadow });
   });
 
   $effect(() => {
     const { mode, color } = maskSettings;
-    localStorage.setItem(MASK_SETTINGS_KEY, JSON.stringify({ mode, color }));
+    if (!configLoaded) return;
+    setConfigDebounced(MASK_SETTINGS_KEY, { mode, color });
   });
 
   $effect(() => {
     const { type, color, thickness, whiteStroke, dropShadow } = shapeSettings;
-    localStorage.setItem(SHAPE_SETTINGS_KEY, JSON.stringify({ type, color, thickness, whiteStroke, dropShadow }));
+    if (!configLoaded) return;
+    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, thickness, whiteStroke, dropShadow });
   });
 
   $effect(() => {
     const { fontSize, color, bold, italic, whiteStroke, dropShadow } = textSettings;
-    localStorage.setItem(TEXT_SETTINGS_KEY, JSON.stringify({ fontSize, color, bold, italic, whiteStroke, dropShadow }));
+    if (!configLoaded) return;
+    setConfigDebounced(TEXT_SETTINGS_KEY, { fontSize, color, bold, italic, whiteStroke, dropShadow });
   });
 
   $effect(() => {
-    localStorage.setItem(CROP_SNAP_KEY, cropSnapEnabled ? "on" : "off");
+    const enabled = cropSnapEnabled;
+    if (!configLoaded) return;
+    setConfigDebounced(CROP_SNAP_KEY, enabled);
   });
 
   // テキスト属性変更時、編集中/選択中のテキストにも反映する
@@ -1375,9 +1406,39 @@
       startDrag({ item: [filePath], icon: filePath });
     }
   }
+
+  async function runShellCommand(command: ShellCommand) {
+    if (!filePath) return;
+    const imagePath = filePath;
+    const label = shellCommandLabel(command);
+    const toastId = toast.loading(`Running "${label}"...`);
+    try {
+      // 注釈やトリミングを焼き込んだものをコマンドに渡す (パスのコピーと同じ)
+      await saveCompositeToFile();
+      const result = await invoke<ShellRunResult>("run_shell_command", { id: command.id, imagePath });
+      const action = { label: "View log", onClick: () => openShellLog(result.log_path) };
+      if (result.success) {
+        toast.success(`"${label}" finished`, { id: toastId, action, duration: 5000 });
+      } else {
+        const code = result.exit_code != null ? ` (exit code ${result.exit_code})` : "";
+        toast.error(`"${label}" failed${code}`, { id: toastId, action, duration: 15000 });
+      }
+    } catch (e) {
+      toast.error(`Could not run "${label}"`, { id: toastId, description: String(e), duration: 15000 });
+    }
+  }
+
+  function openShellLog(path: string) {
+    invoke("open_shell_log", { path }).catch((e) => toast.error("Could not open the log", { description: String(e) }));
+  }
+
+  function openShellLogDir() {
+    invoke("open_shell_log_dir").catch((e) => toast.error("Could not open the logs folder", { description: String(e) }));
+  }
 </script>
 
 <div class="flex flex-col h-screen bg-neutral-900 text-white font-[-apple-system,BlinkMacSystemFont,'Segoe_UI',Roboto,sans-serif]">
+  <Toaster theme="dark" position="bottom-center" richColors closeButton />
   <Toolbar
     {arrowToolActive}
     {maskToolActive}
@@ -1424,6 +1485,9 @@
     onHighlightEnd={() => highlightCapture = false}
     {autoCopyMode}
     onChangeAutoCopyMode={changeAutoCopyMode}
+    {shellCommands}
+    onRunShellCommand={runShellCommand}
+    onOpenShellLogs={openShellLogDir}
   />
 
   <div bind:this={viewportEl} class="flex-1 flex items-center justify-center overflow-hidden p-5">

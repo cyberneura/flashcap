@@ -2,9 +2,9 @@
 //!
 //! Preferences の「Keep FlashCap in the menu bar」を ON にすると、メニューバーに
 //! FlashCap のアイコンを置き、クリックで撮影・録画・OCR のメニューを開く。
-//! 設定は `settings.json` の `show_in_menu_bar` (bool、未設定は OFF)。
+//! 設定は設定ファイル (`config.rs`) の `show_in_menu_bar` (bool、未設定は OFF)。
 //!
-//! Preferences はフロントから store に書いた後に `sync_menu_bar` を呼ぶ。起動時は
+//! Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ。起動時は
 //! setup から `sync` を呼ぶ。どちらも「保存値を読んで、アイコンの有無とメニューの
 //! 文言をそれに合わせる」だけなので、何度呼んでもよい。
 //!
@@ -16,11 +16,10 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
-use tauri_plugin_store::StoreExt;
 
 use crate::CaptureKind;
 
-/// settings.json のキー。Preferences (`src/routes/preferences/+page.svelte`) と揃えること
+/// 設定ファイルのキー。Preferences (`src/routes/preferences/+page.svelte`) と揃えること
 const STORE_KEY: &str = "show_in_menu_bar";
 
 const TRAY_ID: &str = "menu-bar";
@@ -110,10 +109,8 @@ impl MenuAction {
     }
 }
 
-fn is_enabled(app: &tauri::AppHandle) -> bool {
-    app.store("settings.json")
-        .ok()
-        .and_then(|store| store.get(STORE_KEY))
+fn is_enabled() -> bool {
+    crate::config::get(STORE_KEY)
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
@@ -126,7 +123,7 @@ pub(crate) fn is_shown(app: &tauri::AppHandle) -> bool {
 /// 保存値に合わせてアイコンを置く / 外す。置いてあればメニューを作り直す
 /// (タイマーの秒数が変わった時に文言を追従させるため)
 pub(crate) fn sync(app: &tauri::AppHandle) -> Result<(), String> {
-    if !is_enabled(app) {
+    if !is_enabled() {
         // 外したアイコンは、戻り値の TrayIcon を drop した時点でメニューバーから消える
         if app.remove_tray_by_id(TRAY_ID).is_some() {
             // 常駐中に閉じて隠していたメインウインドウを戻す。Preferences だけ開いた状態で
@@ -186,7 +183,7 @@ pub fn sync_menu_bar(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let timer_delay = crate::get_timer_delay(app);
+    let timer_delay = crate::get_timer_delay();
     let menu = Menu::new(app)?;
     for action in MenuAction::ALL.into_iter().filter(|a| a.is_available()) {
         let item = MenuItem::with_id(
@@ -266,7 +263,7 @@ fn run(app: &tauri::AppHandle, action: MenuAction) {
         MenuAction::Capture => crate::request_capture(app, CaptureKind::Interactive),
         MenuAction::CaptureWithTimer => crate::request_capture(app, CaptureKind::Timer),
         MenuAction::RecordVideo => start_recording(app, None),
-        MenuAction::RecordVideoWithTimer => start_recording(app, Some(crate::get_timer_delay(app))),
+        MenuAction::RecordVideoWithTimer => start_recording(app, Some(crate::get_timer_delay())),
         MenuAction::CopyTextOnScreen => copy_text_on_screen(app),
         MenuAction::Quit => unreachable!("Quit は先頭で処理済み"),
     }
