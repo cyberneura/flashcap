@@ -3,5 +3,12 @@
   "identifier": "region-selector",
   "description": "範囲選択オーバーレイ窓用の最小権限。clipboard/store/dialog/drag/opener は付与しない",
   "windows": ["region-selector-*"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-list-capture-windows",
+    "allow-broadcast-region-selecting",
+    "allow-release-region-selector-for-countdown",
+    "allow-start-video-recording",
+    "allow-cancel-region-selection"
+  ]
 }

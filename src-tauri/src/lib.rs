@@ -2500,3 +2500,162 @@ mod windows_tests {
         assert!(err.contains("only supported on macOS"), "{}", err);
     }
 }
+
+/// アプリ独自コマンドの ACL (build.rs の `APP_COMMANDS`) が `generate_handler!` と揃っているか。
+/// OS に依存しない文字列の照合なので、macOS / Windows / Linux のどれでも走らせる。
+#[cfg(test)]
+mod app_command_acl_tests {
+    use std::collections::BTreeSet;
+
+    const LIB_RS: &str = include_str!("lib.rs");
+    const BUILD_RS: &str = include_str!("../build.rs");
+
+    /// `generate_handler![...]` に並んだコマンド名 (モジュールのパスを除いた関数名)
+    fn registered_commands() -> BTreeSet<String> {
+        // このテスト自身の文字列に一致しないよう、目印を分けて組み立てる
+        let marker = concat!("generate_handler", "![");
+        let start = LIB_RS
+            .find(marker)
+            .expect("generate_handler! not found in lib.rs")
+            + marker.len();
+        let end = start
+            + LIB_RS[start..]
+                .find(']')
+                .expect("unterminated generate_handler!");
+        LIB_RS[start..end]
+            .split(',')
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+            .map(|path| path.rsplit("::").next().unwrap().to_string())
+            .collect()
+    }
+
+    /// build.rs の `APP_COMMANDS` に並んだコマンド名
+    fn manifest_commands() -> BTreeSet<String> {
+        let marker = "const APP_COMMANDS: &[&str] = &[";
+        let start = BUILD_RS
+            .find(marker)
+            .expect("APP_COMMANDS not found in build.rs")
+            + marker.len();
+        let end = start
+            + BUILD_RS[start..]
+                .find("];")
+                .expect("unterminated APP_COMMANDS");
+        BUILD_RS[start..end]
+            .split(',')
+            .map(|item| item.trim().trim_matches('"').to_string())
+            .filter(|name| !name.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn every_registered_command_has_an_acl_entry() {
+        let registered = registered_commands();
+        let manifest = manifest_commands();
+        // 読み取りが壊れて両方空になり、一致してしまうのを防ぐ (先頭と末尾の要素で確かめる)
+        for name in ["config_get_all", "capture_region_finish"] {
+            assert!(
+                registered.contains(name),
+                "{name} が generate_handler! から読めない: {registered:?}"
+            );
+        }
+        // build.rs に無いコマンドはどの窓からも呼べなくなる (ACL で拒否される)。
+        // 逆に build.rs だけにあるものは、存在しないコマンドの permission を作るだけの残骸
+        assert_eq!(
+            registered, manifest,
+            "build.rs の APP_COMMANDS と lib.rs の generate_handler! が一致しない"
+        );
+    }
+
+    /// capability の JSON から「ウインドウのラベル → 許可しているアプリ独自コマンド」を作る。
+    /// `region-selector-*` のようなパターンは `*` を `0` にした実例のラベルで代表させる
+    fn expected_access() -> Vec<(String, BTreeSet<String>)> {
+        let capabilities = [
+            include_str!("../capabilities/default.json"),
+            include_str!("../capabilities/preferences.json"),
+            include_str!("../capabilities/licenses.json"),
+            include_str!("../capabilities/region-selector.json"),
+            include_str!("../capabilities/capture-region.json"),
+        ];
+        let mut access = Vec::new();
+        for json in capabilities {
+            let capability: serde_json::Value = serde_json::from_str(json).unwrap();
+            let allowed: BTreeSet<String> = capability["permissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|p| p.as_str())
+                .filter_map(|p| p.strip_prefix("allow-"))
+                .map(|p| p.replace('-', "_"))
+                .collect();
+            for window in capability["windows"].as_array().unwrap() {
+                access.push((window.as_str().unwrap().replace('*', "0"), allowed.clone()));
+            }
+        }
+        access
+    }
+
+    /// 実際にビルドされた ACL (generate_context! が埋め込む RuntimeAuthority) で、
+    /// 各ウインドウから各コマンドを呼べるかどうかが capability の記述どおりかを確かめる。
+    /// build.rs の manifest が効いていないと、アプリ独自のコマンドは ACL に載らず
+    /// (= 実行時に ACL を見ずに全ウインドウから通る)、ここで全部 None になって落ちる
+    #[test]
+    fn built_acl_limits_app_commands_per_window() {
+        // test = true: macOS の dev ビルドでは generate_context! が Info.plist を
+        // シンボル (_EMBED_INFO_PLIST) として埋め込むため、run() と二重になってリンクで落ちる。
+        // test を立てるとその埋め込みだけを省く (ACL の生成は変わらない)
+        let mut context: tauri::Context = tauri::generate_context!(test = true);
+        let authority = context.runtime_authority_mut();
+        let origin = tauri::ipc::Origin::Local;
+        let allowed = |command: &str, label: &str| {
+            authority
+                .resolve_access(command, label, label, &origin)
+                .is_some()
+        };
+
+        // 代表例を直接書いておく (JSON の読み取りが壊れても検査が空振りしないように)
+        assert!(allowed("run_shell_command", "main"));
+        assert!(allowed("config_set", "preferences"));
+        assert!(allowed("start_video_recording", "region-selector-0"));
+        assert!(allowed("capture_region_finish", "capture-region-0"));
+        assert!(allowed("third_party_notices", "licenses"));
+        // シェルの実行はメインウインドウだけ。設定の書き換えはメインと Preferences だけ
+        for window in [
+            "preferences",
+            "region-selector-0",
+            "capture-region-0",
+            "licenses",
+        ] {
+            assert!(
+                !allowed("run_shell_command", window),
+                "{window} から run_shell_command を呼べる"
+            );
+        }
+        for window in ["region-selector-0", "capture-region-0", "licenses"] {
+            assert!(
+                !allowed("config_set", window),
+                "{window} から config_set を呼べる"
+            );
+        }
+
+        let access = expected_access();
+        assert_eq!(access.len(), 5, "{access:?}");
+        let commands = manifest_commands();
+        for (label, expected) in &access {
+            for command in &commands {
+                assert_eq!(
+                    allowed(command, label),
+                    expected.contains(command),
+                    "{label} からの {command} の可否が capability と違う"
+                );
+            }
+        }
+        // どの capability にも載っていないウインドウからは何も呼べない
+        for command in &commands {
+            assert!(
+                !allowed(command, "unknown-window"),
+                "未知のウインドウから {command} を呼べる"
+            );
+        }
+    }
+}

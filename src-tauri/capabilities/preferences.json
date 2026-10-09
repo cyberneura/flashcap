@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "preferences",
+  "description": "Preferences window. No clipboard/drag/opener, and no capture or shell execution: settings, the save-folder picker, and opening the log folder / licenses only",
+  "windows": ["preferences"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "allow-config-get-all",
+    "allow-config-set",
+    "allow-get-default-save-directory",
+    "allow-open-shell-log-dir",
+    "allow-sync-menu-bar",
+    "allow-open-third-party-licenses"
+  ]
+}
