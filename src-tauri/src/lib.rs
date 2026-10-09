@@ -2600,7 +2600,10 @@ mod app_command_acl_tests {
     /// (= 実行時に ACL を見ずに全ウインドウから通る)、ここで全部 None になって落ちる
     #[test]
     fn built_acl_limits_app_commands_per_window() {
-        let mut context: tauri::Context = tauri::generate_context!();
+        // test = true: macOS の dev ビルドでは generate_context! が Info.plist を
+        // シンボル (_EMBED_INFO_PLIST) として埋め込むため、run() と二重になってリンクで落ちる。
+        // test を立てるとその埋め込みだけを省く (ACL の生成は変わらない)
+        let mut context: tauri::Context = tauri::generate_context!(test = true);
         let authority = context.runtime_authority_mut();
         let origin = tauri::ipc::Origin::Local;
         let allowed = |command: &str, label: &str| {
