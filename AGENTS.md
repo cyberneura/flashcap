@@ -409,13 +409,18 @@ Tauri はアプリ独自のコマンドにも ACL を適用する。**宣言し�
   窓の capability (`"allow-<kebab-case>"`。例: `run_shell_command` → `allow-run-shell-command`)。
   `build.rs` に無いコマンドはどの窓からも呼べず、capability に無いコマンドはその窓から呼べない。
   リリースビルドでは拒否の理由が出ないので、気付きにくい。
-- 窓とページと capability の対応: `main` / `preferences` → `default.json`、`licenses` →
-  `licenses.json`、`region-selector-*` (録画の範囲選択) → `region-selector.json`、
+- 窓とページと capability の対応: `main` → `default.json`、`preferences` → `preferences.json`、
+  `licenses` → `licenses.json`、`region-selector-*` (録画の範囲選択) → `region-selector.json`、
   `capture-region-*` (Windows の撮影範囲選択) → `capture-region.json`。
   **使っていないコマンドは許可しない** (透明オーバーレイに設定の書き換えやシェルの実行を渡さない)。
+  **1 つの capability に複数の窓を載せない** — 許可はその和集合になって全部の窓に渡る
+  (以前は main と Preferences が同居していて、Preferences から `config_set` + `run_shell_command`
+  に届いた)。同じ窓を複数の capability に載せるのも同じ理由でしない。
 - 検査は 2 つ。`cargo test` (`app_command_acl_tests`) が `APP_COMMANDS` と `generate_handler!` の
-  一致を、`pnpm test` (`tests/capabilities.test.mts`) が「各 capability の `allow-*` = その窓の
-  ページから import を辿って見つかる `invoke` のコマンド」を見る (過不足どちらも落ちる)。
+  一致と、`generate_context!` が埋め込む実際の ACL で「窓 x コマンド」の可否が capability どおりかを
+  見る (capability のファイルを足したら `expected_access` の `include_str!` にも足す)。
+  `pnpm test` (`tests/capabilities.test.mts`) は「各窓の capability の `allow-*` = その窓のページから
+  import を辿って見つかる `invoke` のコマンド」を窓ごとに見る (過不足どちらも落ちる)。
   コマンド名を変数で渡す `invoke` は名前を読めないので、テストの `DYNAMIC_INVOKES` に
   取りうる値を書く。ウインドウを足したら `WINDOW_PAGES` にも足す。
 - capability に存在しない permission を書くと `tauri-build` がビルド時に落とす。

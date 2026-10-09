@@ -123,23 +123,28 @@ for (const name of readdirSync(join(ROOT, capabilityDir)).filter((f) => f.endsWi
     allowed.add(command);
   }
 
-  const used = new Set<string>();
+  // 窓ごとに比べる。1 つの capability に複数の窓を載せると、許可はその和集合になって
+  // 各窓に渡る (Preferences に撮影やシェル実行が付く) ので、和集合で比べてはいけない
   for (const window of capability.windows) {
     const page = WINDOW_PAGES[window];
     assert.ok(page, `${name}: ウインドウ ${window} のページが WINDOW_PAGES に無い`);
+    // 複数の capability に載った窓は、それらの許可の和集合を持つ。窓ごとの比較が崩れるので禁止する
+    assert.ok(!coveredWindows.has(window), `${name}: ウインドウ ${window} が複数の capability に載っている`);
     coveredWindows.add(window);
+
+    const used = new Set<string>();
     for (const file of moduleGraph(page)) {
       for (const command of invokedCommands(file)) {
         assert.ok(appCommands.has(command), `${file}: build.rs に無いコマンドを invoke している (${command})`);
         used.add(command);
       }
     }
-  }
 
-  const missing = [...used].filter((c) => !allowed.has(c)).sort();
-  const extra = [...allowed].filter((c) => !used.has(c)).sort();
-  assert.deepEqual(missing, [], `${name}: ページが invoke しているのに許可していない (ACL で拒否されて機能が壊れる)`);
-  assert.deepEqual(extra, [], `${name}: どのページも invoke していないのに許可している`);
+    const missing = [...used].filter((c) => !allowed.has(c)).sort();
+    const extra = [...allowed].filter((c) => !used.has(c)).sort();
+    assert.deepEqual(missing, [], `${name} (${window}): ページが invoke しているのに許可していない (ACL で拒否されて機能が壊れる)`);
+    assert.deepEqual(extra, [], `${name} (${window}): このページは invoke していないのに許可している`);
+  }
 }
 
 assert.deepEqual(

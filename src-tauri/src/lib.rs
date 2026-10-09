@@ -2572,6 +2572,7 @@ mod app_command_acl_tests {
     fn expected_access() -> Vec<(String, BTreeSet<String>)> {
         let capabilities = [
             include_str!("../capabilities/default.json"),
+            include_str!("../capabilities/preferences.json"),
             include_str!("../capabilities/licenses.json"),
             include_str!("../capabilities/region-selector.json"),
             include_str!("../capabilities/capture-region.json"),
@@ -2618,14 +2619,22 @@ mod app_command_acl_tests {
         assert!(allowed("start_video_recording", "region-selector-0"));
         assert!(allowed("capture_region_finish", "capture-region-0"));
         assert!(allowed("third_party_notices", "licenses"));
-        for overlay in ["region-selector-0", "capture-region-0", "licenses"] {
+        // シェルの実行はメインウインドウだけ。設定の書き換えはメインと Preferences だけ
+        for window in [
+            "preferences",
+            "region-selector-0",
+            "capture-region-0",
+            "licenses",
+        ] {
             assert!(
-                !allowed("run_shell_command", overlay),
-                "{overlay} から run_shell_command を呼べる"
+                !allowed("run_shell_command", window),
+                "{window} から run_shell_command を呼べる"
             );
+        }
+        for window in ["region-selector-0", "capture-region-0", "licenses"] {
             assert!(
-                !allowed("config_set", overlay),
-                "{overlay} から config_set を呼べる"
+                !allowed("config_set", window),
+                "{window} から config_set を呼べる"
             );
         }
 
