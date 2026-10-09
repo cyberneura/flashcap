@@ -3,5 +3,9 @@
   "identifier": "licenses",
   "description": "The Third-Party Licenses window only reads the bundled text and closes itself",
   "windows": ["licenses"],
-  "permissions": ["core:default", "core:window:allow-close"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "allow-third-party-notices"
+  ]
 }

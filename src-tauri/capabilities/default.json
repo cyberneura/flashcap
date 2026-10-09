@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for all windows",
+  "description": "Main window and Preferences. App commands are listed one by one: only what these pages invoke (see tests/capabilities.test.mts)",
   "windows": ["main", "preferences"],
   "permissions": [
     "core:default",
@@ -12,6 +12,28 @@
     "drag:default",
     "dialog:default",
     "core:window:allow-hide",
-    "core:window:allow-show"
+    "core:window:allow-show",
+    "allow-config-get-all",
+    "allow-config-set",
+    "allow-run-shell-command",
+    "allow-open-shell-log",
+    "allow-open-shell-log-dir",
+    "allow-sync-menu-bar",
+    "allow-open-preferences",
+    "allow-open-third-party-licenses",
+    "allow-take-screenshot-interactive",
+    "allow-take-screenshot-timer",
+    "allow-write-image-to-file",
+    "allow-load-image-file",
+    "allow-open-save-directory",
+    "allow-get-default-save-directory",
+    "allow-save-pasted-image",
+    "allow-ocr-image",
+    "allow-ocr-capture-region",
+    "allow-show-notification",
+    "allow-open-region-selector",
+    "allow-stop-video-recording",
+    "allow-export-video",
+    "allow-check-ffmpeg-available"
   ]
 }
