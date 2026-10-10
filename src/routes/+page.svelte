@@ -183,12 +183,15 @@
   let sidebarRefresh = $state(0);
   // サイドバーからドラッグ中のパス。自分のウインドウに落とされた時はクリックと同じ扱いにする
   let sidebarDragPath: string | null = null;
-  // 画像と注釈の中身が変わるたびに進む番号。サイドバーで画像を切り替える間に編集されたかを見る。
+  // 画像と注釈の中身 (と書き出す絵に効く設定) が変わるたびに進む番号。サイドバーで画像を切り替える間に編集されたかを見る。
   // undo の件数では足りない — 選択中のテキストの色・太さの変更などは undo を積まずに書き換える
   let editRevision = 0;
   $effect(() => {
     void imageBase64;
     JSON.stringify([arrows, masks, shapes, textAnnotations]);
+    // 書き出す絵に効く設定 (renderComposite が読むもの)。Preferences から変えられる
+    void maskSettings.blurRadius;
+    void maskSettings.mosaicBlockSize;
     editRevision++;
   });
   let cropToolActive = $state(false);
