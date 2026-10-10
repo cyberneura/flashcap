@@ -584,11 +584,14 @@
   let sidebarConfigWrite: Promise<void> = Promise.resolve();
 
   function toggleSidebar() {
-    sidebarVisible = !sidebarVisible;
+    const visible = !sidebarVisible;
+    sidebarVisible = visible;
     if (!configLoaded) return;
-    sidebarConfigWrite = setConfig(THUMBNAIL_SIDEBAR_KEY, sidebarVisible).catch((e) =>
-      console.error("Failed to save the sidebar setting:", e)
-    );
+    // 書けなかったら表示も戻す。戻さないと Rust が読む値 (= ウインドウの幅の計算) と画面が食い違う
+    sidebarConfigWrite = setConfig(THUMBNAIL_SIDEBAR_KEY, visible).catch((e) => {
+      if (sidebarVisible === visible) sidebarVisible = !visible;
+      toast.error("Could not save the sidebar setting", { description: String(e), duration: 15000 });
+    });
   }
 
   // テキスト属性変更時、編集中/選択中のテキストにも反映する
@@ -1482,9 +1485,11 @@
     if (isCapturing || isRecording) return;
     if (path === filePath && !videoMode) return;
     const current = filePath;
+    // 書き戻しや読み込みの間にも編集はできるので、その後に注釈を足されたかを見る目印
+    // (編集は必ず undo を積む)。**書き戻しを始める前に取る** — 書き戻しは途中で描画した
+    // 絵を書くので、その最中の編集はこの書き戻しに入っていない
+    let edits = undoHistory.length;
     if (!(await writeBackBeforeSwitching())) return;
-    // 読み込みの間に注釈を足されたかを見るための目印 (編集は必ず undo を積む)
-    const edits = undoHistory.length;
     let result: ScreenshotResult;
     try {
       await sidebarConfigWrite;
@@ -1497,8 +1502,17 @@
     }
     // 読み込みの間に撮影・貼り付け等で別の画像に変わっていたら、それを差し替えない
     if (filePath !== current) return;
-    // 読み込みの間に足された注釈も書き戻してから差し替える
-    if (undoHistory.length !== edits && !(await writeBackBeforeSwitching())) return;
+    // 書き戻し・読み込みの間に足された注釈も書き戻してから差し替える。書き戻しの最中にも
+    // 編集されうるので、書き戻しの間に何も変わらなくなるまで繰り返す (最後の確認から
+    // applyScreenshotResult までは await を挟まないので、そこで割り込まれることはない)
+    for (let round = 0; undoHistory.length !== edits; round++) {
+      if (round >= 5) {
+        toast.error("The image kept changing while switching; it was not replaced");
+        return;
+      }
+      edits = undoHistory.length;
+      if (!(await writeBackBeforeSwitching())) return;
+    }
     applyScreenshotResult(result);
   }
 
