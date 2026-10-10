@@ -23,6 +23,7 @@
     "allow-take-screenshot-timer",
     "allow-write-image-to-file",
     "allow-load-image-file",
+    "allow-fit-window-to-image",
     "allow-open-save-directory",
     "allow-save-pasted-image",
     "allow-ocr-image",

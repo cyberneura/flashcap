@@ -1169,13 +1169,18 @@
   // compositeBytes が渡された場合は再レンダリングをスキップする
   async function saveCompositeToFile(compositeBytes?: Uint8Array) {
     if (!filePath || !imageBase64 || !needsFileWrite) return;
+    // 描画を待つ間に撮影・貼り付け等で画像が差し替わると、filePath は新しい画像を指すのに
+    // 描いたのは古い画像になる。始めた時のパスと世代を控え、変わっていたら書かない
+    const path = filePath;
+    const generation = imageGeneration;
     // 注釈が無ければ imageBase64 をそのまま渡し、base64 → bytes → base64 の往復を避ける
     const dataBase64 = compositeBytes
       ? uint8ToBase64(compositeBytes)
       : hasAnnotations
         ? uint8ToBase64(await renderComposite())
         : imageBase64;
-    await invoke("write_image_to_file", { path: filePath, dataBase64 });
+    if (imageGeneration !== generation) return;
+    await invoke("write_image_to_file", { path, dataBase64 });
     sidebarRefresh++;
   }
 
@@ -1511,7 +1516,7 @@
     let result: ScreenshotResult;
     try {
       await sidebarConfigWrite;
-      result = await invoke<ScreenshotResult>("load_image_file", { path });
+      result = await invoke<ScreenshotResult>("load_image_file", { path, deferResize: true });
     } catch (e) {
       toast.error("Could not open the image", { description: String(e), duration: 15000 });
       // 消されていた等。一覧を今の中身に合わせる
@@ -1535,6 +1540,9 @@
       if (imageGeneration !== generation) return;
     }
     applyScreenshotResult(result);
+    invoke("fit_window_to_image", { width: result.width, height: result.height }).catch((e) =>
+      console.error("Failed to resize the window:", e)
+    );
   }
 
   // サムネイルをドラッグした: Finder からファイルをドラッグするのと同じく、ファイルそのものを渡す

@@ -907,13 +907,25 @@ fn load_image_file(
     app: tauri::AppHandle,
     opened: tauri::State<'_, OpenedImages>,
     path: String,
+    defer_resize: Option<bool>,
 ) -> Result<ScreenshotResult, String> {
     let result = load_image_result(path)?;
     // load_image_result が返す file_path は canonicalize 済み。これを覚えておくと
     // 保存先の外にあるファイルでも Cmd+S で上書きできる
     opened.remember(Path::new(&result.file_path));
-    resize_window_for_image(&app, result.width, result.height);
+    // サムネイルブラウザは、読み込んだ画像で差し替えるかを読み込みの後で決める
+    // (その間に撮影等で画像が変わっていたら捨てる)。捨てる画像に合わせてウインドウを
+    // 広げないよう、差し替えると決めてから fit_window_to_image を呼ぶ
+    if !defer_resize.unwrap_or(false) {
+        resize_window_for_image(&app, result.width, result.height);
+    }
     Ok(result)
+}
+
+/// load_image_file を defer_resize で呼んだ後、差し替えると決めた画像に合わせてウインドウを広げる
+#[tauri::command]
+fn fit_window_to_image(app: tauri::AppHandle, width: usize, height: usize) {
+    resize_window_for_image(&app, width, height);
 }
 
 /// symlink を辿らずにファイルを書く
@@ -1702,7 +1714,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail])
+        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, fit_window_to_image, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
