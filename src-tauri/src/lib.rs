@@ -8,6 +8,7 @@ mod menu_bar;
 mod ocr;
 mod region_capture;
 mod shell_command;
+mod thumbnails;
 mod video;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -511,6 +512,9 @@ fn get_screenshot_path(app: &tauri::AppHandle) -> Result<String, String> {
     Ok(dir.join(filename).to_string_lossy().to_string())
 }
 
+/// サムネイルブラウザ (左サイドバー) を出しているか。フロントの `+page.svelte` と同じキー
+const THUMBNAIL_SIDEBAR_KEY: &str = "thumbnail_sidebar";
+
 /// スクリーンショットの画像サイズに合わせてメインウインドウを拡大する
 /// 天地左右 +20px の余白を確保し、モニターの作業領域を上限とする
 /// ウインドウが画像より大きい場合は縮小しない
@@ -528,15 +532,25 @@ fn resize_window_for_image(app: &tauri::AppHandle, width: usize, height: usize) 
     // - toolbar_h: `Toolbar.svelte` の root `py-2` (8+8) + 最も高い子 `.tool-btn` の `h-8` (32)
     //   + `border-b` (1) = 49。root の `min-h-[40px]` は下限にすぎず効いていない
     //   (`.tool-settings` は `-my-2` で親の padding に食い込むので、ツールを開いても高さは変わらない)
+    // - sidebar_w: サムネイルブラウザ (`ThumbnailSidebar.svelte` の `w-56` = 224) を出している間だけ。
+    //   出し入れのたびにウインドウを広げ直しはしない (次に画像を読み込んだ時に効く)
     let padding = 20.0;
     let toolbar_h = 49.0;
+    let sidebar_w = if config::get(THUMBNAIL_SIDEBAR_KEY)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        224.0
+    } else {
+        0.0
+    };
 
     // 画像の論理サイズ（screen points）
     let img_w = width as f64 / scale;
     let img_h = height as f64 / scale;
 
     // 画像を等倍表示するのに必要なウインドウ内部サイズ
-    let desired_w = img_w + padding * 2.0;
+    let desired_w = img_w + padding * 2.0 + sidebar_w;
     let desired_h = img_h + padding * 2.0 + toolbar_h;
 
     // 作業領域（メニューバー・Dock を除いた領域）の論理サイズ
@@ -565,7 +579,7 @@ fn resize_window_for_image(app: &tauri::AppHandle, width: usize, height: usize) 
 /// work が生きている間だけ作業ディレクトリが存在し、以降どこで抜けても drop が
 /// 中間 PNG ごと消すので、明示的な後始末は書かない。
 #[cfg(target_os = "macos")]
-fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
+pub(crate) fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
     let work = create_private_workdir("heic", "converted.png")?;
 
     let output = Command::new("sips")
@@ -590,7 +604,7 @@ fn convert_heic_to_png(source_path: &str) -> Result<(Vec<u8>, u32, u32), String>
 
 /// sips は macOS にしか無く、image crate も HEIC を読めない
 #[cfg(not(target_os = "macos"))]
-fn convert_heic_to_png(_source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
+pub(crate) fn convert_heic_to_png(_source_path: &str) -> Result<(Vec<u8>, u32, u32), String> {
     Err("HEIC / HEIF images can only be opened on macOS".to_string())
 }
 
@@ -893,13 +907,25 @@ fn load_image_file(
     app: tauri::AppHandle,
     opened: tauri::State<'_, OpenedImages>,
     path: String,
+    defer_resize: Option<bool>,
 ) -> Result<ScreenshotResult, String> {
     let result = load_image_result(path)?;
     // load_image_result が返す file_path は canonicalize 済み。これを覚えておくと
     // 保存先の外にあるファイルでも Cmd+S で上書きできる
     opened.remember(Path::new(&result.file_path));
-    resize_window_for_image(&app, result.width, result.height);
+    // サムネイルブラウザは、読み込んだ画像で差し替えるかを読み込みの後で決める
+    // (その間に撮影等で画像が変わっていたら捨てる)。捨てる画像に合わせてウインドウを
+    // 広げないよう、差し替えると決めてから fit_window_to_image を呼ぶ
+    if !defer_resize.unwrap_or(false) {
+        resize_window_for_image(&app, result.width, result.height);
+    }
     Ok(result)
+}
+
+/// load_image_file を defer_resize で呼んだ後、差し替えると決めた画像に合わせてウインドウを広げる
+#[tauri::command]
+fn fit_window_to_image(app: tauri::AppHandle, width: usize, height: usize) {
+    resize_window_for_image(&app, width, height);
 }
 
 /// symlink を辿らずにファイルを書く
@@ -979,6 +1005,11 @@ fn save_pasted_image(
     // truncate は残す — 同じ秒に 2 回貼ると同名になるため、上書きは正常系。
     write_without_following_symlinks(Path::new(&file_path), &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
+    // 撮影 (load_image_result) と同じく実体のパスで返す。保存先が symlink や .. を含むと、
+    // 字句のままではサムネイルブラウザの一覧 (実体のパス) と突き合わなくなる
+    let file_path = dunce::canonicalize(&file_path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or(file_path);
 
     resize_window_for_image(&app, width, height);
 
@@ -1329,7 +1360,7 @@ fn request_open_files(app: &tauri::AppHandle, files: Vec<String>) {
 }
 
 /// FlashCap が開ける画像ファイルの拡張子か
-fn is_supported_image_path(path: &Path) -> bool {
+pub(crate) fn is_supported_image_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| SUPPORTED_IMAGE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
@@ -1688,7 +1719,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish])
+        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, fit_window_to_image, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

@@ -24,6 +24,7 @@ const APP_COMMANDS: &[&str] = &[
     "take_screenshot_timer",
     "write_image_to_file",
     "load_image_file",
+    "fit_window_to_image",
     "open_save_directory",
     "get_default_save_directory",
     "save_pasted_image",
@@ -42,6 +43,8 @@ const APP_COMMANDS: &[&str] = &[
     "capture_region_preview",
     "capture_region_ready",
     "capture_region_finish",
+    "list_saved_images",
+    "saved_image_thumbnail",
 ];
 
 fn main() {

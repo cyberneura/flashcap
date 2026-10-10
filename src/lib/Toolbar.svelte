@@ -61,6 +61,9 @@
     shellCommands,
     onRunShellCommand,
     onOpenShellLogs,
+    sidebarVisible,
+    sidebarToggleReady,
+    onToggleSidebar,
   }: {
     arrowToolActive: boolean;
     maskToolActive: boolean;
@@ -112,6 +115,11 @@
     shellCommands: ShellCommand[];
     onRunShellCommand: (command: ShellCommand) => void;
     onOpenShellLogs: () => void;
+    /** 左のサムネイルブラウザを出しているか */
+    sidebarVisible: boolean;
+    /** 設定ファイルを読み終えたか (読む前は押せない) */
+    sidebarToggleReady: boolean;
+    onToggleSidebar: () => void;
   } = $props();
 
   const AUTO_COPY_OPTIONS: { mode: AutoCopyMode; label: string }[] = [
@@ -170,6 +178,20 @@
 </script>
 
 <div class="flex items-center gap-2 px-3 py-2 bg-neutral-800 border-b border-neutral-700 min-h-[40px]">
+  <!-- サムネイルブラウザの表示切り替えは一番左 (CYBERNEURA-DEV-995)。動画モードでも出す -->
+  <button
+    class="tool-btn tooltip-start"
+    class:active={sidebarVisible}
+    onclick={onToggleSidebar}
+    disabled={!sidebarToggleReady}
+    aria-label={sidebarVisible ? "Hide saved images" : "Show saved images"}
+    aria-pressed={sidebarVisible}
+    data-tooltip={sidebarVisible ? "Hide saved images" : "Show saved images"}
+  >
+    <i class="bi bi-layout-sidebar"></i>
+  </button>
+  <div class="toolbar-divider"></div>
+
   {#if !videoMode}
   <button
     class="tool-btn"
@@ -811,6 +833,11 @@
 
   [data-tooltip]:hover::after {
     @apply opacity-100;
+  }
+
+  /* ウインドウの左端にあるボタンは、中央揃えだと吹き出しが左にはみ出すので左端に揃える */
+  [data-tooltip].tooltip-start::after {
+    @apply left-0 translate-x-0;
   }
 
   .color-picker {
