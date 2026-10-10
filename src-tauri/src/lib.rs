@@ -1005,6 +1005,11 @@ fn save_pasted_image(
     // truncate は残す — 同じ秒に 2 回貼ると同名になるため、上書きは正常系。
     write_without_following_symlinks(Path::new(&file_path), &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
+    // 撮影 (load_image_result) と同じく実体のパスで返す。保存先が symlink や .. を含むと、
+    // 字句のままではサムネイルブラウザの一覧 (実体のパス) と突き合わなくなる
+    let file_path = dunce::canonicalize(&file_path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or(file_path);
 
     resize_window_for_image(&app, width, height);
 

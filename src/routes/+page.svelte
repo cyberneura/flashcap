@@ -555,6 +555,7 @@
     }
     cropSnapEnabled = pick(config, CROP_SNAP_KEY, cropSnapEnabled);
     sidebarVisible = pick(config, THUMBNAIL_SIDEBAR_KEY, sidebarVisible);
+    sidebarPersisted = sidebarVisible;
 
     for (const key of [ARROW_SETTINGS_KEY, MASK_SETTINGS_KEY, SHAPE_SETTINGS_KEY, TEXT_SETTINGS_KEY, CROP_SNAP_KEY, THUMBNAIL_SIDEBAR_KEY]) {
       rememberConfig(key, config[key]);
@@ -596,6 +597,9 @@
   // 設定ファイルから読むので、出した直後にサムネイルを押すと古い値で幅を決められてしまう
   // (画像を開く側は sidebarConfigWrite を待ってから読み込む)
   let sidebarConfigWrite: Promise<void> = Promise.resolve();
+  // 最後に設定ファイルへ書けた値と、最後に頼んだ書き込みの番号
+  let sidebarPersisted = false;
+  let sidebarWriteSeq = 0;
 
   // ボタンは設定を読み終えるまで押せない (sidebarToggleReady)。押せると、選んだ値が
   // 保存されないまま初回の読み込みで保存値に戻される (自動コピーのボタンと同じ)
@@ -603,12 +607,23 @@
     if (!configLoaded) return;
     const visible = !sidebarVisible;
     sidebarVisible = visible;
-    // 書けなかったら表示も戻す。戻さないと Rust が読む値 (= ウインドウの幅の計算) と画面が食い違う
-    sidebarConfigWrite = setConfig(THUMBNAIL_SIDEBAR_KEY, visible).catch((e) => {
-      if (sidebarVisible === visible) sidebarVisible = !visible;
-      toast.error("Could not save the sidebar setting", { description: String(e), duration: 15000 });
-    });
+    const seq = ++sidebarWriteSeq;
+    // 書き込みは順に流す。書けなかった時は、それが最後に頼んだ書き込みなら表示を
+    // 最後に書けた値へ戻す (戻さないと Rust が読む値 = ウインドウの幅の計算と画面が食い違う)。
+    // 後に別の書き込みが控えている時は、そちらの結果に任せる
+    sidebarConfigWrite = sidebarConfigWrite
+      .then(() => setConfig(THUMBNAIL_SIDEBAR_KEY, visible))
+      .then(
+        () => {
+          sidebarPersisted = visible;
+        },
+        (e) => {
+          if (seq === sidebarWriteSeq) sidebarVisible = sidebarPersisted;
+          toast.error("Could not save the sidebar setting", { description: String(e), duration: 15000 });
+        }
+      );
   }
+
 
   // テキスト属性変更時、編集中/選択中のテキストにも反映する
   function updateTextSetting<K extends keyof TextSettings>(key: K, value: TextSettings[K]) {

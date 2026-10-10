@@ -251,10 +251,12 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 - **一覧のパスは実体のパス** (保存先を canonicalize してから並べる)。`load_image_file` が開いた画像の
   パスを canonicalize するので、字句のままだと保存先が symlink / `..` を含む時に「今開いている画像」と
   一致せず、ドラッグ前の書き戻しが飛ばされて注釈前 (マスク前) のファイルが渡る。
+  撮影 (`load_image_result`) と貼り付け (`save_pasted_image`) が返すパスも実体のパスに揃えてある。
 - **`thumbnail_sidebar` は debounce せずに書き、画像を開く前にその書き込みを待つ** (`sidebarConfigWrite`)。
   `resize_window_for_image` が読み込みのたびに設定ファイルから読むので、出した直後のクリックで古い値を読ませない。
   ボタンは設定を読み終えるまで押せない (読む前の切り替えは保存されず、読み込みで戻される)。
-  書けなかった時は表示も元に戻す (画面と Rust の読む値を食い違わせない)。
+  書き込みは順に流し、最後に頼んだ書き込みが失敗したら表示を最後に書けた値 (`sidebarPersisted`) へ戻す
+  (画面と Rust の読む値を食い違わせない)。
 - サムネイルは画面に入ったものから 2 枚ずつ頼む (IntersectionObserver。通り過ぎただけのものはキューから外す)。作ったものは
   `thumbnailCacheKey` (パス + 更新日時 + 容量) で取り置くので、注釈を書き戻した画像は作り直される。
 - 一覧の読み直しは、画像の差し替え (`filePath` / `imageRevision`)、書き戻し (`sidebarRefresh`)、
