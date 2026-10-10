@@ -8,7 +8,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / capabilities の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -25,6 +25,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
   - `src/lib/edgeSnap.ts` - Edge detection for snapping the crop frame to lines in the image
   - `src/lib/cropAspect.ts` - Aspect-ratio geometry for the crop frame (pure functions)
   - `src/lib/regionSelect.ts` - Geometry for the Windows capture-area overlay (`src/routes/capture-region/+page.svelte`)
+  - `src/lib/ThumbnailSidebar.svelte` + `src/lib/thumbnailBrowser.ts` - Saved-images sidebar (see サムネイルブラウザ)
 - **Types**: `src/lib/types.ts`
 - **Preferences**: `src/routes/preferences/+page.svelte`
 - **Third-Party Licenses**: `src/routes/licenses/+page.svelte` (see 依存ライブラリのライセンス表示)
@@ -224,12 +225,39 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 `resize_window_for_image` と CSS が同じ数値を暗黙に共有している**。片方だけ動かすと等倍が崩れる。
 
 - `padding = 20.0` ⇔ viewport の `p-5`
+- `sidebar_w = 224.0` ⇔ `ThumbnailSidebar.svelte` の `w-56`。設定ファイルの `thumbnail_sidebar` が
+  true の間だけ足す (出し入れした瞬間にはウインドウを広げ直さず、次に画像を読み込んだ時に効く)
 - `toolbar_h = 49.0` ⇔ `Toolbar.svelte` root の `py-2` (8+8) + 最も高い子 `.tool-btn` の
   `h-8` (32) + `border-b` (1)。root の `min-h-[40px]` は下限で効いていない。
   **ツールバーに背の高い要素を足したらこの定数も直すこと。**
 - `displayScale` の分母は viewport の **content box**。`clientWidth` / `clientHeight` は
   padding を含む寸法なので、引かずに使うと 40px 過大に見積もり、画像が content box を
   はみ出して flex の中央寄せに負の余白が渡る → 「左に余白 / 右は切れる」の非対称になる。
+
+## サムネイルブラウザ (src-tauri/src/thumbnails.rs + src/lib/ThumbnailSidebar.svelte)
+
+ツールバーの一番左のボタンで出し入れする左サイドバー (CYBERNEURA-DEV-995)。表示状態は
+設定ファイルの `thumbnail_sidebar`。保存先フォルダ (Preferences の保存先) の直下の画像を
+作成日時の新しい順に最大 300 件並べ、サムネイル・ファイル名・相対時刻・容量を出す。
+「メニューバーの一番左」という依頼だったが、メニューバー (アプリメニュー / トレイ) ではなく
+アプリ内のツールバーを指すと読んだ (自動コピーの時と同じ解釈。次の「撮影後の自動コピー」節を参照)。
+
+- **サムネイルは Rust が作る** (`saved_image_thumbnail`、長辺 400px の PNG を data URL で返す)。
+  asset プロトコルで原寸を見せる形にしないのは、scope を任意の保存先へ広げることになり、
+  Retina のスクリーンショットを原寸のまま何十枚も WebView に読ませることにもなるため。
+- **`saved_image_thumbnail` は保存先の直下の通常ファイルしか読まない** (`resolve_within`)。
+  symlink・サブフォルダ・`..` 越しのパスは拒否する。一覧 (`list_saved_images`) も symlink を載せない。
+  フロントから任意のパスを渡されても、他の場所の画像を読む口にしないため。
+- サムネイルは画面に入ったものから 2 枚ずつ頼む (IntersectionObserver)。作ったものは
+  `thumbnailCacheKey` (パス + 更新日時 + 容量) で取り置くので、注釈を書き戻した画像は作り直される。
+- 一覧の読み直しは、画像の差し替え (`filePath` / `imageRevision`)、書き戻し (`sidebarRefresh`)、
+  保存先の変更 (`config-changed` の `save_directory`)、ウインドウのフォーカスで行う。
+- **クリックは「今の画像を書き戻してから開く」** (`openFromSidebar`)。書き戻しは
+  `saveCompositeToFile()` (`needsFileWrite` の時だけ書く) で、失敗したら開かない (開くと注釈が失われる)。
+- **ドラッグは押してから 4px 動いたら `startDrag`** (Finder のファイルと同じく、ファイルそのものを渡す)。
+  HTML5 の drag イベントは使わない。開いている画像そのものをドラッグする時はツールバーのドラッグと
+  同じく先に書き戻す。**自分のウインドウに落とされた時はクリックと同じ扱い**
+  (`sidebarDragPath` で見分ける。素の `loadImageFile` に回すと書き戻さずに差し替わる)。
 
 ## 撮影後の自動コピー (src-tauri/src/auto_copy.rs + src/lib/Toolbar.svelte)
 

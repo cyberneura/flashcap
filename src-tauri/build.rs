@@ -42,6 +42,8 @@ const APP_COMMANDS: &[&str] = &[
     "capture_region_preview",
     "capture_region_ready",
     "capture_region_finish",
+    "list_saved_images",
+    "saved_image_thumbnail",
 ];
 
 fn main() {

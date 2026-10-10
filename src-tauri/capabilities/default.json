@@ -31,6 +31,8 @@
     "allow-open-region-selector",
     "allow-stop-video-recording",
     "allow-export-video",
-    "allow-check-ffmpeg-available"
+    "allow-check-ffmpeg-available",
+    "allow-list-saved-images",
+    "allow-saved-image-thumbnail"
   ]
 }

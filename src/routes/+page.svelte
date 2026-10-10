@@ -19,6 +19,8 @@
   import { largestAspectRect, refitToAspect } from "$lib/cropAspect";
   import Toolbar from "$lib/Toolbar.svelte";
   import VideoTrimmer from "$lib/VideoTrimmer.svelte";
+  import ThumbnailSidebar from "$lib/ThumbnailSidebar.svelte";
+  import { THUMBNAIL_SIDEBAR_KEY } from "$lib/thumbnailBrowser";
   import { isModKey, isWindows } from "$lib/platform";
   import {
     flushConfig,
@@ -173,6 +175,14 @@
 
   // Crop tool state
   const CROP_SNAP_KEY = "crop_snap";
+
+  // 左のサムネイルブラウザ (CYBERNEURA-DEV-995)。表示 / 非表示は設定ファイルに覚える
+  // (Rust の resize_window_for_image も、出している間はその幅ぶんウインドウを広げる)
+  let sidebarVisible = $state(false);
+  // 一覧を読み直させるための通し番号。画像の書き戻しや保存先の変更で上げる
+  let sidebarRefresh = $state(0);
+  // サイドバーからドラッグ中のパス。自分のウインドウに落とされた時はクリックと同じ扱いにする
+  let sidebarDragPath: string | null = null;
   let cropToolActive = $state(false);
   let cropRect = $state<CropRect | null>(null);
   // トリミング枠を画像内の境界線に吸着させるか
@@ -347,6 +357,8 @@
       });
     // Preferences ウィンドウでの変更を即時反映
     const unlistenConfig = onConfigChange(async (key) => {
+      // 保存先が変わったらサムネイルブラウザの一覧も変わる
+      if (key === "save_directory") sidebarRefresh++;
       if (!PREFERENCE_KEYS.includes(key)) return;
       try {
         applyPreferences(await loadConfig());
@@ -418,6 +430,13 @@
     const unlistenDragDrop = getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type === "drop" && event.payload.paths.length > 0) {
         const path = event.payload.paths[0];
+        // サイドバーのサムネイルを自分のウインドウに落とした: クリックと同じく、
+        // 今の画像を書き戻してから開く (素の loadImageFile だと注釈が失われる)
+        if (path === sidebarDragPath) {
+          sidebarDragPath = null;
+          openFromSidebar(path);
+          return;
+        }
         const ext = path.split(".").pop()?.toLowerCase() ?? "";
         if (SUPPORTED_IMAGE_EXTENSIONS.includes(ext)) {
           loadImageFile(path);
@@ -521,8 +540,9 @@
       textSettings.dropShadow = pick(text, "dropShadow", textSettings.dropShadow);
     }
     cropSnapEnabled = pick(config, CROP_SNAP_KEY, cropSnapEnabled);
+    sidebarVisible = pick(config, THUMBNAIL_SIDEBAR_KEY, sidebarVisible);
 
-    for (const key of [ARROW_SETTINGS_KEY, MASK_SETTINGS_KEY, SHAPE_SETTINGS_KEY, TEXT_SETTINGS_KEY, CROP_SNAP_KEY]) {
+    for (const key of [ARROW_SETTINGS_KEY, MASK_SETTINGS_KEY, SHAPE_SETTINGS_KEY, TEXT_SETTINGS_KEY, CROP_SNAP_KEY, THUMBNAIL_SIDEBAR_KEY]) {
       rememberConfig(key, config[key]);
     }
   }
@@ -556,6 +576,12 @@
     const enabled = cropSnapEnabled;
     if (!configLoaded) return;
     setConfigDebounced(CROP_SNAP_KEY, enabled);
+  });
+
+  $effect(() => {
+    const visible = sidebarVisible;
+    if (!configLoaded) return;
+    setConfigDebounced(THUMBNAIL_SIDEBAR_KEY, visible);
   });
 
   // テキスト属性変更時、編集中/選択中のテキストにも反映する
@@ -1122,6 +1148,7 @@
         ? uint8ToBase64(await renderComposite())
         : imageBase64;
     await invoke("write_image_to_file", { path: filePath, dataBase64 });
+    sidebarRefresh++;
   }
 
   async function copyImage() {
@@ -1145,6 +1172,7 @@
     const dataBase64 = hasAnnotations ? uint8ToBase64(await renderComposite()) : imageBase64;
     try {
       await invoke("write_image_to_file", { path: filePath, dataBase64 });
+      sidebarRefresh++;
       invoke("show_notification", {
         title: "FlashCap",
         body: "Saved",
@@ -1407,6 +1435,84 @@
     }
   }
 
+  // サムネイルブラウザで選んだ画像をメイン画面に開く。
+  // 今の画像の注釈・トリミングは先にファイルへ書き戻す (書き戻せなければ開かない — 開くと失われる)。
+  // **続けてクリックされても 1 つずつ処理する。** 並行させると遅い方の読み込みが後から
+  // 最後に選んだ画像を上書きする。処理中に選ばれたものは最後の 1 つだけ覚えておき、後で開く
+  let sidebarOpening = false;
+  let sidebarOpenNext: string | null = null;
+
+  async function openFromSidebar(path: string) {
+    if (sidebarOpening) {
+      sidebarOpenNext = path;
+      return;
+    }
+    sidebarOpening = true;
+    try {
+      let next: string | null = path;
+      while (next) {
+        sidebarOpenNext = null;
+        await openOneFromSidebar(next);
+        next = sidebarOpenNext;
+      }
+    } finally {
+      sidebarOpening = false;
+    }
+  }
+
+  async function writeBackBeforeSwitching(): Promise<boolean> {
+    if (!imageUrl || videoMode) return true;
+    try {
+      await saveCompositeToFile();
+      return true;
+    } catch (e) {
+      toast.error("Could not save the current image", { description: String(e), duration: 15000 });
+      return false;
+    }
+  }
+
+  async function openOneFromSidebar(path: string) {
+    if (isCapturing || isRecording) return;
+    if (path === filePath && !videoMode) return;
+    const current = filePath;
+    if (!(await writeBackBeforeSwitching())) return;
+    // 読み込みの間に注釈を足されたかを見るための目印 (編集は必ず undo を積む)
+    const edits = undoHistory.length;
+    let result: ScreenshotResult;
+    try {
+      result = await invoke<ScreenshotResult>("load_image_file", { path });
+    } catch (e) {
+      toast.error("Could not open the image", { description: String(e), duration: 15000 });
+      // 消されていた等。一覧を今の中身に合わせる
+      sidebarRefresh++;
+      return;
+    }
+    // 読み込みの間に撮影・貼り付け等で別の画像に変わっていたら、それを差し替えない
+    if (filePath !== current) return;
+    // 読み込みの間に足された注釈も書き戻してから差し替える
+    if (undoHistory.length !== edits && !(await writeBackBeforeSwitching())) return;
+    applyScreenshotResult(result);
+  }
+
+  // サムネイルをドラッグした: Finder からファイルをドラッグするのと同じく、ファイルそのものを渡す
+  async function dragFromSidebar(path: string) {
+    sidebarDragPath = path;
+    try {
+      // メイン画面に出ている画像なら、ツールバーのドラッグと同じく注釈を焼き込んでから渡す
+      if (path === filePath && !videoMode) await saveCompositeToFile();
+      await startDrag({ item: [path], icon: path }, () => {
+        // 自分のウインドウに落とされた時の onDragDropEvent と、この通知のどちらが先に来るかは
+        // 決まっていないので、少し待ってから忘れる
+        setTimeout(() => {
+          if (sidebarDragPath === path) sidebarDragPath = null;
+        }, 1000);
+      });
+    } catch (e) {
+      sidebarDragPath = null;
+      console.error("Failed to start dragging:", e);
+    }
+  }
+
   async function runShellCommand(command: ShellCommand) {
     if (!filePath) return;
     const imagePath = filePath;
@@ -1488,9 +1594,21 @@
     {shellCommands}
     onRunShellCommand={runShellCommand}
     onOpenShellLogs={openShellLogDir}
+    {sidebarVisible}
+    onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
   />
 
-  <div bind:this={viewportEl} class="flex-1 flex items-center justify-center overflow-hidden p-5">
+  <div class="flex-1 flex min-h-0">
+  {#if sidebarVisible}
+    <ThumbnailSidebar
+      currentPath={filePath}
+      refreshToken={`${filePath}|${imageRevision}|${sidebarRefresh}`}
+      onSelect={openFromSidebar}
+      onDragOut={dragFromSidebar}
+    />
+  {/if}
+
+  <div bind:this={viewportEl} class="flex-1 min-w-0 flex items-center justify-center overflow-hidden p-5">
     {#if isRecording}
       <div class="flex flex-col items-center gap-5">
         <div class="flex items-center gap-3">
@@ -1595,6 +1713,7 @@
     {:else}
       <div class="text-neutral-500 text-sm">No image</div>
     {/if}
+  </div>
   </div>
 </div>
 

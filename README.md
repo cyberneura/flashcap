@@ -66,6 +66,9 @@ fails, install them with `xcode-select --install`.
 - Auto-copy each capture (off / file path / image data) from the toolbar, with a notification
 - Optional menu bar icon (Preferences) to capture, record, and copy text on screen without opening the window
 - Drag & drop to external apps (e.g. Slack)
+- Saved-images sidebar (toggle at the left end of the toolbar): thumbnails of the save folder,
+  newest first. Click one to save the current image and open it; drag one to another app like a
+  file from Finder
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation)
@@ -167,10 +170,12 @@ src/                          # SvelteKit frontend
     ArrowOverlay.svelte       # Arrow annotation overlay
     MaskOverlay.svelte        # Mask (mosaic/blur/fill) overlay
     CropOverlay.svelte        # Crop selection overlay
+    ThumbnailSidebar.svelte   # Saved-images sidebar (thumbnail browser)
     types.ts                  # Shared types
 src-tauri/                    # Rust backend (Tauri)
   src/lib.rs                  # Tauri commands & app setup
   src/licenses.rs             # Embeds THIRD-PARTY-NOTICES.txt
+  src/thumbnails.rs           # Lists the save folder and makes thumbnails for the sidebar
 ```
 
 ## License
