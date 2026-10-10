@@ -62,6 +62,7 @@
     onRunShellCommand,
     onOpenShellLogs,
     sidebarVisible,
+    sidebarToggleReady,
     onToggleSidebar,
   }: {
     arrowToolActive: boolean;
@@ -116,6 +117,8 @@
     onOpenShellLogs: () => void;
     /** 左のサムネイルブラウザを出しているか */
     sidebarVisible: boolean;
+    /** 設定ファイルを読み終えたか (読む前は押せない) */
+    sidebarToggleReady: boolean;
     onToggleSidebar: () => void;
   } = $props();
 
@@ -180,6 +183,7 @@
     class="tool-btn tooltip-start"
     class:active={sidebarVisible}
     onclick={onToggleSidebar}
+    disabled={!sidebarToggleReady}
     aria-label={sidebarVisible ? "Hide saved images" : "Show saved images"}
     aria-pressed={sidebarVisible}
     data-tooltip={sidebarVisible ? "Hide saved images" : "Show saved images"}

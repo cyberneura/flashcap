@@ -183,6 +183,14 @@
   let sidebarRefresh = $state(0);
   // サイドバーからドラッグ中のパス。自分のウインドウに落とされた時はクリックと同じ扱いにする
   let sidebarDragPath: string | null = null;
+  // 画像と注釈の中身が変わるたびに進む番号。サイドバーで画像を切り替える間に編集されたかを見る。
+  // undo の件数では足りない — 選択中のテキストの色・太さの変更などは undo を積まずに書き換える
+  let editRevision = 0;
+  $effect(() => {
+    void imageBase64;
+    JSON.stringify([arrows, masks, shapes, textAnnotations]);
+    editRevision++;
+  });
   let cropToolActive = $state(false);
   let cropRect = $state<CropRect | null>(null);
   // トリミング枠を画像内の境界線に吸着させるか
@@ -583,10 +591,12 @@
   // (画像を開く側は sidebarConfigWrite を待ってから読み込む)
   let sidebarConfigWrite: Promise<void> = Promise.resolve();
 
+  // ボタンは設定を読み終えるまで押せない (sidebarToggleReady)。押せると、選んだ値が
+  // 保存されないまま初回の読み込みで保存値に戻される (自動コピーのボタンと同じ)
   function toggleSidebar() {
+    if (!configLoaded) return;
     const visible = !sidebarVisible;
     sidebarVisible = visible;
-    if (!configLoaded) return;
     // 書けなかったら表示も戻す。戻さないと Rust が読む値 (= ウインドウの幅の計算) と画面が食い違う
     sidebarConfigWrite = setConfig(THUMBNAIL_SIDEBAR_KEY, visible).catch((e) => {
       if (sidebarVisible === visible) sidebarVisible = !visible;
@@ -1485,10 +1495,10 @@
     if (isCapturing || isRecording) return;
     if (path === filePath && !videoMode) return;
     const current = filePath;
-    // 書き戻しや読み込みの間にも編集はできるので、その後に注釈を足されたかを見る目印
-    // (編集は必ず undo を積む)。**書き戻しを始める前に取る** — 書き戻しは途中で描画した
-    // 絵を書くので、その最中の編集はこの書き戻しに入っていない
-    let edits = undoHistory.length;
+    // 書き戻しや読み込みの間にも編集はできるので、その後に変わったかを見る目印。
+    // **書き戻しを始める前に取る** — 書き戻しは途中で描画した絵を書くので、
+    // その最中の編集はこの書き戻しに入っていない
+    let edits = editRevision;
     if (!(await writeBackBeforeSwitching())) return;
     let result: ScreenshotResult;
     try {
@@ -1505,12 +1515,13 @@
     // 書き戻し・読み込みの間に足された注釈も書き戻してから差し替える。書き戻しの最中にも
     // 編集されうるので、書き戻しの間に何も変わらなくなるまで繰り返す (最後の確認から
     // applyScreenshotResult までは await を挟まないので、そこで割り込まれることはない)
-    for (let round = 0; undoHistory.length !== edits; round++) {
+    // editRevision は $effect が進めるので、await の後 (= effect が流れた後) に比べる
+    for (let round = 0; editRevision !== edits; round++) {
       if (round >= 5) {
         toast.error("The image kept changing while switching; it was not replaced");
         return;
       }
-      edits = undoHistory.length;
+      edits = editRevision;
       if (!(await writeBackBeforeSwitching())) return;
     }
     applyScreenshotResult(result);
@@ -1617,6 +1628,7 @@
     onRunShellCommand={runShellCommand}
     onOpenShellLogs={openShellLogDir}
     {sidebarVisible}
+    sidebarToggleReady={configLoaded}
     onToggleSidebar={toggleSidebar}
   />
 
