@@ -578,11 +578,18 @@
     setConfigDebounced(CROP_SNAP_KEY, enabled);
   });
 
-  $effect(() => {
-    const visible = sidebarVisible;
+  // サイドバーの表示状態は debounce せずに書く。resize_window_for_image が画像を読み込むたびに
+  // 設定ファイルから読むので、出した直後にサムネイルを押すと古い値で幅を決められてしまう
+  // (画像を開く側は sidebarConfigWrite を待ってから読み込む)
+  let sidebarConfigWrite: Promise<void> = Promise.resolve();
+
+  function toggleSidebar() {
+    sidebarVisible = !sidebarVisible;
     if (!configLoaded) return;
-    setConfigDebounced(THUMBNAIL_SIDEBAR_KEY, visible);
-  });
+    sidebarConfigWrite = setConfig(THUMBNAIL_SIDEBAR_KEY, sidebarVisible).catch((e) =>
+      console.error("Failed to save the sidebar setting:", e)
+    );
+  }
 
   // テキスト属性変更時、編集中/選択中のテキストにも反映する
   function updateTextSetting<K extends keyof TextSettings>(key: K, value: TextSettings[K]) {
@@ -1480,6 +1487,7 @@
     const edits = undoHistory.length;
     let result: ScreenshotResult;
     try {
+      await sidebarConfigWrite;
       result = await invoke<ScreenshotResult>("load_image_file", { path });
     } catch (e) {
       toast.error("Could not open the image", { description: String(e), duration: 15000 });
@@ -1595,7 +1603,7 @@
     onRunShellCommand={runShellCommand}
     onOpenShellLogs={openShellLogDir}
     {sidebarVisible}
-    onToggleSidebar={() => (sidebarVisible = !sidebarVisible)}
+    onToggleSidebar={toggleSidebar}
   />
 
   <div class="flex-1 flex min-h-0">

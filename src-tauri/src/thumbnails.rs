@@ -144,8 +144,12 @@ fn make_thumbnail(path: &Path) -> Result<String, String> {
 #[tauri::command]
 pub(crate) async fn list_saved_images(app: tauri::AppHandle) -> Result<Vec<SavedImage>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = crate::prepare_save_directory(&app)?;
-        list_images_in(Path::new(&dir), LIST_LIMIT)
+        // 実体のパスで返す。load_image_file が開いた画像のパスを canonicalize するので、
+        // 保存先が symlink や .. を含んでいると字句のままのパスでは「今開いている画像」と
+        // 突き合わなくなる (ドラッグ前の書き戻しが飛ばされ、注釈前のファイルが渡る)
+        let dir = dunce::canonicalize(crate::prepare_save_directory(&app)?)
+            .map_err(|e| format!("Failed to resolve save directory: {}", e))?;
+        list_images_in(&dir, LIST_LIMIT)
     })
     .await
     .map_err(|e| format!("Failed to list saved images: {}", e))?

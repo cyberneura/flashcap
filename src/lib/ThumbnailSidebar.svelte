@@ -99,6 +99,15 @@
     pump();
   }
 
+  /** まだ頼んでいない (キューで待っている) ものを取り下げる。作りかけのものは止めない */
+  function cancelThumbnail(image: SavedImage) {
+    const key = thumbnailCacheKey(image);
+    const index = queue.findIndex((queued) => thumbnailCacheKey(queued) === key);
+    if (index < 0) return;
+    queue.splice(index, 1);
+    requested.delete(key);
+  }
+
   function pump() {
     while (!destroyed && inFlight < MAX_CONCURRENT && queue.length > 0) {
       const image = queue.shift()!;
@@ -120,7 +129,9 @@
     let current = image;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) requestThumbnail(current);
+        // 素早くスクロールして通り過ぎただけのものは作らない (何百枚もデコードしない)
+        if (entries[entries.length - 1].isIntersecting) requestThumbnail(current);
+        else cancelThumbnail(current);
       },
       // 少し先まで読んでおき、スクロールした時に空の枠が見えにくいようにする
       { root: listEl, rootMargin: "200px 0px" }
@@ -128,6 +139,7 @@
     observer.observe(node);
     return {
       update(next: SavedImage) {
+        cancelThumbnail(current);
         current = next;
         // 同じ要素のまま中身が書き換わった (書き戻された) 時は、見えていれば作り直す
         observer.unobserve(node);

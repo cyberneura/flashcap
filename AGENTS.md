@@ -248,7 +248,12 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 - **`saved_image_thumbnail` は保存先の直下の通常ファイルしか読まない** (`resolve_within`)。
   symlink・サブフォルダ・`..` 越しのパスは拒否する。一覧 (`list_saved_images`) も symlink を載せない。
   フロントから任意のパスを渡されても、他の場所の画像を読む口にしないため。
-- サムネイルは画面に入ったものから 2 枚ずつ頼む (IntersectionObserver)。作ったものは
+- **一覧のパスは実体のパス** (保存先を canonicalize してから並べる)。`load_image_file` が開いた画像の
+  パスを canonicalize するので、字句のままだと保存先が symlink / `..` を含む時に「今開いている画像」と
+  一致せず、ドラッグ前の書き戻しが飛ばされて注釈前 (マスク前) のファイルが渡る。
+- **`thumbnail_sidebar` は debounce せずに書き、画像を開く前にその書き込みを待つ** (`sidebarConfigWrite`)。
+  `resize_window_for_image` が読み込みのたびに設定ファイルから読むので、出した直後のクリックで古い値を読ませない。
+- サムネイルは画面に入ったものから 2 枚ずつ頼む (IntersectionObserver。通り過ぎただけのものはキューから外す)。作ったものは
   `thumbnailCacheKey` (パス + 更新日時 + 容量) で取り置くので、注釈を書き戻した画像は作り直される。
 - 一覧の読み直しは、画像の差し替え (`filePath` / `imageRevision`)、書き戻し (`sidebarRefresh`)、
   保存先の変更 (`config-changed` の `save_directory`)、ウインドウのフォーカスで行う。
