@@ -186,6 +186,9 @@
   // 画像と注釈の中身 (と書き出す絵に効く設定) が変わるたびに進む番号。サイドバーで画像を切り替える間に編集されたかを見る。
   // undo の件数では足りない — 選択中のテキストの色・太さの変更などは undo を積まずに書き換える
   let editRevision = 0;
+  // メイン画面の画像 (動画) が差し替わるたびに進む番号。サイドバーで切り替える間に撮影・貼り付け等で
+  // 別の画像に変わっていないかを見る。パスでは足りない — 同じ秒の撮影・貼り付けは同じ名前になる
+  let imageGeneration = 0;
   $effect(() => {
     void imageBase64;
     JSON.stringify([arrows, masks, shapes, textAnnotations]);
@@ -615,6 +618,7 @@
 
   // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
   function applyScreenshotResult(result: ScreenshotResult) {
+    imageGeneration++;
     // 画像を表示する際は動画モードを解除する
     videoMode = false;
     videoUrl = null;
@@ -765,6 +769,7 @@
       textAnnotations = [];
       undoHistory = [];
       deactivateAllTools();
+      imageGeneration++;
       videoPath = result.file_path;
       videoUrl = convertFileSrc(result.file_path);
       videoMode = true;
@@ -1497,7 +1502,7 @@
   async function openOneFromSidebar(path: string) {
     if (isCapturing || isRecording) return;
     if (path === filePath && !videoMode) return;
-    const current = filePath;
+    const generation = imageGeneration;
     // 書き戻しや読み込みの間にも編集はできるので、その後に変わったかを見る目印。
     // **書き戻しを始める前に取る** — 書き戻しは途中で描画した絵を書くので、
     // その最中の編集はこの書き戻しに入っていない
@@ -1514,7 +1519,8 @@
       return;
     }
     // 読み込みの間に撮影・貼り付け等で別の画像に変わっていたら、それを差し替えない
-    if (filePath !== current) return;
+    // (書き戻し直しの後にも見る。その間に変わっていれば、書き戻したのは新しい画像の方)
+    if (imageGeneration !== generation) return;
     // 書き戻し・読み込みの間に足された注釈も書き戻してから差し替える。書き戻しの最中にも
     // 編集されうるので、書き戻しの間に何も変わらなくなるまで繰り返す (最後の確認から
     // applyScreenshotResult までは await を挟まないので、そこで割り込まれることはない)
@@ -1526,6 +1532,7 @@
       }
       edits = editRevision;
       if (!(await writeBackBeforeSwitching())) return;
+      if (imageGeneration !== generation) return;
     }
     applyScreenshotResult(result);
   }
