@@ -548,8 +548,9 @@ version を採番して main へ push し、その run を watch するだけ。
   再利用し、target をその run の commit に直す。
 - **draft → build → publish の構成**。build が全プラットフォーム成功した後に、publish ジョブが
   `gh release edit --draft=false --latest` で公開する。失敗時は draft のまま残る。
-- **リリース済みの version は二度と出ない**。公開済みと同じ version で build まで進むと
-  tauri-action (Windows) と macOS の upload ステップが draft でないことを見てエラーにするが、`plan` がそこへ行かせない。
+- **リリース済みの version は二度と出ない**。`plan` が公開済みの version を build へ行かせない。
+  macOS の upload ステップは上げる前に release がまだ draft かを確かめて止めるが、Windows の
+  tauri-action は公開状態を見ずに同名の asset を差し替えるので、そちらは `plan` の判定だけが頼り。
   build 失敗で残った draft (tag がまだ無いので `plan` からは 404 に見える) は、次の push か
   dispatch で同じ version のまま埋め直される (`draft` ジョブが一覧から探して再利用し、
   tauri-action と macOS の upload ステップが同名 asset を差し替える)。

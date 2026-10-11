@@ -460,7 +460,8 @@ jobs:
       # tag ではなく ID で draft Release に上げる。上げる前に、まだ draft であることを確かめる
       # (失敗した古い run の「Re-run failed jobs」は plan / draft をやり直さず、保存済みの
       # release ID に上げる。その間に同じ version が公開されていると、公開済みの Release の
-      # asset を差し替えてしまう。tauri-action は draft 状態の不一致でエラーにしていた)。
+      # asset を差し替えてしまう。Windows の tauri-action はこの検査をしないので、そちらは
+      # plan の判定だけが頼り)。
       - name: Upload the dmg to the draft release
         if: matrix.platform == 'macos-latest'
         env:
