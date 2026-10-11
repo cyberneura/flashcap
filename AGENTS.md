@@ -532,24 +532,33 @@ version を採番して main へ push し、その run を watch するだけ。
   `--target universal-apple-darwin --bundles dmg` の `flashcap_<version>_universal.dmg`
   (x86_64 + arm64、署名 + 公証)。Windows は `--bundles nsis` の
   `flashcap_<version>_x64-setup.exe` (署名なし)。test も同じ 2 OS の matrix で走る。
-  Apple の Secret は macOS のジョブにだけ渡す (Windows では空文字)。
-- **draft Release はビルド前の `draft` ジョブが 1 つ作り、tauri-action には `releaseId` で渡す**
+  Apple の Secret は macOS のステップにだけ渡す。
+- **macOS は tauri-action を使わず、build → dmg の公証 → upload を別ステップにしている**。
+  tauri CLI は `.app` を署名・公証・staple し、dmg には署名だけをする。dmg を公証しないと、
+  ダウンロードした dmg が `spctl -a -t open --context context:primary-signature` で
+  `rejected / Unnotarized Developer ID` になる。tauri-action は build と upload を 1 ステップで
+  行うので間に公証を挟めない。dmg は `xcrun notarytool submit --wait` (exit code と
+  `status == Accepted` の両方で判定。失敗時は `notarytool log` を出す) → `stapler staple` →
+  `stapler validate` → `spctl` で確かめ、draft の release ID 宛てに `gh api` (uploads.github.com)
+  で上げる (まだ draft かを先に確かめ、同名の asset は消してから上げる)。Windows は従来どおり
+  tauri-action が build と upload を行う。
+- **draft Release はビルド前の `draft` ジョブが 1 つ作り、tauri-action (Windows) と macOS の upload には ID で渡す**
   (queryfolio と同じ構成)。tagName 方式だと、macOS と Windows がほぼ同時に終わった時に
   両方が「無い」と判断して同じ tag の draft を 2 つ作る。失敗した run が残した draft は
   再利用し、target をその run の commit に直す。
 - **draft → build → publish の構成**。build が全プラットフォーム成功した後に、publish ジョブが
   `gh release edit --draft=false --latest` で公開する。失敗時は draft のまま残る。
 - **リリース済みの version は二度と出ない**。公開済みと同じ version で build まで進むと
-  tauri-action が draft 状態の不一致でエラーになるが、`plan` がそこへ行かせない。
+  tauri-action (Windows) と macOS の upload ステップが draft でないことを見てエラーにするが、`plan` がそこへ行かせない。
   build 失敗で残った draft (tag がまだ無いので `plan` からは 404 に見える) は、次の push か
   dispatch で同じ version のまま埋め直される (`draft` ジョブが一覧から探して再利用し、
-  tauri-action が同名 asset を差し替える)。
+  tauri-action と macOS の upload ステップが同名 asset を差し替える)。
 - **publish の `--target "${GITHUB_SHA}"` は消さない**。`draft` ジョブも target を直しているが、
   tag は公開時に target へ作られるので、公開の直前にもう一度合わせておく。ずれると tag と
   成果物の中身が別の commit を指すことになる。
-- **`tauriScript: pnpm exec tauri` は消さない**。省略すると tauri-action は pnpm プロジェクトに
-  対して `pnpm tauri build` を実行し、`package.json` の `tauri` スクリプトが持つインラインの
-  `APPLE_SIGNING_IDENTITY=...` が workflow の env を上書きしてしまう (シェルのインライン代入は
+- **`tauriScript: pnpm exec tauri` (Windows) と macOS の `pnpm exec tauri build` を `pnpm tauri` にしない**。
+  tauri-action は省略すると pnpm プロジェクトに対して `pnpm tauri build` を実行する。`pnpm tauri` だと
+  `package.json` の `tauri` スクリプトが持つインラインの `APPLE_SIGNING_IDENTITY=...` が workflow の env を上書きしてしまう (シェルのインライン代入は
   継承 env より強い)。その結果 CI が Secret ではなくローカル用にハードコードした identity で
   署名しようとする。`pnpm exec tauri` はスクリプトを経由しないので Secret が効く。
 - **`tauri.conf.json` の `signingIdentity: "-"` は消さない**。tauri-cli は
