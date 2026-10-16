@@ -59,6 +59,11 @@ fails, install them with `xcode-select --install`.
 - Screenshot capture with interactive area selection (on Windows, within the monitor under the cursor)
 - Timer capture (configurable delay: 3/5/10 seconds)
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
+- Rectangle and ellipse tools (color, thickness, white stroke, drop shadow; hold Shift for a
+  square / circle) with resize/move handles
+- Text tool (color, size, bold, italic, white stroke, drop shadow). Text can span multiple lines:
+  Enter adds a line, ⌘+Enter (Ctrl+Enter on Windows) finishes. Double-click a text annotation to
+  edit it again
 - Mask tool (mosaic, blur, fill) with resize/move handles
 - Crop tool (drag to select, Enter to apply, annotations move with the image)
 - OCR text recognition (macOS only: Vision Framework, Japanese/English)
@@ -71,7 +76,8 @@ fails, install them with `xcode-select --install`.
   file from Finder
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
-- Keyboard shortcuts (ESC to quit, Delete to remove selected annotation)
+- Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘V to paste
+  an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on Windows)
 - Shell commands (macOS only): register commands in Preferences and run them on the open image
   from the toolbar. The image path is passed as `$IMAGE_PATH` (write `"${IMAGE_PATH}"` with the
   quotes). Output is logged to `$TMPDIR/flashcap/shell-logs/`
