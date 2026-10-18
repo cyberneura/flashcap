@@ -4,6 +4,8 @@
 
 A screenshot capture & annotation app for macOS and Windows.
 
+Website: https://www.cyberneura.com/app/flashcap
+
 ![](./documents/images/flashcap-20260130-104529.png)
 
 ## Download
