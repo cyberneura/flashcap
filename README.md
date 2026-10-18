@@ -6,6 +6,24 @@ A screenshot capture & annotation app for macOS and Windows.
 
 Website: https://www.cyberneura.com/app/flashcap
 
+## Who it's for / goal
+
+FlashCap is built as its developer's own everyday tool: take a screenshot, point at things
+with arrows and boxes, hide what must not be shared, and drag the result into Slack or
+another app. **The goal is to make that personal workflow quick and comfortable**, not to grow
+a user base. Others are welcome to use it, but features are added only when they help this
+workflow, and the app is kept simple rather than feature-complete.
+
+What this means in practice:
+
+- A feature request is judged by "does it make the developer's own capture → annotate → share
+  loop faster or easier?", not by what competing screenshot tools offer.
+- Things that mainly attract new users (a built-in global hotkey, wider distribution such as
+  winget, marketing pages) are not priorities. The Windows version exists because it is cheap
+  to keep building; it is not a target to grow.
+- Release download counts and brew installs are not tracked as success numbers. The measure
+  is whether the developer keeps using FlashCap day to day instead of the OS screenshot tool.
+
 ![](./documents/images/flashcap-20260130-104529.png)
 
 ## Download
@@ -100,6 +118,23 @@ flashcap --capture-screen-text
 # Start capture directly on relaunch (instead of blinking the capture button)
 flashcap --capture
 ```
+
+## Starting a capture with a hotkey
+
+FlashCap has no global hotkey setting of its own. Register the CLI (or the URL scheme) in a
+launcher such as Alfred, Raycast or Keyboard Maestro and give it the hotkey there:
+
+```bash
+# Capture (rectangle selection)
+/Applications/flashcap.app/Contents/MacOS/flashcap --capture
+
+# Headless OCR (macOS only)
+/Applications/flashcap.app/Contents/MacOS/flashcap --capture-screen-text
+```
+
+If FlashCap is already running, the running instance receives the arguments and starts the
+capture, so the launcher does not open a second window. On Windows, point the launcher (or a
+shortcut with a shortcut key) at `flashcap.exe --capture`.
 
 ## URL Scheme
 
