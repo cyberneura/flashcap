@@ -1,4 +1,4 @@
-# FlashCap
+# Flashcap
 
 ![](./src-tauri/icons/128x128@2x.png)
 
@@ -8,7 +8,7 @@ Website: https://www.cyberneura.com/app/flashcap
 
 ## Who it's for / goal
 
-FlashCap is built as its developer's own everyday tool: take a screenshot, point at things
+Flashcap is built as its developer's own everyday tool: take a screenshot, point at things
 with arrows and boxes, hide what must not be shared, and drag the result into Slack or
 another app. **The goal is to make that personal workflow quick and comfortable**, not to grow
 a user base. Others are welcome to use it, but features are added only when they help this
@@ -22,7 +22,7 @@ What this means in practice:
   winget, marketing pages) are not priorities. The Windows version exists because it is cheap
   to keep building; it is not a target to grow.
 - Release download counts and brew installs are not tracked as success numbers. The measure
-  is whether the developer keeps using FlashCap day to day instead of the OS screenshot tool.
+  is whether the developer keeps using Flashcap day to day instead of the OS screenshot tool.
 
 ![](./documents/images/flashcap-20260130-104529.png)
 
@@ -36,13 +36,13 @@ brew install --cask cyberneura/tap/flashcap
 
 ### Manual download (macOS)
 
-Get the latest `flashcap_x.y.z_universal.dmg` from the
+Get the latest `Flashcap_x.y.z_universal.dmg` from the
 [Releases](https://github.com/cyberneura/flashcap/releases) page and drag the app into
 `/Applications`.
 
 ### Windows
 
-Get the latest `flashcap_x.y.z_x64-setup.exe` from the
+Get the latest `Flashcap_x.y.z_x64-setup.exe` from the
 [Releases](https://github.com/cyberneura/flashcap/releases) page and run it.
 The installer is not code-signed, so SmartScreen warns on first run
 ("Windows protected your PC" → More info → Run anyway).
@@ -50,7 +50,7 @@ The installer is not code-signed, so SmartScreen warns on first run
 The Windows version differs from the macOS one:
 
 - A capture freezes the monitor under the mouse cursor and lets you drag a rectangle
-  on it (Windows has no equivalent of `screencapture -i`, so FlashCap draws its own
+  on it (Windows has no equivalent of `screencapture -i`, so Flashcap draws its own
   selection overlay). Press Enter to take the whole monitor, Esc or right-click to
   cancel. Only the monitor under the cursor can be selected from.
 - Screen recording, OCR and shell commands are macOS-only and are not shown.
@@ -121,18 +121,18 @@ flashcap --capture
 
 ## Starting a capture with a hotkey
 
-FlashCap has no global hotkey setting of its own. Register the CLI (or the URL scheme) in a
+Flashcap has no global hotkey setting of its own. Register the CLI (or the URL scheme) in a
 launcher such as Alfred, Raycast or Keyboard Maestro and give it the hotkey there:
 
 ```bash
 # Capture (rectangle selection)
-/Applications/flashcap.app/Contents/MacOS/flashcap --capture
+/Applications/Flashcap.app/Contents/MacOS/flashcap --capture
 
 # Headless OCR (macOS only)
-/Applications/flashcap.app/Contents/MacOS/flashcap --capture-screen-text
+/Applications/Flashcap.app/Contents/MacOS/flashcap --capture-screen-text
 ```
 
-If FlashCap is already running, the running instance receives the arguments and starts the
+If Flashcap is already running, the running instance receives the arguments and starts the
 capture, so the launcher does not open a second window. On Windows, point the launcher (or a
 shortcut with a shortcut key) at `flashcap.exe --capture`.
 
@@ -223,7 +223,7 @@ src-tauri/                    # Rust backend (Tauri)
 
 ## License
 
-FlashCap is released under the [MIT License](./LICENSE).
+Flashcap is released under the [MIT License](./LICENSE).
 
 ## Third-party licenses
 
@@ -231,7 +231,7 @@ FlashCap is released under the [MIT License](./LICENSE).
 Rust crate compiled into the macOS and Windows binaries, the npm packages named in
 `dependencies` in `package.json`, and the parts of the dev toolchain that end up in the
 web view bundle (the Svelte / SvelteKit runtime and Tailwind CSS). It is compiled into
-the app and shown by **FlashCap > Third-Party Licenses...** in the macOS menu bar, or by
+the app and shown by **Flashcap > Third-Party Licenses...** in the macOS menu bar, or by
 the **Third-Party Licenses** button in Preferences (macOS and Windows). Regenerate it
 after adding or updating a dependency; the Rust tests fail if a direct dependency is
 missing from it.

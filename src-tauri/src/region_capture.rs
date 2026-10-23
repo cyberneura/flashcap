@@ -195,7 +195,7 @@ fn open_overlay(
     geometry: OverlayGeometry,
 ) -> Result<tauri::WebviewWindow, String> {
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("/capture-region".into()))
-        .title("FlashCap")
+        .title("Flashcap")
         .decorations(false)
         .resizable(false)
         .always_on_top(true)

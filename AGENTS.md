@@ -1,4 +1,6 @@
-# FlashCap - Project Guide
+# Flashcap - Project Guide
+
+> **アプリ名の表記はユーザーに見える箇所では「Flashcap」に統一する** (CYBERNEURA-DEV-1126。`productName` = macOS の `.app` 名 = Dock に出る名前・アプリメニュー・dmg / インストーラのファイル名、ウインドウタイトル、通知・トレイ・Preferences の文言)。`c` は小文字で、`FlashCap` / `flashcap` は誤り。identifier (`com.cyberneura.flashcap`)・crate / 実行バイナリ名 (`flashcap`)・設定ディレクトリ (`~/.config/flashcap`)・URL スキーム (`flashcap://`) は小文字のまま。`productName` を変えたら Homebrew cask (`cyberneura/homebrew-tap` の `Casks/flashcap.rb` の `url` / `app`) を、**新しい名前の成果物が公開されてから**追従させる。
 
 Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 added Windows).
 
@@ -302,10 +304,10 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 
 ## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
 
-- Preferences の「Keep FlashCap in the menu bar」(設定ファイルの `show_in_menu_bar`、
+- Preferences の「Keep Flashcap in the menu bar」(設定ファイルの `show_in_menu_bar`、
   未設定は OFF) を ON にすると、メニューバーにアイコンを置く (CYBERNEURA-DEV-761)。
-  クリックで Open FlashCap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
-  Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit FlashCap。
+  クリックで Open Flashcap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
+  Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap。
   N は Preferences の Timer delay。
 - Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
   メニューの秒数を追従させるため)。`sync` は「保存値を読んでアイコンの有無と文言を合わせる」
@@ -491,7 +493,7 @@ Tauri はアプリ独自のコマンドにも ACL を適用する。**宣言し�
 - `pnpm check` for Svelte/TypeScript check
 - `pnpm test` for the frontend unit tests (`tests/*.test.mts`)
 - Run all four before committing
-- GUI の確認をインストール版の FlashCap と並べて行うには、identifier と HOME を分ける
+- GUI の確認をインストール版の Flashcap と並べて行うには、identifier と HOME を分ける
   (single-instance の socket は identifier から決まり、同じだとインストール版に引き渡されて終わる)。
   asdf の node shim は HOME に依存するので、node の実体を PATH の先頭に置く:
   `PATH="<node の実体のディレクトリ>:$PATH" CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup HOME=<scratch> ./node_modules/.bin/tauri dev --config '{"identifier":"com.cyberneura.flashcap.devtest"}' -- -- <画像>`
@@ -529,9 +531,9 @@ version を採番して main へ push し、その run を watch するだけ。
 - **`workflow_dispatch` は失敗した run の再実行用に残してある**。`plan` を通るので公開済み version は
   出せず、main 以外の ref からの dispatch は `plan` が拒否する。
 - **macOS と Windows をビルドする** (build の matrix)。macOS は
-  `--target universal-apple-darwin --bundles dmg` の `flashcap_<version>_universal.dmg`
+  `--target universal-apple-darwin --bundles dmg` の `Flashcap_<version>_universal.dmg`
   (x86_64 + arm64、署名 + 公証)。Windows は `--bundles nsis` の
-  `flashcap_<version>_x64-setup.exe` (署名なし)。test も同じ 2 OS の matrix で走る。
+  `Flashcap_<version>_x64-setup.exe` (署名なし)。test も同じ 2 OS の matrix で走る。
   Apple の Secret は macOS のステップにだけ渡す。
 - **macOS は tauri-action を使わず、build → dmg の公証 → upload を別ステップにしている**。
   tauri CLI は `.app` を署名・公証・staple し、dmg には署名だけをする。dmg を公証しないと、

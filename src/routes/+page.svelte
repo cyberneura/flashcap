@@ -790,7 +790,7 @@
       videoMode = true;
     } catch (e) {
       console.error("Failed to stop recording:", e);
-      notify("FlashCap", `Recording failed: ${e}`);
+      notify("Flashcap", `Recording failed: ${e}`);
     } finally {
       isRecording = false;
       isStopping = false;
@@ -805,7 +805,7 @@
       console.error("Failed to reveal exported video:", e);
     }
     invoke("show_notification", {
-      title: "FlashCap",
+      title: "Flashcap",
       body: "Video exported",
     }).catch(() => {});
   }
@@ -1222,7 +1222,7 @@
       await invoke("write_image_to_file", { path: filePath, dataBase64 });
       sidebarRefresh++;
       invoke("show_notification", {
-        title: "FlashCap",
+        title: "Flashcap",
         body: "Saved",
       }).catch(() => {});
     } catch (e) {
@@ -1230,7 +1230,7 @@
       // 無音だと「保存されたか不明」になるため、失敗理由を通知する
       console.error("Failed to save image:", e);
       invoke("show_notification", {
-        title: "FlashCap",
+        title: "Flashcap",
         body: `Save failed: ${e}`,
       }).catch(() => {});
     }
@@ -1427,7 +1427,7 @@
     setTimeout(() => (ocrSuccessButton = null), 3000);
     const charCount = [...text].length;
     invoke("show_notification", {
-      title: "FlashCap",
+      title: "Flashcap",
       body: `Copied ${charCount} characters`,
     }).catch(() => {});
   }

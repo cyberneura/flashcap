@@ -1,6 +1,6 @@
 // 実行中の OS に応じた振る舞いの切り替え
 //
-// FlashCap は macOS と Windows で配布している。録画 (screencapture -v) と OCR
+// Flashcap は macOS と Windows で配布している。録画 (screencapture -v) と OCR
 // (Vision Framework) は macOS にしか無く、ショートカットの修飾キーも違う。
 //
 // 判定は WebView の UA で行う。Windows の WebView2 は UA に "Windows" を含み、

@@ -98,7 +98,7 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
         let image = match data.as_deref().map(decode_image).transpose() {
             Ok(image) => image,
             Err(e) => {
-                crate::ocr::notify("FlashCap", &e);
+                crate::ocr::notify("Flashcap", &e);
                 return;
             }
         };
@@ -122,10 +122,10 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
         drop(guard);
 
         match outcome {
-            Ok(Some(message)) => crate::ocr::notify("FlashCap", message),
+            Ok(Some(message)) => crate::ocr::notify("Flashcap", message),
             // 後の撮影に追い越された。クリップボードは後の撮影の分が入る
             Ok(None) => {}
-            Err(e) => crate::ocr::notify("FlashCap", &e),
+            Err(e) => crate::ocr::notify("Flashcap", &e),
         }
     });
 }

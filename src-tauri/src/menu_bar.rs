@@ -1,7 +1,7 @@
 //! メニューバーへの常駐 (CYBERNEURA-DEV-761)
 //!
-//! Preferences の「Keep FlashCap in the menu bar」を ON にすると、メニューバーに
-//! FlashCap のアイコンを置き、クリックで撮影・録画・OCR のメニューを開く。
+//! Preferences の「Keep Flashcap in the menu bar」を ON にすると、メニューバーに
+//! Flashcap のアイコンを置き、クリックで撮影・録画・OCR のメニューを開く。
 //! 設定は設定ファイル (`config.rs`) の `show_in_menu_bar` (bool、未設定は OFF)。
 //!
 //! Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ。起動時は
@@ -71,7 +71,7 @@ impl MenuAction {
     /// タイマーの秒数は Preferences の Timer delay に従う
     fn label(self, timer_delay: u32) -> String {
         match self {
-            MenuAction::OpenMainWindow => "Open FlashCap".to_string(),
+            MenuAction::OpenMainWindow => "Open Flashcap".to_string(),
             MenuAction::Capture => "Capture Screenshot".to_string(),
             MenuAction::CaptureWithTimer => {
                 format!("Capture Screenshot with Timer ({}s)", timer_delay)
@@ -81,7 +81,7 @@ impl MenuAction {
                 format!("Record Video with Timer ({}s)", timer_delay)
             }
             MenuAction::CopyTextOnScreen => "Copy Text on Screen (OCR)".to_string(),
-            MenuAction::Quit => "Quit FlashCap".to_string(),
+            MenuAction::Quit => "Quit Flashcap".to_string(),
         }
     }
 
@@ -149,7 +149,7 @@ pub(crate) fn sync(app: &tauri::AppHandle) -> Result<(), String> {
         .icon(icon)
         // テンプレート画像 (OS が色を塗る) は macOS だけ。Windows はアプリのアイコンをそのまま出す
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("FlashCap")
+        .tooltip("Flashcap")
         .menu(&menu)
         .show_menu_on_left_click(true)
         // **ここで on_menu_event を登録しない。** トレイのハンドラは app 全体の
@@ -272,7 +272,7 @@ fn run(app: &tauri::AppHandle, action: MenuAction) {
 /// 録画の範囲選択を始める
 fn start_recording(app: &tauri::AppHandle, delay_seconds: Option<u32>) {
     if let Err(e) = crate::video::open_region_selector(app.clone(), delay_seconds) {
-        crate::ocr::notify("FlashCap", &format!("Failed to start recording: {}", e));
+        crate::ocr::notify("Flashcap", &format!("Failed to start recording: {}", e));
     }
 }
 

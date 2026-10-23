@@ -1103,7 +1103,7 @@ const JPEG_QUALITY: u8 = 92;
 ///
 /// **変換できない拡張子では書かずにエラーにする。** PNG のまま書くと、拡張子は
 /// 元のままで中身だけ差し替わった開けないファイルが残り、しかも上書きなので原本が
-/// 戻せない。FlashCap が開ける形式 (SUPPORTED_IMAGE_EXTENSIONS) はすべて変換先が
+/// 戻せない。Flashcap が開ける形式 (SUPPORTED_IMAGE_EXTENSIONS) はすべて変換先が
 /// あるので、この分岐に来るのは想定外の拡張子だけ。
 fn encode_for_target_format(target: &Path, png_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     let ext = target
@@ -1359,7 +1359,7 @@ fn request_open_files(app: &tauri::AppHandle, files: Vec<String>) {
     }
 }
 
-/// FlashCap が開ける画像ファイルの拡張子か
+/// Flashcap が開ける画像ファイルの拡張子か
 pub(crate) fn is_supported_image_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -1450,7 +1450,7 @@ fn open_preferences_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// macOS のアプリメニュー (FlashCap / Edit / Window)
+/// macOS のアプリメニュー (Flashcap / Edit / Window)
 ///
 /// macOS 以外には置かない。Windows ではメニューがウインドウの中にメニューバーとして
 /// 付き、Edit の Ctrl+C / Ctrl+V / Ctrl+Z がアクセラレーターとして WebView より先に

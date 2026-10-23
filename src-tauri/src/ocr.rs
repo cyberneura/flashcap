@@ -254,18 +254,18 @@ pub async fn run_headless_ocr(app: &tauri::AppHandle, exit_after: bool) {
             let char_count = text.chars().count();
             match copy_to_clipboard(&text) {
                 Ok(_) => {
-                    notify("FlashCap", &format!("Copied {} characters", char_count));
+                    notify("Flashcap", &format!("Copied {} characters", char_count));
                 }
                 Err(e) => {
-                    notify("FlashCap", &format!("Failed to copy: {}", e));
+                    notify("Flashcap", &format!("Failed to copy: {}", e));
                 }
             }
         }
         Ok(_) => {
-            notify("FlashCap", "No text recognized");
+            notify("Flashcap", "No text recognized");
         }
         Err(e) if e != "Screenshot was cancelled" => {
-            notify("FlashCap", &format!("OCR failed: {}", e));
+            notify("Flashcap", &format!("OCR failed: {}", e));
         }
         _ => {}
     }
