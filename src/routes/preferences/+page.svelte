@@ -371,14 +371,14 @@
       />
       <div>
         {#if isWindows}
-          <div class="text-sm font-medium">Keep FlashCap in the notification area</div>
+          <div class="text-sm font-medium">Keep Flashcap in the notification area</div>
           <div class="text-xs text-gray-500 mt-0.5">
-            Capture from the notification area icon. Closing the window keeps FlashCap running.
+            Capture from the notification area icon. Closing the window keeps Flashcap running.
           </div>
         {:else}
-          <div class="text-sm font-medium">Keep FlashCap in the menu bar</div>
+          <div class="text-sm font-medium">Keep Flashcap in the menu bar</div>
           <div class="text-xs text-gray-500 mt-0.5">
-            Capture, record, and copy text from the menu bar. Closing the window keeps FlashCap running.
+            Capture, record, and copy text from the menu bar. Closing the window keeps Flashcap running.
           </div>
         {/if}
       </div>
@@ -483,7 +483,7 @@
     <div class="flex items-center gap-3 px-3 py-2.5">
       <div class="flex-1">
         <div class="text-sm font-medium">Open source licenses</div>
-        <div class="text-xs text-gray-500 mt-0.5">Libraries bundled with FlashCap and their licenses</div>
+        <div class="text-xs text-gray-500 mt-0.5">Libraries bundled with Flashcap and their licenses</div>
       </div>
       <button
         class="px-3.5 py-1.5 bg-[#2d2d2d] hover:bg-[#3d3d3d] text-white text-[13px] rounded-md cursor-pointer whitespace-nowrap border border-[#3d3d3d]"

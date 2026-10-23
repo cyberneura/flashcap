@@ -415,7 +415,7 @@
       class="absolute bg-neutral-900/90 text-white text-sm rounded-lg px-3 py-1.5 shadow-lg pointer-events-none tabular-nums"
       style="left:{barLeft}px;top:{barTop}px;"
     >
-      Recording starts in {countdown}s · Cancel from the menu bar (Open FlashCap)
+      Recording starts in {countdown}s · Cancel from the menu bar (Open Flashcap)
     </div>
   {:else if countdown != null}
     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">

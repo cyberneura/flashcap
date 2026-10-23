@@ -476,7 +476,7 @@ pub fn is_selecting_region(app: &tauri::AppHandle) -> bool {
 /// 全ディスプレイを暗くしてクリックを奪ったままだと、待つ間に何も操作できない。
 /// 呼んだオーバーレイはクリックを透過させ (選択枠とカウントダウンだけを描く)、
 /// 他のディスプレイのオーバーレイは閉じる。キャンセルは、このオーバーレイにフォーカスが
-/// 残っている間の Esc か、メニューバーの Open FlashCap で行う
+/// 残っている間の Esc か、メニューバーの Open Flashcap で行う
 #[tauri::command]
 pub fn release_region_selector_for_countdown(
     app: tauri::AppHandle,

@@ -168,7 +168,7 @@
       onExported(out);
     } catch (e) {
       exportError = String(e);
-      onNotify("FlashCap", `Export failed: ${e}`);
+      onNotify("Flashcap", `Export failed: ${e}`);
     } finally {
       exporting = false;
     }

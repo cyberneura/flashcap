@@ -35,7 +35,7 @@
 
 <div class="h-screen flex flex-col bg-[#1a1a1a] text-white p-5 font-[-apple-system,BlinkMacSystemFont,'Segoe_UI',Roboto,sans-serif]">
   <p class="flex-none mb-3 text-sm text-gray-300">
-    FlashCap bundles the open source libraries listed below, under the licenses shown.
+    Flashcap bundles the open source libraries listed below, under the licenses shown.
   </p>
   {#if error}
     <p class="text-sm text-red-400">Could not load the license list: {error}</p>
