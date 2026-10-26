@@ -561,6 +561,8 @@ mod tests {
         );
     }
 
+    // Homebrew は macOS 専用で、ここの /Users/... は Windows では絶対パスにならない
+    #[cfg(unix)]
     #[test]
     fn test_cask_app_paths() {
         let appdir = Path::new("/Applications");
