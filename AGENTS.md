@@ -443,6 +443,26 @@ About 節のボタン (Windows にはアプリメニューが無いため)。**�
 - `@crabnebula/tauri-plugin-drag` の npm パッケージは package.json に license も repository も
   書いていないので、スクリプトの `MISSING_METADATA` で同じリポジトリの Rust crate に合わせている。
 
+## 更新の手動チェック (src-tauri/src/update_check.rs)
+
+「Check for Updates…」(CYBERNEURA-DEV-1127)。queryfolio の `update_check.rs` (CYBERNEURA-DEV-1079) の
+移植で、共通化はしていない (直す時は両方を見る)。入口は macOS のアプリメニュー (Third-Party Licenses の
+直下) と Preferences の About 節のボタン (`check_for_updates` コマンド。Windows はこちらだけ)。
+
+- **選んだ時だけ** `api.github.com/repos/cyberneura/flashcap/releases/latest` を見る。起動時・定期の通信は足さない。
+- cask で入れた `.app` で動いている時だけ `brew upgrade --cask flashcap` を出す。判定は Caskroom の有無ではなく、
+  cask が置いた場所 (`brew info --cask --json=v2` の app 成果物の `target`。古い brew は
+  `Caskroom/flashcap/.metadata/config.json` の appdir + 名前) が実行中の bundle (canonicalize 済み) と
+  **大文字小文字まで一致する**か。0.8.3 で `.app` 名が `flashcap.app` → `Flashcap.app` に変わったので、緩めると
+  旧版にも brew を走らせうる。**`brew list --cask flashcap` の出力は使わない** — 成果物の一覧
+  (`/Applications/Flashcap.app (...)`) は stdout が端末の時しか出ず、パイプでは Caskroom の find 一覧になる
+  (Homebrew の `cmd/list.rb`)。queryfolio の update_check.rs はこれに頼っているので、同じ理由で brew 経路に入れていない可能性がある。
+- appdir が `HOMEBREW_CASK_OPTS` だけで決まっていた (config.json の `env` だけにある) 時は brew を勧めない。upgrade は `env` を
+  実行時の環境から取り直すので、GUI から呼ぶと `/Applications` に入れ直されて動いている場所に新版が来ない。
+- brew は `HOMEBREW_NO_ASK` / `HOMEBREW_NO_UPGRADE_QUIT_CASKS` / `HOMEBREW_AUTO_UPDATE_SECS=0` で動かし、
+  終わったら `brew list --cask --versions` で入った版を確かめてから再起動を勧める。
+- HTTP は reqwest (`default-features = false` + rustls)。webpki-roots の CDLA-Permissive-2.0 は `about.toml` の accepted に入れてある。
+
 ## コマンドの ACL (src-tauri/build.rs + src-tauri/capabilities/)
 
 アプリ独自のコマンド (`generate_handler!`) も、窓ごとの capability で許可したものしか呼べない

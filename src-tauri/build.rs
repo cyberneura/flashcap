@@ -20,6 +20,7 @@ const APP_COMMANDS: &[&str] = &[
     "open_preferences",
     "third_party_notices",
     "open_third_party_licenses",
+    "check_for_updates",
     "take_screenshot_interactive",
     "take_screenshot_timer",
     "write_image_to_file",

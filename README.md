@@ -59,6 +59,19 @@ The Windows version differs from the macOS one:
 - Shortcuts use Ctrl instead of ⌘ (Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+S / Ctrl+Z,
   Ctrl+, for Preferences).
 
+### Check for Updates
+
+**Check for Updates…** (in the application menu on macOS, and in the About section of
+Preferences on both macOS and Windows) asks GitHub for the latest release and tells you
+whether a newer version is out. Nothing is checked in the background: Flashcap contacts
+GitHub (`api.github.com`, sending only your IP address and a User-Agent) only when you
+pick it.
+
+- Installed with Homebrew: **Update with Homebrew** runs `brew upgrade --cask flashcap` and
+  offers to restart. The tap follows new releases within an hour, so right after a release
+  brew may not see it yet.
+- Otherwise: **Open Release Page** opens the Releases page to download the new installer.
+
 ## First launch (macOS)
 
 Both methods install the same app from the same dmg. It is signed with a

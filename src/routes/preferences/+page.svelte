@@ -205,6 +205,16 @@
     }
   }
 
+  // 更新の手動チェック。結果はネイティブのダイアログで出る (src-tauri/src/update_check.rs)。
+  // Windows はアプリメニューが無いので、ここが唯一の入口
+  async function checkForUpdates() {
+    try {
+      await invoke("check_for_updates");
+    } catch (e) {
+      console.error("Failed to check for updates:", e);
+    }
+  }
+
   async function onModeChange(mode: SaveMode) {
     saveMode = mode;
     if (mode === "custom" && !customPath) {
@@ -490,6 +500,18 @@
         onclick={openThirdPartyLicenses}
       >
         Third-Party Licenses
+      </button>
+    </div>
+    <div class="flex items-center gap-3 px-3 py-2.5">
+      <div class="flex-1">
+        <div class="text-sm font-medium">Updates</div>
+        <div class="text-xs text-gray-500 mt-0.5">Checks GitHub for a newer release only when you click</div>
+      </div>
+      <button
+        class="px-3.5 py-1.5 bg-[#2d2d2d] hover:bg-[#3d3d3d] text-white text-[13px] rounded-md cursor-pointer whitespace-nowrap border border-[#3d3d3d]"
+        onclick={checkForUpdates}
+      >
+        Check for Updates…
       </button>
     </div>
   </section>

@@ -17,12 +17,32 @@ accepted = [
     "CC0-1.0",
     "BSL-1.0",
     "MPL-2.0",
+    # webpki-roots (Mozilla の CA 証明書データ。reqwest の rustls-tls が引く)。帰属表示だけを求める寛容なデータライセンス
+    "CDLA-Permissive-2.0",
 ]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
-workarounds = ["ring", "rustls"]
+workarounds = ["rustls"]
 
 # flashcap 自身 (publish = false) を一覧に載せない
 [private]
 ignore = true
+
+# ring は cargo-about の組み込みの "ring" workaround を使わない (0.17 の構成に合わず、
+# ライセンス表記で始まるソースファイルをライセンス本文とみなして丸ごと埋め込む)。
+# 本文に使うファイルを明示する。checksum はファイルの sha256 で、crate の更新で変わると
+# cargo-about が警告してこの指定を使わなくなる (その時は新しい版のファイルから取り直す)。
+# queryfolio の about.toml と同じ指定。
+[ring.clarify]
+license = "Apache-2.0 AND ISC"
+
+[[ring.clarify.files]]
+path = "LICENSE-BoringSSL"
+license = "Apache-2.0"
+checksum = "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"
+
+[[ring.clarify.files]]
+path = "LICENSE-other-bits"
+license = "ISC"
+checksum = "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"
