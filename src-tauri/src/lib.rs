@@ -9,6 +9,7 @@ mod ocr;
 mod region_capture;
 mod shell_command;
 mod thumbnails;
+mod update_check;
 mod video;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -1473,6 +1474,15 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
 
+    // 更新の手動チェック (update_check.rs)
+    let check_for_updates = MenuItem::with_id(
+        handle,
+        update_check::MENU_ID,
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
+
     let app_submenu = Submenu::with_items(
         handle,
         handle.package_info().name.clone(),
@@ -1480,6 +1490,7 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         &[
             &PredefinedMenuItem::about(handle, None, None)?,
             &third_party_licenses,
+            &check_for_updates,
             &PredefinedMenuItem::separator(handle)?,
             &preferences,
             &PredefinedMenuItem::separator(handle)?,
@@ -1592,6 +1603,8 @@ pub fn run() {
                     let _ = open_preferences_window(app);
                 } else if event.id() == licenses::MENU_ID {
                     let _ = licenses::open_window(app);
+                } else if event.id() == update_check::MENU_ID {
+                    update_check::start(app);
                 } else {
                     menu_bar::handle_menu_event(app, event.id().as_ref());
                 }
@@ -1719,7 +1732,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, fit_window_to_image, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail])
+        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, update_check::check_for_updates, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, fit_window_to_image, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

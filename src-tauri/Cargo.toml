@@ -1,6 +1,6 @@
 [package]
 name = "flashcap"
-version = "0.8.3"
+version = "0.9.0"
 description = "A Tauri App"
 authors = ["you"]
 license = "MIT"
@@ -37,6 +37,12 @@ tokio = { version = "1", features = ["process", "time", "sync"] }
 tauri-plugin-deep-link = "2.4.7"
 # Windows で canonicalize が \\?\ 付きのパスを返さないようにする (lib.rs の load_image_result)
 dunce = "1"
+# Check for Updates… の releases API 呼び出し (update_check.rs)。queryfolio と同じく
+# rustls にして openssl / native-tls を持ち込まない
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 
 [target.'cfg(unix)'.dependencies]
 # 一時ディレクトリの祖先の所有者検査 (getuid)。std には現在の uid を取る API が無い
