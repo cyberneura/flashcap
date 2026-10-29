@@ -515,7 +515,7 @@ Tauri はアプリ独自のコマンドにも ACL を適用する。**宣言し�
 - Run all four before committing
 - GUI の確認をインストール版の Flashcap と並べて行うには、identifier と HOME を分ける
   (single-instance の socket は identifier から決まり、同じだとインストール版に引き渡されて終わる)。
-  asdf の node shim は HOME に依存するので、node の実体を PATH の先頭に置く:
+  mise (や asdf) の node shim は HOME に依存するので、node の実体を PATH の先頭に置く:
   `PATH="<node の実体のディレクトリ>:$PATH" CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup HOME=<scratch> ./node_modules/.bin/tauri dev --config '{"identifier":"com.cyberneura.flashcap.devtest"}' -- -- <画像>`
   (設定は `<scratch>/.config/flashcap/config.json` になる)。プロジェクト直下のファイル
   (`flashcap.code-workspace` など) が書き換わると vite が全体をリロードし、起動引数で開いた画像が消える。
