@@ -30,6 +30,7 @@ const APP_COMMANDS: &[&str] = &[
     "get_default_save_directory",
     "save_pasted_image",
     "ocr_image",
+    "ocr_image_boxes",
     "ocr_capture_region",
     "show_notification",
     "open_region_selector",

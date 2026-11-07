@@ -42,6 +42,8 @@
     timerDelay,
     onToggleArrowTool,
     onToggleMaskTool,
+    onRedactSensitiveText,
+    redactBusy,
     onToggleShapeTool,
     onToggleTextTool,
     onToggleStepTool,
@@ -98,6 +100,9 @@
     timerDelay: number;
     onToggleArrowTool: () => void;
     onToggleMaskTool: () => void;
+    /** OCR でメール / IP / トークン等を見つけて自動でマスクを置く (macOS のみ) */
+    onRedactSensitiveText: () => void;
+    redactBusy: boolean;
     onToggleShapeTool: (type: "rect" | "ellipse") => void;
     onToggleTextTool: () => void;
     onToggleStepTool: () => void;
@@ -501,6 +506,23 @@
           data-tooltip="Fill color"
         />
       {/if}
+
+  <!-- OCR で見つけた秘密 (メール / IP / トークン等) にマスクを置く。OCR と同じく macOS だけ -->
+  {#if !isWindows && !videoMode && filePath}
+    <button
+      class="tool-btn"
+      onclick={onRedactSensitiveText}
+      disabled={redactBusy}
+      aria-label="Redact sensitive text"
+      data-tooltip="Redact sensitive text (emails, IPs, tokens, card numbers)"
+    >
+      {#if redactBusy}
+        <i class="bi bi-arrow-repeat animate-spin"></i>
+      {:else}
+        <i class="bi bi-eye-slash"></i>
+      {/if}
+    </button>
+  {/if}
     </div>
   {/if}
 

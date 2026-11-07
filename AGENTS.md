@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -221,6 +221,24 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   すべてこの箱で決まるので、DOM もマウスも要らない形にしてテスト (`tests/text-hit.test.mts`)
   から直接呼べるようにしてある。**実際に描かれた字面は測らない** — `getBBox()` は
   レンダリング後にしか答えず、マウスが動くたびに呼ぶとレイアウトの再計算が毎フレーム入る。
+
+## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
+
+ツールバーのマスクツールの隣の「Redact sensitive text」(`bi-eye-slash`、OCR と同じく macOS だけ。
+CYBERNEURA-DEV-1210)。`ocr_image_boxes` コマンド (`ocr.rs`) が `ocr.swift --json` で認識した行ごとの
+`{ text, box: [x, y, w, h] }` (画像ピクセル、左上原点) を返し、フロントの `findSensitive` が
+メール / IPv4 / 接頭辞付きトークン (`sk-` `ghp_` `gho_` `xox[abp]-` `AKIA`) / JWT 風 / 16 文字以上の
+英数字 (数字と英字の両方を含むもの。普通の長い単語や数字だけの ID は拾わない) / Luhn の通るカード番号を
+含む行を選び、その箱を上下左右 2px 広げた `MaskRect` (モードと色はマスク設定の既定) を `masks` に足す
+(`pushUndo` 対象)。0 件なら toast で知らせる。
+
+- `ocr.swift --json` は `--region` と併用しない (領域付きの boundingBox は領域基準になる)。Rust 側は常に
+  画像全体で呼ぶ。`--json` 無しの出力 (改行区切りの文字列) は変えていない。
+- 出力の形は `ocr_lines.rs` の `parse_ocr_lines` のテストで固定する (Swift はこのホストで実行できない)。
+  形を変える時は Swift と Rust のテストを一緒に直す。
+- OCR の入力は注釈の無い土台画像 (`imageBase64`)。マスクで隠した文字も拾うので、2 度押すと同じ所に
+  マスクが重なる (隠れている分には害は無い)。
+- IPC コマンド `ocr_image_boxes` は `build.rs` の `APP_COMMANDS` と `capabilities/default.json` に登録。
 
 ## 共有用の縮小 (src-tauri/src/share_image.rs + share_scale.rs)
 

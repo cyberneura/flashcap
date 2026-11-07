@@ -4,6 +4,11 @@ import Vision
 // stdin から base64 エンコードされた PNG データを読み取り、
 // Vision framework で OCR を実行して stdout にテキストを出力する。
 // --region x,y,w,h と --size imgW,imgH オプションで認識領域を指定可能。
+// --json を付けると、改行区切りの文字列の代わりに、認識した行ごとの
+// { "text": ..., "box": [x, y, w, h] } (画像ピクセル、左上原点) の配列を 1 行の JSON で出す
+// (CYBERNEURA-DEV-1210 の自動マスク用)。--json 無しの出力は従来のまま。
+// --json は --region と併用しない (領域付きの boundingBox は領域基準になるため、
+// Rust 側 (ocr.rs の ocr_image_boxes) は常に画像全体で呼ぶ)。
 
 func parseRegion(_ arg: String, imgWidth: Int, imgHeight: Int) -> CGRect? {
     let parts = arg.split(separator: ",").compactMap { Double($0) }
@@ -35,6 +40,7 @@ func parseRegion(_ arg: String, imgWidth: Int, imgHeight: Int) -> CGRect? {
 var regionArg: String? = nil
 var imgWidth: Int = 0
 var imgHeight: Int = 0
+var jsonOutput = false
 
 let args = CommandLine.arguments
 var i = 1
@@ -49,6 +55,9 @@ while i < args.count {
             imgHeight = sizeParts[1]
         }
         i += 2
+    } else if args[i] == "--json" {
+        jsonOutput = true
+        i += 1
     } else {
         i += 1
     }
@@ -96,6 +105,33 @@ do {
 }
 
 guard let observations = request.results else {
+    if jsonOutput { print("[]") }
+    exit(0)
+}
+
+if jsonOutput {
+    // Vision の boundingBox は左下原点の 0-1 正規化。画像ピクセルの左上原点に直す
+    let w = Double(cgImage.width)
+    let h = Double(cgImage.height)
+    var lines: [[String: Any]] = []
+    for observation in observations {
+        guard let candidate = observation.topCandidates(1).first else { continue }
+        let bb = observation.boundingBox
+        let x = bb.minX * w
+        let y = (1.0 - bb.maxY) * h
+        lines.append([
+            "text": candidate.string,
+            "box": [x, y, bb.width * w, bb.height * h],
+        ])
+    }
+    do {
+        let data = try JSONSerialization.data(withJSONObject: lines, options: [])
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    } catch {
+        fputs("Error: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     exit(0)
 }
 
