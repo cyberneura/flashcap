@@ -97,6 +97,8 @@ fails, install them with `xcode-select --install`.
 - Text tool (color, size, bold, italic, white stroke, drop shadow). Text can span multiple lines:
   Enter adds a line, ⌘+Enter (Ctrl+Enter on Windows) finishes. Double-click a text annotation to
   edit it again
+- Step tool: numbered markers (1, 2, 3…) placed with a click for step-by-step instructions
+  (color, size, white border, drop shadow). Deleting one renumbers the rest
 - Mask tool (mosaic, blur, fill) with resize/move handles
 - Crop tool (drag to select, Enter to apply, annotations move with the image)
 - OCR text recognition (macOS only: Vision Framework, Japanese/English)

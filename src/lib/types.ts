@@ -113,3 +113,27 @@ export interface VideoExportSettings {
  * 読むのは Rust (`src-tauri/src/auto_copy.rs`) で、値の綴りはそちらと揃えること
  */
 export type AutoCopyMode = "none" | "path" | "image";
+
+/**
+ * 番号付きステップ (カウンター) の注釈 (CYBERNEURA-DEV-1209)。クリックした位置に 1, 2, 3… の
+ * 丸いバッジを置く。座標は他の注釈と同じ画像の自然解像度ピクセルで、(x, y) はバッジの中心。
+ * `number` は配列の並び順から `renumber()` (src/lib/steps.ts) が振り直す
+ */
+export interface Step {
+  id: string;
+  x: number;
+  y: number;
+  number: number;
+  color: string;
+  /** バッジの直径 (px) */
+  size: number;
+  whiteStroke: boolean;
+  dropShadow: boolean;
+}
+
+export interface StepSettings {
+  color: string;
+  size: number;
+  whiteStroke: boolean;
+  dropShadow: boolean;
+}
