@@ -222,6 +222,26 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   から直接呼べるようにしてある。**実際に描かれた字面は測らない** — `getBBox()` は
   レンダリング後にしか答えず、マウスが動くたびに呼ぶとレイアウトの再計算が毎フレーム入る。
 
+## 共有用の縮小 (src-tauri/src/share_image.rs + share_scale.rs)
+
+Preferences の Save Location 節の「Share at 1x」(設定ファイルの `share_scale_down`、既定 OFF。
+CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧C の画像コピー / ツールバーのドラッグ
+(`+page.svelte` の `copyImage` / `handleDragFile` → `make_share_image`) と撮影後の自動コピーの image
+モード (`auto_copy.rs` の `decode_image`) — を、Retina (倍率 2 以上) のモニターで撮った論理サイズより
+大きい画像なら 1/2 に縮める。⌘S の書き戻しとサイドバーの画像は原寸のまま。
+
+- 判定と縮小は `share_scale.rs` (`should_scale_down` / `maybe_scale_down`、Tauri 非依存で単体テスト可)。
+  モニターはメインウインドウのあるモニター (無ければメインモニター) の論理サイズ = `size / scale_factor`。
+- **貼り付け / ファイルから開いた画像は縮めない** (撮影倍率が分からない)。フロントが
+  `applyScreenshotResult(result, source)` で `imageFromCapture` を持ち、`make_share_image` に `captured` で渡す。
+- **コピーは今の PNG (`bytes`) を `data_base64` で渡して縮め、ファイルは読み直さない** (undo の後は
+  `needsFileWrite` が false で書き戻しが飛ぶので、ファイルには古い注釈が残っている)。ドラッグは渡すのが
+  ファイルそのものなので `path` を読む。
+- 縮めた PNG は `$TMPDIR/flashcap/share/<元の名前>.png` (`create_private_dir`、symlink を辿らない書き込み) で、
+  起動時に `cleanup_share_dir` が消す。コピーには `ShareImage.data` (base64) を返し、フロントはファイルを
+  読み直さない。縮めない時は元のパスのまま (`data` は null)。失敗しても共有は原寸で続ける。
+- IPC コマンド `make_share_image` は `build.rs` の `APP_COMMANDS` と `capabilities/default.json` の両方に登録。
+
 ## ステップ注釈 (src/lib/StepOverlay.svelte + src/lib/steps.ts)
 
 番号付きステップ (カウンター) のバッジ (CYBERNEURA-DEV-1209)。ツールバーの矢印 / 図形とテキストの間の

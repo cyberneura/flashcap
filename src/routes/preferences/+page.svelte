@@ -25,6 +25,8 @@
   let timerDelay = $state(5);
   let excludeShadow = $state(true);
   let showInMenuBar = $state(false);
+  // 共有に回す画像 (コピー / ドラッグ / 自動コピー) だけ Retina の 2 倍を等倍に縮める (CYBERNEURA-DEV-1211)
+  let shareScaleDown = $state(false);
   let blurRadius = $state(5);
   let mosaicBlockSize = $state(7);
   let shellCommands = $state<ShellCommand[]>([]);
@@ -60,6 +62,7 @@
     if (typeof config.timer_delay === "number") timerDelay = config.timer_delay;
     if (typeof config.exclude_shadow === "boolean") excludeShadow = config.exclude_shadow;
     showInMenuBar = config.show_in_menu_bar === true;
+    shareScaleDown = config.share_scale_down === true;
     if (typeof config.blur_radius === "number") blurRadius = config.blur_radius;
     if (typeof config.mosaic_block_size === "number") mosaicBlockSize = config.mosaic_block_size;
     shellCommands = parseShellCommands(config[SHELL_COMMANDS_KEY]);
@@ -120,6 +123,12 @@
     if (!(await saveSetting("timer_delay", value))) return;
     // メニューバーのメニューの「with Timer (5s)」の秒数を追従させる
     await syncMenuBar();
+  }
+
+  async function onShareScaleDownChange(value: boolean) {
+    if (!loaded) return;
+    shareScaleDown = value;
+    if (!(await saveSetting("share_scale_down", value))) shareScaleDown = !value;
   }
 
   async function onShowInMenuBarChange(value: boolean) {
@@ -300,6 +309,22 @@
         </button>
       </div>
     {/if}
+
+    <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-[#2d2d2d] transition-colors">
+      <input
+        type="checkbox"
+        checked={shareScaleDown}
+        onchange={(e) => onShareScaleDownChange((e.target as HTMLInputElement).checked)}
+        class="accent-blue-600"
+      />
+      <div>
+        <div class="text-sm font-medium">Share at 1x</div>
+        <div class="text-xs text-gray-500 mt-0.5">
+          Downscale Retina (2x) captures when copying the image, dragging it to another app, or
+          auto-copying the image after a capture. Saved files keep the full size.
+        </div>
+      </div>
+    </label>
   </section>
 
   <section class="mt-8">

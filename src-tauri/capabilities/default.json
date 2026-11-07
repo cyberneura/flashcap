@@ -34,6 +34,7 @@
     "allow-export-video",
     "allow-check-ffmpeg-available",
     "allow-list-saved-images",
-    "allow-saved-image-thumbnail"
+    "allow-saved-image-thumbnail",
+    "allow-make-share-image"
   ]
 }

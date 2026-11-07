@@ -46,6 +46,7 @@ const APP_COMMANDS: &[&str] = &[
     "capture_region_finish",
     "list_saved_images",
     "saved_image_thumbnail",
+    "make_share_image",
 ];
 
 fn main() {

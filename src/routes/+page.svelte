@@ -91,11 +91,14 @@
     }
   }
 
+  // 共有用の縮小の設定キー (詳細は下の shareScaleDown)
+  const SHARE_SCALE_DOWN_KEY = "share_scale_down";
   // Preferences ウインドウが書くキー。変わったら読み直す
-  const PREFERENCE_KEYS = ["timer_delay", "blur_radius", "mosaic_block_size", AUTO_COPY_KEY, SHELL_COMMANDS_KEY];
+  const PREFERENCE_KEYS = ["timer_delay", "blur_radius", "mosaic_block_size", AUTO_COPY_KEY, SHELL_COMMANDS_KEY, SHARE_SCALE_DOWN_KEY];
 
   function applyPreferences(config: ConfigValues) {
     if (typeof config.timer_delay === "number") timerDelay = config.timer_delay;
+    shareScaleDown = config[SHARE_SCALE_DOWN_KEY] === true;
     if (typeof config.blur_radius === "number") maskSettings.blurRadius = config.blur_radius;
     if (typeof config.mosaic_block_size === "number") maskSettings.mosaicBlockSize = config.mosaic_block_size;
     autoCopyMode = parseAutoCopyMode(config[AUTO_COPY_KEY]);
@@ -175,6 +178,39 @@
     whiteStroke: true,
     dropShadow: true,
   });
+
+  // 共有に回す画像 (画像のコピー / ドラッグ) だけ Retina の 2 倍を等倍に縮める設定 (CYBERNEURA-DEV-1211)。
+  // 設定ファイルの `share_scale_down`。Preferences が書き、ここは読むだけ。
+  // 縮めるのは撮影で得た画像だけ (貼り付け / ファイルから開いた画像は撮影倍率が分からない)
+  let shareScaleDown = $state(false);
+  // 今の画像が撮影で得たものか (貼り付け / ファイル / サイドバーから開いたものなら false)
+  let imageFromCapture = $state(false);
+
+  interface ShareImage {
+    path: string;
+    // 縮めた時だけ入る base64 PNG (クリップボードへ入れる)。縮めなければ null
+    data: string | null;
+  }
+
+  // 共有用の画像を用意する。設定が OFF、撮影以外の画像、縮める条件を満たさない時は元のパスのまま。
+  // 失敗しても共有を止めない (原寸で渡す)。
+  // **対象は呼び出し側が始めた時点の画像** (path / captured を引数で固定する): await の間に撮影や
+  // 貼り付けで画像が差し替わっても、別の画像を縮めて渡さない。
+  // `bytes` (今まさに共有する PNG) を渡せばそれを縮め、無ければファイルを読む。コピーは bytes を渡す —
+  // undo の後 (注釈が無くなり書き戻しが飛ばされた時) にファイルを読み直すと古い注釈入りになる
+  async function prepareShareImage(path: string, captured: boolean, bytes?: Uint8Array): Promise<ShareImage | null> {
+    if (!shareScaleDown) return null;
+    try {
+      return await invoke<ShareImage>("make_share_image", {
+        path,
+        captured,
+        dataBase64: bytes ? uint8ToBase64(bytes) : null,
+      });
+    } catch (e) {
+      console.error("Failed to prepare the share image:", e);
+      return null;
+    }
+  }
 
   // Step (numbered counter) tool state (CYBERNEURA-DEV-1209)
   let stepToolActive = $state(false);
@@ -669,8 +705,9 @@
   }
 
   // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
-  function applyScreenshotResult(result: ScreenshotResult) {
+  function applyScreenshotResult(result: ScreenshotResult, source: "capture" | "paste" | "file") {
     imageGeneration++;
+    imageFromCapture = source === "capture";
     // 画像を表示する際は動画モードを解除する
     videoMode = false;
     videoUrl = null;
@@ -695,7 +732,7 @@
   async function loadImageFile(path: string) {
     try {
       const result = await invoke<ScreenshotResult>("load_image_file", { path });
-      applyScreenshotResult(result);
+      applyScreenshotResult(result, "file");
     } catch (e) {
       console.error("Failed to load image:", e);
     }
@@ -747,7 +784,7 @@
         height: size.height,
       });
 
-      applyScreenshotResult(result);
+      applyScreenshotResult(result, "paste");
     } catch (e) {
       console.error("Failed to paste image:", e);
     }
@@ -760,7 +797,7 @@
     try {
       await appWindow.hide();
       const result = await invoke<ScreenshotResult>(command);
-      applyScreenshotResult(result);
+      applyScreenshotResult(result, "capture");
     } catch (e) {
       const errorStr = String(e);
       if (!errorStr.includes("cancelled")) {
@@ -1282,13 +1319,24 @@
 
   async function copyImage() {
     if (!imageBase64) return;
+    // 始めた時点の画像を対象にする。描画・書き戻し・縮小を待つ間に撮影や貼り付けで画像が
+    // 差し替わったら、古い bytes と新しい filePath が混ざらないよう何も入れない
+    const generation = imageGeneration;
+    const path = filePath;
+    const captured = imageFromCapture;
 
     const bytes = hasAnnotations
       ? await renderComposite()
       : base64ToUint8(imageBase64);
+    if (imageGeneration !== generation) return;
 
     await saveCompositeToFile(bytes);
-    await writeImage(bytes);
+    if (imageGeneration !== generation) return;
+    // 設定が ON で Retina の 2 倍の撮影なら、クリップボードには等倍に縮めたものを入れる
+    // (ファイルは上で原寸を書いた)。縮める元は今の bytes で、ファイルは読み直さない
+    const share = path ? await prepareShareImage(path, captured, bytes) : null;
+    if (imageGeneration !== generation) return;
+    await writeImage(share?.data ? base64ToUint8(share.data) : bytes);
     copyImageSuccess = true;
     setTimeout(() => (copyImageSuccess = false), 3000);
   }
@@ -1568,8 +1616,17 @@
 
   async function handleDragFile() {
     if (filePath) {
+      // 始めた時点の画像を対象にする (copyImage と同じ理由)
+      const generation = imageGeneration;
+      const path = filePath;
+      const captured = imageFromCapture;
       await saveCompositeToFile();
-      startDrag({ item: [filePath], icon: filePath });
+      if (imageGeneration !== generation) return;
+      // 設定が ON で Retina の 2 倍の撮影なら、渡すファイルは縮めたコピー (保存ファイルは原寸のまま)
+      const share = await prepareShareImage(path, captured);
+      if (imageGeneration !== generation) return;
+      const dragPath = share?.path ?? path;
+      startDrag({ item: [dragPath], icon: dragPath });
     }
   }
 
@@ -1644,7 +1701,7 @@
       if (!(await writeBackBeforeSwitching())) return;
       if (imageGeneration !== generation) return;
     }
-    applyScreenshotResult(result);
+    applyScreenshotResult(result, "file");
     invoke("fit_window_to_image", { width: result.width, height: result.height }).catch((e) =>
       console.error("Failed to resize the window:", e)
     );
