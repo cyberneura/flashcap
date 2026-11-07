@@ -98,12 +98,16 @@
     dragOrigPos = null;
   }
 
-  // 自分の svg の外 (他のオーバーレイの注釈、画像の外) を押したら選択を外す。外さないと、
+  // 画像の上で自分の svg の外 (他のオーバーレイの注釈、空いた所) を押したら選択を外す。外さないと、
   // バッジを選んだ後に矢印を選んで Delete を押した時、両方の window keydown が走って
-  // (stopPropagation は同じ window の別のリスナーを止めない) バッジまで消える
+  // (stopPropagation は同じ window の別のリスナーを止めない) バッジまで消える。
+  // 画像の外 (ツールバーの設定・サイドバー) のクリックでは外さない — 設定を押した瞬間に選択が
+  // 消えると、選択中のバッジへ色や大きさを効かせられなくなる (updateActiveAttribute)
   function handleWindowMouseDown(e: MouseEvent) {
-    if (!selectedId) return;
-    if (svgEl && e.target instanceof Node && svgEl.contains(e.target)) return;
+    if (!selectedId || !svgEl || !(e.target instanceof Node)) return;
+    if (svgEl.contains(e.target)) return;
+    const imageArea = svgEl.parentElement;
+    if (imageArea && !imageArea.contains(e.target)) return;
     selectedId = null;
   }
 
