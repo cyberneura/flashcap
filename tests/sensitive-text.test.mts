@@ -27,6 +27,9 @@ check("emails", () => {
   assert.equal(classifySensitive("@handle on the site"), null);
   assert.equal(classifySensitive("a@b"), null);
   assert.equal(classifySensitive("(mail: alice@example.com)"), "email");
+  // recipient lists without spaces
+  assert.equal(classifySensitive("alice@example.com,bob@example.com"), "email");
+  assert.equal(classifySensitive("To: alice@example.com;bob@example.com"), "email");
   assert.equal(classifySensitive("a@@b.com"), null);
 });
 

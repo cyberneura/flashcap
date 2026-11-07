@@ -54,7 +54,8 @@ export function luhnValid(digits: string): boolean {
 }
 
 function hasEmail(text: string): boolean {
-  for (const token of text.split(/\s+/)) {
+  // 空白のほか、宛先一覧の区切り (`,` `;`) でも切る (`a@x.com,b@y.com` を 1 トークンにしない)
+  for (const token of text.split(/[\s,;]+/)) {
     if (!token.includes("@")) continue;
     // 末尾の句読点・括弧は外して判定する ("mail: a@b.com)" のような行)
     const bare = token.replace(/^[(<["']+|[)>\]"',.;:]+$/g, "");
