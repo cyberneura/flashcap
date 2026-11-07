@@ -1862,6 +1862,13 @@
           scale={displayScale}
           onBeforeMutate={pushUndo}
           onStepsChange={(newSteps) => (steps = newSteps)}
+          onSelect={() => {
+            // バッジを選んだら他のオーバーレイの選択を外す (Delete が両方に効かないように)
+            arrowOverlayRef?.deselect();
+            maskOverlayRef?.deselect();
+            shapeOverlayRef?.deselect();
+            textOverlayRef?.deselect();
+          }}
         />
         <OcrSelectionOverlay
           active={ocrSelectionActive}

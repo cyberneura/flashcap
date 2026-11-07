@@ -239,7 +239,8 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   あるので、svg 全体で受けると no-tool 時の矢印の選択を奪ってしまう。ドラッグ中の mousemove / mouseup は
   window で受ける (バッジから指が外れても続ける)。**画像の上で svg の外を押したら選択を外す** (window の mousedown。ツールバーやサイドバーのクリックでは外さない — 選択中のバッジへ設定を効かせるため): 残すと
   矢印を選んで Delete を押した時に、両方のオーバーレイの window keydown が走ってバッジまで消える
-  (`stopPropagation` は同じ window の別のリスナーを止めない)。
+  (`stopPropagation` は同じ window の別のリスナーを止めない)。逆向き (矢印を選んでからバッジを選ぶ) は
+  `onSelect` で親 (`+page.svelte`) が他のオーバーレイの `deselect()` を呼ぶ。
 - 書き出し (`renderComposite`) は円 (白縁は半径 +2 の白い円を下に敷く。影は白縁があればそちらに、無ければ本体に、
   共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
   と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを

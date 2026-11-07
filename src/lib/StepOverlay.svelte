@@ -17,9 +17,11 @@
     scale: number;
     onStepsChange: (steps: Step[]) => void;
     onBeforeMutate?: () => void;
+    /** バッジを選んだ時 (親が他のオーバーレイの選択を外す。Delete が両方に効かないように) */
+    onSelect?: () => void;
   }
 
-  let { steps, settings, toolActive, interactive, scale, onStepsChange, onBeforeMutate }: Props = $props();
+  let { steps, settings, toolActive, interactive, scale, onStepsChange, onBeforeMutate, onSelect }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state(false);
@@ -49,6 +51,7 @@
     if (hit) {
       // 選ぶと同時に移動を始められる (undo は動いた時に積む)
       selectedId = hit.id;
+      onSelect?.();
       dragging = true;
       dragMutated = false;
       dragStart = pt;
@@ -65,6 +68,7 @@
     const step = nextStep(steps, pt.x, pt.y, settings);
     onStepsChange([...steps, step]);
     selectedId = step.id;
+    onSelect?.();
   }
 
   // ドラッグ中の mousemove は window で受ける。ツールが無効の間は svg がポインタを受けないので、
