@@ -195,11 +195,17 @@
   // 共有用の画像を用意する。設定が OFF、撮影以外の画像、縮める条件を満たさない時は元のパスのまま。
   // 失敗しても共有を止めない (原寸で渡す)。
   // **対象は呼び出し側が始めた時点の画像** (path / captured を引数で固定する): await の間に撮影や
-  // 貼り付けで画像が差し替わっても、別の画像を縮めて渡さない
-  async function prepareShareImage(path: string, captured: boolean): Promise<ShareImage | null> {
+  // 貼り付けで画像が差し替わっても、別の画像を縮めて渡さない。
+  // `bytes` (今まさに共有する PNG) を渡せばそれを縮め、無ければファイルを読む。コピーは bytes を渡す —
+  // undo の後 (注釈が無くなり書き戻しが飛ばされた時) にファイルを読み直すと古い注釈入りになる
+  async function prepareShareImage(path: string, captured: boolean, bytes?: Uint8Array): Promise<ShareImage | null> {
     if (!shareScaleDown) return null;
     try {
-      return await invoke<ShareImage>("make_share_image", { path, captured });
+      return await invoke<ShareImage>("make_share_image", {
+        path,
+        captured,
+        dataBase64: bytes ? uint8ToBase64(bytes) : null,
+      });
     } catch (e) {
       console.error("Failed to prepare the share image:", e);
       return null;
@@ -1327,8 +1333,8 @@
     await saveCompositeToFile(bytes);
     if (imageGeneration !== generation) return;
     // 設定が ON で Retina の 2 倍の撮影なら、クリップボードには等倍に縮めたものを入れる
-    // (ファイルは上で原寸を書いた)
-    const share = path ? await prepareShareImage(path, captured) : null;
+    // (ファイルは上で原寸を書いた)。縮める元は今の bytes で、ファイルは読み直さない
+    const share = path ? await prepareShareImage(path, captured, bytes) : null;
     if (imageGeneration !== generation) return;
     await writeImage(share?.data ? base64ToUint8(share.data) : bytes);
     copyImageSuccess = true;

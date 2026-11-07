@@ -92,6 +92,10 @@ pub struct ShareImage {
 /// 共有に回す画像を用意する。設定が ON、撮影で得た画像 (`captured`)、かつ Retina のモニターで
 /// 論理サイズより大きい時だけ 1/2 に縮めた PNG を share ディレクトリに書いてそのパスを返す。
 /// それ以外は元のパスをそのまま返す。元のファイルには触らない。
+/// 縮める元は `data_base64` (今まさに共有する PNG。画像のコピーが渡す) があればそれで、無ければ
+/// `path` のファイル (ドラッグ。渡すのはファイルそのものなので中身は書き戻し済み)。コピーで
+/// ファイルを読み直すと、undo の後 (注釈が無くなり書き戻しが飛ばされた時) に古い注釈入りの
+/// ファイルを縮めてしまう。
 /// 画像の読み込み・縮小・エンコード・書き込みは `spawn_blocking` に逃がす (Retina の全画面は
 /// 数十 MB になり、メインスレッドで行うとコピー / ドラッグのたびに UI が固まる)
 #[tauri::command]
@@ -99,6 +103,7 @@ pub async fn make_share_image(
     app: tauri::AppHandle,
     path: String,
     captured: bool,
+    data_base64: Option<String>,
 ) -> Result<ShareImage, String> {
     let original = ShareImage {
         path: path.clone(),
@@ -111,19 +116,33 @@ pub async fn make_share_image(
     let Some(screen) = screen_info(&app) else {
         return Ok(original);
     };
-    tauri::async_runtime::spawn_blocking(move || build_share_image(&path, screen))
-        .await
-        .map_err(|e| format!("Failed to prepare the share image: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || {
+        build_share_image(&path, data_base64.as_deref(), screen)
+    })
+    .await
+    .map_err(|e| format!("Failed to prepare the share image: {}", e))?
 }
 
 /// `make_share_image` の重い部分 (ブロッキングスレッドで走る)
-fn build_share_image(path: &str, screen: ScreenInfo) -> Result<ShareImage, String> {
+fn build_share_image(
+    path: &str,
+    data_base64: Option<&str>,
+    screen: ScreenInfo,
+) -> Result<ShareImage, String> {
     let original = ShareImage {
         path: path.to_string(),
         data: None,
     };
     let source = Path::new(path);
-    let img = image::open(source).map_err(|e| format!("Failed to read the image: {}", e))?;
+    let img = match data_base64 {
+        Some(data) => {
+            let bytes = STANDARD
+                .decode(data)
+                .map_err(|e| format!("Failed to decode the image: {}", e))?;
+            image::load_from_memory(&bytes).map_err(|e| format!("Failed to read the image: {}", e))?
+        }
+        None => image::open(source).map_err(|e| format!("Failed to read the image: {}", e))?,
+    };
     if !should_scale_down(
         img.width(),
         img.height(),

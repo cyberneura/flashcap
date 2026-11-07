@@ -234,6 +234,9 @@ CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧
   モニターはメインウインドウのあるモニター (無ければメインモニター) の論理サイズ = `size / scale_factor`。
 - **貼り付け / ファイルから開いた画像は縮めない** (撮影倍率が分からない)。フロントが
   `applyScreenshotResult(result, source)` で `imageFromCapture` を持ち、`make_share_image` に `captured` で渡す。
+- **コピーは今の PNG (`bytes`) を `data_base64` で渡して縮め、ファイルは読み直さない** (undo の後は
+  `needsFileWrite` が false で書き戻しが飛ぶので、ファイルには古い注釈が残っている)。ドラッグは渡すのが
+  ファイルそのものなので `path` を読む。
 - 縮めた PNG は `$TMPDIR/flashcap/share/<元の名前>.png` (`create_private_dir`、symlink を辿らない書き込み) で、
   起動時に `cleanup_share_dir` が消す。コピーには `ShareImage.data` (base64) を返し、フロントはファイルを
   読み直さない。縮めない時は元のパスのまま (`data` は null)。失敗しても共有は原寸で続ける。
