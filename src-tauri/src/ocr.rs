@@ -164,6 +164,85 @@ async fn recognize_text(
     Err(OCR_UNSUPPORTED.to_string())
 }
 
+/// OCR を実行して認識した行と箱を返す (`ocr.swift --json`)。常に画像全体
+#[cfg(target_os = "macos")]
+async fn recognize_boxes(
+    app: &tauri::AppHandle,
+    png_data: &[u8],
+    img_width: u32,
+    img_height: u32,
+) -> Result<Vec<crate::ocr_lines::OcrLine>, String> {
+    let script_path = get_ocr_script_path(app)?;
+    let base64_input = STANDARD.encode(png_data);
+    let args = vec![
+        script_path.to_string_lossy().to_string(),
+        "--size".to_string(),
+        format!("{},{}", img_width, img_height),
+        "--json".to_string(),
+    ];
+
+    let mut child = tokio::process::Command::new("/usr/bin/swift")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn swift: {}", e))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin
+            .write_all(base64_input.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+        stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| format!("Failed to write newline: {}", e))?;
+        drop(stdin);
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("Failed to wait for swift process: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("OCR failed: {}", stderr));
+    }
+
+    crate::ocr_lines::parse_ocr_lines(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn recognize_boxes(
+    _app: &tauri::AppHandle,
+    _png_data: &[u8],
+    _img_width: u32,
+    _img_height: u32,
+) -> Result<Vec<crate::ocr_lines::OcrLine>, String> {
+    Err(OCR_UNSUPPORTED.to_string())
+}
+
+/// 表示中の画像から、認識した行ごとのテキストと箱 (画像ピクセル、左上原点) を返す。
+/// 「Redact sensitive text」(フロントの `sensitiveText.ts` でメール / IP / トークン等を検出して
+/// マスクを置く) 用。認識は常に画像全体 (CYBERNEURA-DEV-1210)
+#[tauri::command]
+pub async fn ocr_image_boxes(
+    app: tauri::AppHandle,
+    data_base64: String,
+) -> Result<Vec<crate::ocr_lines::OcrLine>, String> {
+    let png_data = STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+
+    let img =
+        image::load_from_memory(&png_data).map_err(|e| format!("Failed to decode image: {}", e))?;
+
+    recognize_boxes(&app, &png_data, img.width(), img.height()).await
+}
+
 /// 表示中の画像から OCR でテキスト抽出
 #[tauri::command]
 pub async fn ocr_image(

@@ -15,6 +15,7 @@
   import TextOverlay from "$lib/TextOverlay.svelte";
   import StepOverlay from "$lib/StepOverlay.svelte";
   import { stepFontSize, stepLabelBaseline } from "$lib/steps";
+  import { findSensitive, maskRectFor, type OcrLine } from "$lib/sensitiveText";
   import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
   import CropOverlay from "$lib/CropOverlay.svelte";
   import { detectEdgeSnapLines, type EdgeSnapLines } from "$lib/edgeSnap";
@@ -1570,6 +1571,52 @@
     }).catch(() => {});
   }
 
+  // 「Redact sensitive text」(CYBERNEURA-DEV-1210、macOS のみ): 画像全体を OCR し、メール / IP /
+  // トークン / JWT / 長い英数字の秘密 / カード番号らしい行 (`sensitiveText.ts`) の箱にマスクを置く。
+  // 置くのは普通のマスク注釈なので、誤検出は Delete で外せ、検出漏れは手で足せる。
+  // OCR は注釈の無い土台画像 (imageBase64) に対して行う (既にマスクで隠した文字も拾って
+  // マスクが重なりうるが、隠れている分には害は無い)
+  let redactBusy = $state(false);
+  // マスクは OCR の箱より上下左右に 2px 広げる (字面の縁が覗かないように)
+  const REDACT_PAD = 2;
+
+  async function redactSensitiveText() {
+    if (!imageBase64 || redactBusy) return;
+    redactBusy = true;
+    // OCR を待つ間に撮影・貼り付けで画像が差し替わったら、古い画像の箱を新しい画像に置かない
+    const generation = imageGeneration;
+    try {
+      const lines = await invoke<OcrLine[]>("ocr_image_boxes", { dataBase64: imageBase64 });
+      if (imageGeneration !== generation) return;
+      const hits = findSensitive(lines);
+      if (hits.length === 0) {
+        toast.info("No sensitive text found");
+        return;
+      }
+      const added: MaskRect[] = hits
+        .map((line) => maskRectFor(line, REDACT_PAD, naturalWidth, naturalHeight))
+        .filter((r) => r.width > 0 && r.height > 0)
+        .map((r) => ({
+          id: crypto.randomUUID(),
+          ...r,
+          mode: maskSettings.mode,
+          color: maskSettings.color,
+        }));
+      if (added.length === 0) {
+        toast.info("No sensitive text found");
+        return;
+      }
+      pushUndo();
+      masks = [...masks, ...added];
+      toast.success(`Masked ${added.length} line${added.length === 1 ? "" : "s"} of sensitive text`);
+    } catch (e) {
+      console.error("Redact failed:", e);
+      toast.error("Could not detect sensitive text", { description: String(e) });
+    } finally {
+      redactBusy = false;
+    }
+  }
+
   async function ocrFullImage() {
     if (!imageBase64) return;
     try {
@@ -1787,6 +1834,8 @@
     {timerDelay}
     onToggleArrowTool={toggleArrowTool}
     onToggleMaskTool={toggleMaskTool}
+    onRedactSensitiveText={redactSensitiveText}
+    {redactBusy}
     onToggleShapeTool={toggleShapeTool}
     onToggleTextTool={toggleTextTool}
     onToggleStepTool={toggleStepTool}

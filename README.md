@@ -100,6 +100,10 @@ fails, install them with `xcode-select --install`.
 - Step tool: numbered markers (1, 2, 3…) placed with a click for step-by-step instructions
   (color, size, white border, drop shadow). Deleting one renumbers the rest
 - Mask tool (mosaic, blur, fill) with resize/move handles
+- Redact sensitive text (macOS only): one click runs OCR and places masks over lines that
+  contain an email address, an IPv4 address, an API key / token (`sk-`, `ghp_`, `xoxb-`,
+  `AKIA`…, JWT-like, long alphanumeric secrets) or a card number that passes the Luhn check.
+  The masks are ordinary mask annotations: delete a false positive, add what was missed
 - "Share at 1x" (Preferences): downscale Retina (2x) captures to 1x only for the copies that
   leave the app (image copy, drag to another app, auto-copy after capture). Saved files keep
   the full size

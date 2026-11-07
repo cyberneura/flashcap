@@ -27,6 +27,7 @@
     "allow-open-save-directory",
     "allow-save-pasted-image",
     "allow-ocr-image",
+    "allow-ocr-image-boxes",
     "allow-ocr-capture-region",
     "allow-show-notification",
     "allow-open-region-selector",

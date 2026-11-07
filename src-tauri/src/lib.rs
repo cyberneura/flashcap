@@ -6,6 +6,7 @@ mod config;
 mod licenses;
 mod menu_bar;
 mod ocr;
+mod ocr_lines;
 mod region_capture;
 mod share_image;
 mod share_scale;
@@ -1737,7 +1738,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, update_check::check_for_updates, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, fit_window_to_image, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail, share_image::make_share_image])
+        .invoke_handler(tauri::generate_handler![config::config_get_all, config::config_set, shell_command::run_shell_command, shell_command::open_shell_log, shell_command::open_shell_log_dir, menu_bar::sync_menu_bar, open_preferences, licenses::third_party_notices, licenses::open_third_party_licenses, update_check::check_for_updates, take_screenshot_interactive, take_screenshot_timer, write_image_to_file, load_image_file, fit_window_to_image, open_save_directory, get_default_save_directory, save_pasted_image, ocr::ocr_image, ocr::ocr_image_boxes, ocr::ocr_capture_region, ocr::show_notification, video::open_region_selector, video::cancel_region_selection, video::release_region_selector_for_countdown, video::broadcast_region_selecting, video::list_capture_windows, video::start_video_recording, video::stop_video_recording, video::export_video, video::check_ffmpeg_available, region_capture::capture_region_preview, region_capture::capture_region_ready, region_capture::capture_region_finish, thumbnails::list_saved_images, thumbnails::saved_image_thumbnail, share_image::make_share_image])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
