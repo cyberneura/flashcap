@@ -139,7 +139,8 @@ fn build_share_image(
             let bytes = STANDARD
                 .decode(data)
                 .map_err(|e| format!("Failed to decode the image: {}", e))?;
-            image::load_from_memory(&bytes).map_err(|e| format!("Failed to read the image: {}", e))?
+            image::load_from_memory(&bytes)
+                .map_err(|e| format!("Failed to read the image: {}", e))?
         }
         None => image::open(source).map_err(|e| format!("Failed to read the image: {}", e))?,
     };
