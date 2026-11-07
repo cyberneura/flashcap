@@ -237,7 +237,9 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 - **svg 全体がポインタを受けるのはツールが有効な間だけ** (空いた所へのクリック = 追加)。それ以外の間は
   svg は `pointer-events: none` でバッジの `<g>` だけが受ける。`StepOverlay` は `ArrowOverlay` の上に
   あるので、svg 全体で受けると no-tool 時の矢印の選択を奪ってしまう。ドラッグ中の mousemove / mouseup は
-  window で受ける (バッジから指が外れても続ける)。
+  window で受ける (バッジから指が外れても続ける)。**svg の外を押したら選択を外す** (window の mousedown): 残すと
+  矢印を選んで Delete を押した時に、両方のオーバーレイの window keydown が走ってバッジまで消える
+  (`stopPropagation` は同じ window の別のリスナーを止めない)。
 - 書き出し (`renderComposite`) は円 (白縁は半径 +2 の白い円を下に敷く。影は白縁があればそちらに、無ければ本体に、
   共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
   と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを

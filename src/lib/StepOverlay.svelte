@@ -98,6 +98,15 @@
     dragOrigPos = null;
   }
 
+  // 自分の svg の外 (他のオーバーレイの注釈、画像の外) を押したら選択を外す。外さないと、
+  // バッジを選んだ後に矢印を選んで Delete を押した時、両方の window keydown が走って
+  // (stopPropagation は同じ window の別のリスナーを止めない) バッジまで消える
+  function handleWindowMouseDown(e: MouseEvent) {
+    if (!selectedId) return;
+    if (svgEl && e.target instanceof Node && svgEl.contains(e.target)) return;
+    selectedId = null;
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -123,7 +132,12 @@
 
 <!-- mousemove / mouseup は window で受ける: 画像の外でボタンを離しても移動を終え (戻ってきた時に
      動かさない)、ツールが無効で svg がポインタを受けない間もドラッグが続く -->
-<svelte:window onkeydown={handleKeyDown} onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
+<svelte:window
+  onkeydown={handleKeyDown}
+  onmousedown={handleWindowMouseDown}
+  onmousemove={handleMouseMove}
+  onmouseup={handleMouseUp}
+/>
 
 <!-- ツールが有効な間だけ svg 全体でクリックを受ける (空いた所へのクリック = 追加)。それ以外の間は
      svg はポインタを通し (下の ArrowOverlay が矢印の選択を受け取れる)、バッジだけがポインタを受ける -->
