@@ -234,6 +234,10 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   TextOverlay と同じく DOM もマウスも要らない形にしてある。
 - undo は TextOverlay と同じく、押した時ではなく**動いた最初の 1 回**で積む (`exceedsDragSlop`)。
   追加と削除はその場で積む。
+- **svg 全体がポインタを受けるのはツールが有効な間だけ** (空いた所へのクリック = 追加)。それ以外の間は
+  svg は `pointer-events: none` でバッジの `<g>` だけが受ける。`StepOverlay` は `ArrowOverlay` の上に
+  あるので、svg 全体で受けると no-tool 時の矢印の選択を奪ってしまう。ドラッグ中の mousemove / mouseup は
+  window で受ける (バッジから指が外れても続ける)。
 - 書き出し (`renderComposite`) は円 (白縁は半径 +2 の白い円を下に敷く。影は白縁があればそちらに、無ければ本体に、
   共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
   と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを

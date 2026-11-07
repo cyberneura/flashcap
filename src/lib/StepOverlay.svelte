@@ -27,10 +27,12 @@
   let dragMutated = $state(false);
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragOrigPos = $state<{ x: number; y: number } | null>(null);
-  let hoverCursor = $state<string>("default");
+  let svgEl = $state<SVGSVGElement | null>(null);
 
+  // 座標は svg 要素の矩形から取る。ツールが無効の間は svg 自体がポインタを受けず (下の
+  // ArrowOverlay に通すため)、バッジだけが受けるので、currentTarget に頼らない
   function getSvgCoords(e: MouseEvent): { x: number; y: number } | null {
-    const svg = (e.currentTarget as SVGSVGElement) ?? (e.target as Element).closest("svg");
+    const svg = svgEl ?? (e.target as Element).closest("svg");
     if (!svg) return null;
     const rect = svg.getBoundingClientRect();
     return { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
@@ -65,7 +67,10 @@
     selectedId = step.id;
   }
 
+  // ドラッグ中の mousemove は window で受ける。ツールが無効の間は svg がポインタを受けないので、
+  // バッジから指が外れた瞬間に移動が止まってしまう
   function handleMouseMove(e: MouseEvent) {
+    if (!dragging) return;
     const pt = getSvgCoords(e);
     if (!pt) return;
 
@@ -83,11 +88,6 @@
         )
       );
       return;
-    }
-
-    if (!dragging) {
-      const hit = topmostStepAt(steps, pt.x, pt.y, hitSlack());
-      hoverCursor = hit ? (hit.id === selectedId ? "move" : "pointer") : toolActive ? "crosshair" : "default";
     }
   }
 
@@ -121,17 +121,19 @@
   }
 </script>
 
-<!-- mouseup は window でも受ける: 画像の外でボタンを離しても移動を終える (戻ってきた時に動かさない) -->
-<svelte:window onkeydown={handleKeyDown} onmouseup={handleMouseUp} />
+<!-- mousemove / mouseup は window で受ける: 画像の外でボタンを離しても移動を終え (戻ってきた時に
+     動かさない)、ツールが無効で svg がポインタを受けない間もドラッグが続く -->
+<svelte:window onkeydown={handleKeyDown} onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
 
+<!-- ツールが有効な間だけ svg 全体でクリックを受ける (空いた所へのクリック = 追加)。それ以外の間は
+     svg はポインタを通し (下の ArrowOverlay が矢印の選択を受け取れる)、バッジだけがポインタを受ける -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svg
+  bind:this={svgEl}
   class="step-overlay"
   onmousedown={handleMouseDown}
-  onmousemove={handleMouseMove}
-  onmouseup={handleMouseUp}
-  style:cursor={dragging ? "move" : hoverCursor}
-  style:pointer-events={interactive ? "auto" : "none"}
+  style:cursor={dragging ? "move" : toolActive ? "crosshair" : "default"}
+  style:pointer-events={interactive && toolActive ? "auto" : "none"}
 >
   <defs>
     <filter id="step-shadow" x="-30%" y="-30%" width="160%" height="160%">
@@ -143,7 +145,14 @@
     {@const isSelected = s.id === selectedId}
     {@const r = s.size / 2}
     {@const fontSize = stepFontSize(s.size, s.number)}
-    <!-- 白縁は円の外側に 2px (太さ 4 の線の外半分)。影は白縁があればそちらに、無ければ本体に付ける -->
+    <!-- 白縁は円の外側に 2px (太さ 4 の線の外半分)。影は白縁があればそちらに、無ければ本体に付ける。
+         バッジの群だけがポインタを受ける (interactive の間)。当たり判定の円は hitSlack ぶん広い -->
+    <g
+      class="step-badge"
+      style:pointer-events={interactive ? "auto" : "none"}
+      style:cursor={dragging ? "move" : isSelected ? "move" : "pointer"}
+    >
+    <circle cx={s.x} cy={s.y} r={r + 2 + hitSlack()} fill="transparent" />
     {#if s.whiteStroke}
       <circle
         cx={s.x} cy={s.y} r={r + 2}
@@ -172,6 +181,7 @@
         fill="none" stroke="#0066cc" stroke-width={2 / scale} stroke-dasharray="{4 / scale} {2 / scale}"
       />
     {/if}
+    </g>
   {/each}
 </svg>
 
