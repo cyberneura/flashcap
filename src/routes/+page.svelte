@@ -1583,11 +1583,15 @@
   async function redactSensitiveText() {
     if (!imageBase64 || redactBusy) return;
     redactBusy = true;
-    // OCR を待つ間に撮影・貼り付けで画像が差し替わったら、古い画像の箱を新しい画像に置かない
+    // OCR を待つ間に土台画像が変わったら、古い画像の座標の箱を新しい画像に置かない。
+    // 撮影・貼り付け (imageGeneration が進む) だけでなく、トリミングとその undo は
+    // imageBase64 を差し替えても imageGeneration を進めないので、OCR に渡した base64 そのものと
+    // 突き合わせる
     const generation = imageGeneration;
+    const source = imageBase64;
     try {
-      const lines = await invoke<OcrLine[]>("ocr_image_boxes", { dataBase64: imageBase64 });
-      if (imageGeneration !== generation) return;
+      const lines = await invoke<OcrLine[]>("ocr_image_boxes", { dataBase64: source });
+      if (imageGeneration !== generation || imageBase64 !== source) return;
       const hits = findSensitive(lines);
       if (hits.length === 0) {
         toast.info("No sensitive text found");
