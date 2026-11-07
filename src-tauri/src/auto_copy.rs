@@ -93,9 +93,14 @@ pub(crate) fn copy_after_capture(app: &tauri::AppHandle, result: &ScreenshotResu
     let file_path = result.file_path.clone();
     // 画像をコピーしない時まで数 MB の base64 を複製しない
     let data = (mode == AutoCopyMode::Image).then(|| result.data.clone());
+    // 共有用の縮小 (share_scale_down) が ON ならモニター情報を控える (スレッドの外で取る)。
+    // コピー / ドラッグと同じ判定で、Retina の 2 倍の撮影だけ等倍に縮めてから入れる
+    let screen = (mode == AutoCopyMode::Image)
+        .then(|| crate::share_image::screen_info_if_enabled(&app))
+        .flatten();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let image = match data.as_deref().map(decode_image).transpose() {
+        let image = match data.as_deref().map(|d| decode_image(d, screen)).transpose() {
             Ok(image) => image,
             Err(e) => {
                 crate::ocr::notify("Flashcap", &e);
@@ -139,11 +144,23 @@ fn is_latest_capture(generation: u64) -> bool {
     LATEST_CAPTURE.load(Ordering::SeqCst) == generation
 }
 
-fn decode_image(data_base64: &str) -> Result<Image<'static>, String> {
+/// base64 の PNG をクリップボード用の画像にする。`screen` があれば (縮小が有効なら) 判定して
+/// 1/2 に縮める。無ければ従来どおり PNG をそのまま渡す
+fn decode_image(
+    data_base64: &str,
+    screen: Option<crate::share_scale::ScreenInfo>,
+) -> Result<Image<'static>, String> {
     let png = STANDARD
         .decode(data_base64)
         .map_err(|e| format!("Failed to copy the image: {}", e))?;
-    Image::from_bytes(&png).map_err(|e| format!("Failed to copy the image: {}", e))
+    let Some(screen) = screen else {
+        return Image::from_bytes(&png).map_err(|e| format!("Failed to copy the image: {}", e));
+    };
+    let decoded =
+        image::load_from_memory(&png).map_err(|e| format!("Failed to copy the image: {}", e))?;
+    let rgba = crate::share_scale::maybe_scale_down(decoded, Some(screen)).into_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok(Image::new_owned(rgba.into_raw(), width, height))
 }
 
 #[cfg(test)]

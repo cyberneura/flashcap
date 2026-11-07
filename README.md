@@ -100,6 +100,9 @@ fails, install them with `xcode-select --install`.
 - Step tool: numbered markers (1, 2, 3…) placed with a click for step-by-step instructions
   (color, size, white border, drop shadow). Deleting one renumbers the rest
 - Mask tool (mosaic, blur, fill) with resize/move handles
+- "Share at 1x" (Preferences): downscale Retina (2x) captures to 1x only for the copies that
+  leave the app (image copy, drag to another app, auto-copy after capture). Saved files keep
+  the full size
 - Crop tool (drag to select, Enter to apply, annotations move with the image)
 - OCR text recognition (macOS only: Vision Framework, Japanese/English)
 - Clipboard integration (copy path or image)
@@ -123,6 +126,12 @@ fails, install them with `xcode-select --install`.
 All settings live in `~/.config/flashcap/config.json` (macOS and Windows). Paths under your
 home folder are stored as `~/...`, so the file can be shared between machines (a symlink into
 a dotfiles repository works).
+
+`share_scale_down` (default `false`): when true, a capture taken on a 2x (Retina) display that
+is larger than the display's logical size is halved before it is copied as an image, dragged
+to another app, or auto-copied after a capture. The file on disk is never changed; the
+downscaled copy lives in `$TMPDIR/flashcap/share/` and is cleaned up on the next launch.
+Pasted images and files opened from disk are never downscaled (their capture scale is unknown).
 
 ## CLI Options
 
