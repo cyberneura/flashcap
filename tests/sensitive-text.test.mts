@@ -45,6 +45,9 @@ check("IPv4 addresses", () => {
   assert.equal(classifySensitive("server 192.168.0.12 is down"), "ip");
   assert.equal(classifySensitive("10.0.0.1:8080"), "ip");
   assert.equal(classifySensitive("version 1.2.3.4.5"), null);
+  // sentence-ending period after the address
+  assert.equal(classifySensitive("Connect to 192.168.0.12."), "ip");
+  assert.equal(classifySensitive("hosts: 10.0.0.1, 10.0.0.2."), "ip");
   assert.equal(classifySensitive("999.1.1.1"), null);
   assert.equal(classifySensitive("3.14"), null);
 });
