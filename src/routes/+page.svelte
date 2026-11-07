@@ -1841,16 +1841,6 @@
           onBeforeMutate={pushUndo}
           onTextsChange={(newTexts) => (textAnnotations = newTexts)}
         />
-        <StepOverlay
-          bind:this={stepOverlayRef}
-          {steps}
-          settings={stepSettings}
-          toolActive={stepToolActive}
-          interactive={stepToolActive || (noToolActive && steps.length > 0)}
-          scale={displayScale}
-          onBeforeMutate={pushUndo}
-          onStepsChange={(newSteps) => (steps = newSteps)}
-        />
         <ArrowOverlay
           bind:this={arrowOverlayRef}
           {arrows}
@@ -1860,6 +1850,18 @@
           scale={displayScale}
           onBeforeMutate={pushUndo}
           onArrowsChange={(newArrows) => (arrows = newArrows)}
+        />
+        <!-- Steps sit above the arrows in the preview, the same order renderComposite draws them
+             (arrows first, step badges last), so the export matches what was composed -->
+        <StepOverlay
+          bind:this={stepOverlayRef}
+          {steps}
+          settings={stepSettings}
+          toolActive={stepToolActive}
+          interactive={stepToolActive || (noToolActive && steps.length > 0)}
+          scale={displayScale}
+          onBeforeMutate={pushUndo}
+          onStepsChange={(newSteps) => (steps = newSteps)}
         />
         <OcrSelectionOverlay
           active={ocrSelectionActive}

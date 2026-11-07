@@ -236,7 +236,8 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   追加と削除はその場で積む。
 - 書き出し (`renderComposite`) は円 (白縁は半径 +2 の白い円を下に敷く。影は白縁があればそちらに、無ければ本体に、
   共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
-  と同じ幾何なので、見た目と書き出しがずれない。
+  と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを
+  最後 (矢印の上) に描くので、テンプレートでも `StepOverlay` を `ArrowOverlay` の後ろに置く。
 - 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は選択中のバッジにも効く
   (`updateStepSetting` → `updateActiveAttribute`、テキストと同じ)。
 - IPC コマンドは増やしていないので `build.rs` の `APP_COMMANDS` と capability は触っていない。
