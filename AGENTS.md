@@ -222,9 +222,33 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   から直接呼べるようにしてある。**実際に描かれた字面は測らない** — `getBBox()` は
   レンダリング後にしか答えず、マウスが動くたびに呼ぶとレイアウトの再計算が毎フレーム入る。
 
+## ツールバーのアイコン (src/lib/Toolbar.svelte)
+
+アイコンは Bootstrap Icons (`bootstrap-icons` パッケージ、`app.css` で CSS フォントを import) で統一する
+(CYBERNEURA-DEV-1215 で「直感的でない」ものを差し替えた。自作せず既存ライブラリを使う方針)。
+対応は次のとおりで、**似た図柄を別の意味に使い回さない** (eye-slash = 隠す、incognito = 秘密を自動で隠す、
+images = 保存した画像、image = この画像)。
+
+| ボタン | アイコン | 意味 |
+|---|---|---|
+| サムネイルブラウザ | `bi-images` | 保存した画像の一覧 |
+| 矢印 / 矩形 / 楕円 / ステップ / テキスト | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | 描くものの形そのもの |
+| 白縁 / 影 | `bi-border-outer` / `bi-shadows` | 縁取り / 影 (4 つのツールで共通) |
+| 太字 / 斜体 | `bi-type-bold` / `bi-type-italic` | |
+| マスク | `bi-eye-slash` | 隠す。モードは `bi-grid-3x3-gap-fill` (モザイク) / `bi-droplet-half` (ぼかし) / `bi-paint-bucket` (塗り) |
+| Redact sensitive text | `bi-incognito` | 秘密を自動で隠す (macOS) |
+| トリミング / 吸着 | `bi-crop` / `bi-magnet` | |
+| 保存先を開く | `bi-folder2-open` | |
+| ドラッグで渡す | `bi-box-arrow-up` | 共有 (macOS の共有と同じ矢印) |
+| パスをコピー / 画像をコピー | `bi-link-45deg` / `bi-image` | パス (参照) / 画像そのもの |
+| OCR: 画像全体 / 範囲を選んで / 画面を撮って | `bi-body-text` / `bi-textarea-t` / `bi-bounding-box` | 文字 / 画像の中の範囲 / 画面上の範囲 |
+| タイマー撮影 / 撮影 / 録画 | `bi-stopwatch` / `bi-camera` / `bi-record-circle` | |
+
+成功の一時表示は `bi-check-lg`、処理中は `bi-arrow-repeat` (回転)。
+
 ## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
 
-ツールバーのマスクツールの隣の「Redact sensitive text」(`bi-eye-slash`、OCR と同じく macOS だけ。
+ツールバーのマスクツールの隣の「Redact sensitive text」(`bi-incognito`、OCR と同じく macOS だけ。
 CYBERNEURA-DEV-1210)。`ocr_image_boxes` コマンド (`ocr.rs`) が `ocr.swift --json` で認識した行ごとの
 `{ text, box: [x, y, w, h] }` (画像ピクセル、左上原点) を返し、フロントの `findSensitive` が
 メール / IPv4 / 接頭辞付きトークン (`sk-` `ghp_` `gho_` `xox[abp]-` `AKIA`) / JWT 風 / 16 文字以上の

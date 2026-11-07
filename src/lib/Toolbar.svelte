@@ -202,7 +202,7 @@
     aria-pressed={sidebarVisible}
     data-tooltip={sidebarVisible ? "Hide saved images" : "Show saved images"}
   >
-    <i class="bi bi-layout-sidebar"></i>
+    <i class="bi bi-images"></i>
   </button>
   <div class="toolbar-divider"></div>
 
@@ -244,7 +244,7 @@
         aria-label="White border"
         data-tooltip="White border"
       >
-        <i class="bi bi-back"></i>
+        <i class="bi bi-border-outer"></i>
       </button>
 
       <button
@@ -287,7 +287,7 @@
         aria-label="White border"
         data-tooltip="White border"
       >
-        <i class="bi bi-back"></i>
+        <i class="bi bi-border-outer"></i>
       </button>
 
       <button
@@ -370,7 +370,7 @@
         aria-label="White border"
         data-tooltip="White border"
       >
-        <i class="bi bi-back"></i>
+        <i class="bi bi-border-outer"></i>
       </button>
 
       <button
@@ -445,7 +445,7 @@
         aria-label="White border"
         data-tooltip="White border"
       >
-        <i class="bi bi-back"></i>
+        <i class="bi bi-border-outer"></i>
       </button>
 
       <button
@@ -467,7 +467,7 @@
     aria-label="Mask tool"
     data-tooltip="Mask tool"
   >
-    <i class="bi bi-grid-3x3"></i>
+    <i class="bi bi-eye-slash"></i>
   </button>
 
   {#if maskToolActive}
@@ -478,7 +478,7 @@
         onclick={() => (maskSettings.mode = "mosaic")}
         aria-label="Mosaic"
         data-tooltip="Mosaic"
-      >▦</button>
+      ><i class="bi bi-grid-3x3-gap-fill"></i></button>
       <button
         class="tool-btn text-xs"
         class:active={maskSettings.mode === "blur"}
@@ -519,7 +519,7 @@
       {#if redactBusy}
         <i class="bi bi-arrow-repeat animate-spin"></i>
       {:else}
-        <i class="bi bi-eye-slash"></i>
+        <i class="bi bi-incognito"></i>
       {/if}
     </button>
   {/if}
@@ -607,7 +607,7 @@
       data-tooltip="Drag to share file"
       onmousedown={onDragFile}
     >
-      <i class="bi bi-grip-vertical"></i>
+      <i class="bi bi-box-arrow-up"></i>
     </button>
     <input
       type="text"
@@ -625,7 +625,7 @@
       {#if copyPathSuccess}
         <i class="bi bi-check-lg"></i>
       {:else}
-        <i class="bi bi-clipboard"></i>
+        <i class="bi bi-link-45deg"></i>
       {/if}
     </button>
     <button
@@ -682,7 +682,7 @@
     {#if ocrSuccessButton === "capture"}
       <i class="bi bi-check-lg"></i>
     {:else}
-      <i class="bi bi-type"></i>
+      <i class="bi bi-bounding-box"></i>
     {/if}
   </button>
   {/if}
