@@ -5,6 +5,7 @@
     CropRect,
     MaskSettings,
     ShapeSettings,
+    StepSettings,
     TextSettings,
   } from "$lib/types";
   import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
@@ -17,6 +18,7 @@
     maskToolActive,
     shapeToolActive,
     textToolActive,
+    stepToolActive,
     cropToolActive,
     cropRect,
     cropSnapEnabled,
@@ -32,6 +34,7 @@
     maskSettings,
     shapeSettings,
     textSettings,
+    stepSettings,
     filePath,
     copyPathSuccess,
     copyImageSuccess,
@@ -41,6 +44,7 @@
     onToggleMaskTool,
     onToggleShapeTool,
     onToggleTextTool,
+    onToggleStepTool,
     onCopyPath,
     onCopyImage,
     onOpenFolder,
@@ -54,6 +58,7 @@
     onOcrCaptureRegion,
     onDragFile,
     onUpdateTextSetting,
+    onUpdateStepSetting,
     highlightCapture,
     onHighlightEnd,
     autoCopyMode,
@@ -69,6 +74,7 @@
     maskToolActive: boolean;
     shapeToolActive: boolean;
     textToolActive: boolean;
+    stepToolActive: boolean;
     cropToolActive: boolean;
     cropRect: CropRect | null;
     cropSnapEnabled: boolean;
@@ -84,6 +90,7 @@
     maskSettings: MaskSettings;
     shapeSettings: ShapeSettings;
     textSettings: TextSettings;
+    stepSettings: StepSettings;
     filePath: string | null;
     copyPathSuccess: boolean;
     copyImageSuccess: boolean;
@@ -93,6 +100,7 @@
     onToggleMaskTool: () => void;
     onToggleShapeTool: (type: "rect" | "ellipse") => void;
     onToggleTextTool: () => void;
+    onToggleStepTool: () => void;
     onCopyPath: () => void;
     onCopyImage: () => void;
     onOpenFolder: () => void;
@@ -106,6 +114,7 @@
     videoMode: boolean;
     onDragFile: () => void;
     onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K]) => void;
+    onUpdateStepSetting: <K extends keyof StepSettings>(key: K, value: StepSettings[K]) => void;
     highlightCapture: boolean;
     onHighlightEnd: () => void;
     /** null = 設定をまだ読めていない (ボタンを押せない) */
@@ -314,6 +323,61 @@
 
   {#if shapeToolActive && shapeSettings.type === "ellipse"}
     {@render shapeSettingsPanel()}
+  {/if}
+
+  <button
+    class="tool-btn"
+    class:active={stepToolActive}
+    onclick={onToggleStepTool}
+    aria-label="Step tool"
+    data-tooltip="Step tool (numbered markers)"
+  >
+    <i class="bi bi-1-circle-fill"></i>
+  </button>
+
+  {#if stepToolActive}
+    <div class="tool-settings">
+      <input
+        type="color"
+        class="color-picker"
+        value={stepSettings.color}
+        oninput={(e) => onUpdateStepSetting("color", (e.target as HTMLInputElement).value)}
+        data-tooltip="Marker color"
+      />
+
+      <select
+        class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
+        value={stepSettings.size}
+        onchange={(e) => onUpdateStepSetting("size", Number((e.target as HTMLSelectElement).value))}
+        data-tooltip="Marker size"
+      >
+        <option value={24}>24px</option>
+        <option value={32}>32px</option>
+        <option value={40}>40px</option>
+        <option value={48}>48px</option>
+        <option value={64}>64px</option>
+      </select>
+
+      <button
+        class="tool-btn"
+        class:active={stepSettings.whiteStroke}
+        onclick={() => onUpdateStepSetting("whiteStroke", !stepSettings.whiteStroke)}
+        aria-label="White border"
+        data-tooltip="White border"
+      >
+        <i class="bi bi-back"></i>
+      </button>
+
+      <button
+        class="tool-btn"
+        class:active={stepSettings.dropShadow}
+        onclick={() => onUpdateStepSetting("dropShadow", !stepSettings.dropShadow)}
+        aria-label="Drop shadow"
+        data-tooltip="Drop shadow"
+      >
+        <i class="bi bi-shadows"></i>
+      </button>
+    </div>
   {/if}
 
   <button

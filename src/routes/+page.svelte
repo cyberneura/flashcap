@@ -13,6 +13,8 @@
   import MaskOverlay from "$lib/MaskOverlay.svelte";
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
   import TextOverlay from "$lib/TextOverlay.svelte";
+  import StepOverlay from "$lib/StepOverlay.svelte";
+  import { stepFontSize, stepLabelBaseline } from "$lib/steps";
   import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
   import CropOverlay from "$lib/CropOverlay.svelte";
   import { detectEdgeSnapLines, type EdgeSnapLines } from "$lib/edgeSnap";
@@ -45,7 +47,8 @@
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
-  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, TextAnnotation, TextSettings } from "$lib/types";
+  let stepOverlayRef = $state<ReturnType<typeof StepOverlay> | null>(null);
+  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -173,6 +176,17 @@
     dropShadow: true,
   });
 
+  // Step (numbered counter) tool state (CYBERNEURA-DEV-1209)
+  let stepToolActive = $state(false);
+  let steps = $state<Step[]>([]);
+  const STEP_SETTINGS_KEY = "step_settings";
+  let stepSettings = $state<StepSettings>({
+    color: "#FF0000",
+    size: 32,
+    whiteStroke: true,
+    dropShadow: true,
+  });
+
   // Crop tool state
   const CROP_SNAP_KEY = "crop_snap";
 
@@ -191,7 +205,7 @@
   let imageGeneration = 0;
   $effect(() => {
     void imageBase64;
-    JSON.stringify([arrows, masks, shapes, textAnnotations]);
+    JSON.stringify([arrows, masks, shapes, textAnnotations, steps]);
     // 書き出す絵に効く設定 (renderComposite が読むもの)。Preferences から変えられる
     void maskSettings.blurRadius;
     void maskSettings.mosaicBlockSize;
@@ -218,6 +232,7 @@
     masks: MaskRect[];
     shapes: Shape[];
     texts: TextAnnotation[];
+    steps: Step[];
     // トリミングを巻き戻せるように土台画像もスナップショットに含める。
     // 画像データを複製せず同じ base64 文字列を保持するだけなので、
     // 注釈編集のたびに画像がコピーされるわけではない
@@ -233,6 +248,7 @@
       masks: structuredClone($state.snapshot(masks)),
       shapes: structuredClone($state.snapshot(shapes)),
       texts: structuredClone($state.snapshot(textAnnotations)),
+      steps: structuredClone($state.snapshot(steps)),
       image: imageBase64,
       width: naturalWidth,
       height: naturalHeight,
@@ -246,6 +262,7 @@
     masks = entry.masks;
     shapes = entry.shapes;
     textAnnotations = entry.texts;
+    steps = entry.steps;
     if (entry.image !== imageBase64) {
       imageBase64 = entry.image;
       imageUrl = entry.image ? `data:image/png;base64,${entry.image}` : null;
@@ -273,11 +290,12 @@
 
   let noToolActive = $derived(
     !arrowToolActive && !maskToolActive && !shapeToolActive && !textToolActive &&
-    !ocrSelectionActive && !cropToolActive
+    !stepToolActive && !ocrSelectionActive && !cropToolActive
   );
 
   let hasAnnotations = $derived(
-    arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0
+    arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0 ||
+    steps.length > 0
   );
 
   // メモリ上の画像がファイルと食い違っている可能性がある状態
@@ -553,11 +571,18 @@
       textSettings.whiteStroke = pick(text, "whiteStroke", textSettings.whiteStroke);
       textSettings.dropShadow = pick(text, "dropShadow", textSettings.dropShadow);
     }
+    const step = config[STEP_SETTINGS_KEY];
+    if (isRecord(step)) {
+      stepSettings.color = pick(step, "color", stepSettings.color);
+      stepSettings.size = pick(step, "size", stepSettings.size);
+      stepSettings.whiteStroke = pick(step, "whiteStroke", stepSettings.whiteStroke);
+      stepSettings.dropShadow = pick(step, "dropShadow", stepSettings.dropShadow);
+    }
     cropSnapEnabled = pick(config, CROP_SNAP_KEY, cropSnapEnabled);
     sidebarVisible = pick(config, THUMBNAIL_SIDEBAR_KEY, sidebarVisible);
     sidebarPersisted = sidebarVisible;
 
-    for (const key of [ARROW_SETTINGS_KEY, MASK_SETTINGS_KEY, SHAPE_SETTINGS_KEY, TEXT_SETTINGS_KEY, CROP_SNAP_KEY, THUMBNAIL_SIDEBAR_KEY]) {
+    for (const key of [ARROW_SETTINGS_KEY, MASK_SETTINGS_KEY, SHAPE_SETTINGS_KEY, TEXT_SETTINGS_KEY, STEP_SETTINGS_KEY, CROP_SNAP_KEY, THUMBNAIL_SIDEBAR_KEY]) {
       rememberConfig(key, config[key]);
     }
   }
@@ -585,6 +610,12 @@
     const { fontSize, color, bold, italic, whiteStroke, dropShadow } = textSettings;
     if (!configLoaded) return;
     setConfigDebounced(TEXT_SETTINGS_KEY, { fontSize, color, bold, italic, whiteStroke, dropShadow });
+  });
+
+  $effect(() => {
+    const { color, size, whiteStroke, dropShadow } = stepSettings;
+    if (!configLoaded) return;
+    setConfigDebounced(STEP_SETTINGS_KEY, { color, size, whiteStroke, dropShadow });
   });
 
   $effect(() => {
@@ -631,6 +662,12 @@
     textOverlayRef?.updateActiveAttribute(key, value);
   }
 
+  // ステップの属性変更時、選択中のバッジにも反映する (テキストと同じ)
+  function updateStepSetting<K extends keyof StepSettings>(key: K, value: StepSettings[K]) {
+    stepSettings[key] = value;
+    stepOverlayRef?.updateActiveAttribute(key, value);
+  }
+
   // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
   function applyScreenshotResult(result: ScreenshotResult) {
     imageGeneration++;
@@ -645,6 +682,7 @@
     masks = [];
     shapes = [];
     textAnnotations = [];
+    steps = [];
     undoHistory = [];
     naturalWidth = 0;
     naturalHeight = 0;
@@ -782,6 +820,7 @@
       masks = [];
       shapes = [];
       textAnnotations = [];
+      steps = [];
       undoHistory = [];
       deactivateAllTools();
       imageGeneration++;
@@ -903,7 +942,8 @@
         const needsOffscreen =
           arrows.some((a) => a.dropShadow) ||
           shapes.some((s) => s.dropShadow) ||
-          textAnnotations.some((t) => t.dropShadow && t.whiteStroke);
+          textAnnotations.some((t) => t.dropShadow && t.whiteStroke) ||
+          steps.some((s) => s.dropShadow);
         if (needsOffscreen) {
           offCanvas = document.createElement("canvas");
           offCanvas.width = canvas.width;
@@ -1154,6 +1194,47 @@
           }
         }
 
+        // Step (numbered counter) badges: a filled circle (white rim when whiteStroke, shadow on
+        // the outermost layer via the shared offscreen path) and the number centered in white.
+        // Same geometry as StepOverlay.svelte (rim = 2px outside the circle)
+        for (const s of steps) {
+          const r = s.size / 2;
+          const fontSize = stepFontSize(s.size, s.number);
+          function drawStepRim(c: CanvasRenderingContext2D) {
+            c.fillStyle = "white";
+            c.beginPath();
+            c.arc(s.x, s.y, r + 2, 0, Math.PI * 2);
+            c.fill();
+          }
+          function drawStepBody(c: CanvasRenderingContext2D) {
+            c.fillStyle = s.color;
+            c.beginPath();
+            c.arc(s.x, s.y, r, 0, Math.PI * 2);
+            c.fill();
+          }
+          if (s.dropShadow && offCtx) {
+            offCtx.clearRect(0, 0, offCanvas!.width, offCanvas!.height);
+            if (s.whiteStroke) {
+              drawStepRim(offCtx);
+              transferWithShadow("rgba(0,0,0,0.5)", 4, 2, 2);
+              drawStepBody(ctx);
+            } else {
+              drawStepBody(offCtx);
+              transferWithShadow("rgba(0,0,0,0.5)", 4, 2, 2);
+            }
+          } else {
+            if (s.whiteStroke) drawStepRim(ctx);
+            drawStepBody(ctx);
+          }
+          ctx.font = `700 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          ctx.textAlign = "center";
+          // alphabetic baseline + the same offset as the SVG (steps.ts), not "middle"
+          ctx.textBaseline = "alphabetic";
+          ctx.fillStyle = "white";
+          ctx.fillText(String(s.number), s.x, stepLabelBaseline(s.y, fontSize));
+          ctx.textAlign = "start";
+        }
+
         canvas.toBlob((blob) => {
           blob!.arrayBuffer().then((buf) => resolve(new Uint8Array(buf)));
         }, "image/png");
@@ -1255,6 +1336,7 @@
     maskToolActive = false;
     shapeToolActive = false;
     textToolActive = false;
+    stepToolActive = false;
     ocrSelectionActive = false;
     cropToolActive = false;
     cropRect = null;
@@ -1262,6 +1344,7 @@
     maskOverlayRef?.deselect();
     shapeOverlayRef?.deselect();
     textOverlayRef?.deselect();
+    stepOverlayRef?.deselect();
   }
 
   // 縦横比を固定している時は、画像いっぱいではなくその比で取れる最大の枠を初期値にする
@@ -1388,6 +1471,7 @@
       .filter((m) => m.width > 0 && m.height > 0);
     shapes = shapes.map((s) => ({ ...s, x: s.x - cropX, y: s.y - cropY }));
     textAnnotations = textAnnotations.map((t) => ({ ...t, x: t.x - cropX, y: t.y - cropY }));
+    steps = steps.map((s) => ({ ...s, x: s.x - cropX, y: s.y - cropY }));
     imageModified = true;
     cropToolActive = false;
     cropRect = null;
@@ -1419,6 +1503,12 @@
     const wasActive = textToolActive;
     deactivateAllTools();
     textToolActive = !wasActive;
+  }
+
+  function toggleStepTool() {
+    const wasActive = stepToolActive;
+    deactivateAllTools();
+    stepToolActive = !wasActive;
   }
 
   async function ocrCopyAndNotify(text: string, button: "full" | "region" | "capture") {
@@ -1616,6 +1706,7 @@
     {maskToolActive}
     {shapeToolActive}
     {textToolActive}
+    {stepToolActive}
     {cropToolActive}
     {cropRect}
     {cropSnapEnabled}
@@ -1631,6 +1722,7 @@
     {maskSettings}
     {shapeSettings}
     {textSettings}
+    {stepSettings}
     {filePath}
     {copyPathSuccess}
     {copyImageSuccess}
@@ -1640,6 +1732,7 @@
     onToggleMaskTool={toggleMaskTool}
     onToggleShapeTool={toggleShapeTool}
     onToggleTextTool={toggleTextTool}
+    onToggleStepTool={toggleStepTool}
     onCopyPath={copyPath}
     onCopyImage={copyImage}
     onOpenFolder={openFolder}
@@ -1653,6 +1746,7 @@
     {videoMode}
     onDragFile={handleDragFile}
     onUpdateTextSetting={updateTextSetting}
+    onUpdateStepSetting={updateStepSetting}
     {highlightCapture}
     onHighlightEnd={() => highlightCapture = false}
     {autoCopyMode}
@@ -1746,6 +1840,16 @@
           scale={displayScale}
           onBeforeMutate={pushUndo}
           onTextsChange={(newTexts) => (textAnnotations = newTexts)}
+        />
+        <StepOverlay
+          bind:this={stepOverlayRef}
+          {steps}
+          settings={stepSettings}
+          toolActive={stepToolActive}
+          interactive={stepToolActive || (noToolActive && steps.length > 0)}
+          scale={displayScale}
+          onBeforeMutate={pushUndo}
+          onStepsChange={(newSteps) => (steps = newSteps)}
         />
         <ArrowOverlay
           bind:this={arrowOverlayRef}

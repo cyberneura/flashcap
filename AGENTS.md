@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -28,6 +28,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
   - `src/lib/cropAspect.ts` - Aspect-ratio geometry for the crop frame (pure functions)
   - `src/lib/regionSelect.ts` - Geometry for the Windows capture-area overlay (`src/routes/capture-region/+page.svelte`)
   - `src/lib/ThumbnailSidebar.svelte` + `src/lib/thumbnailBrowser.ts` - Saved-images sidebar (see サムネイルブラウザ)
+  - `src/lib/StepOverlay.svelte` + `src/lib/steps.ts` - Numbered step markers (see ステップ注釈)
 - **Types**: `src/lib/types.ts`
 - **Preferences**: `src/routes/preferences/+page.svelte`
 - **Third-Party Licenses**: `src/routes/licenses/+page.svelte` (see 依存ライブラリのライセンス表示)
@@ -220,6 +221,25 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   すべてこの箱で決まるので、DOM もマウスも要らない形にしてテスト (`tests/text-hit.test.mts`)
   から直接呼べるようにしてある。**実際に描かれた字面は測らない** — `getBBox()` は
   レンダリング後にしか答えず、マウスが動くたびに呼ぶとレイアウトの再計算が毎フレーム入る。
+
+## ステップ注釈 (src/lib/StepOverlay.svelte + src/lib/steps.ts)
+
+番号付きステップ (カウンター) のバッジ (CYBERNEURA-DEV-1209)。ツールバーの矢印 / 図形とテキストの間の
+`1` の丸ボタン。ツールが有効な時のクリックで `steps` の末尾に `number = steps.length + 1` で足し、
+選択中のバッジはドラッグで動かし、Delete / Backspace で消す。**消したら `renumber()` で後続の番号を
+詰め直す** (undo で戻した配列も `number` を持っているので、復元後も番号は並び順どおり)。
+座標 (x, y) はバッジの中心、`size` は直径 (他の注釈と同じく自然解像度ピクセル)。
+
+- 当たり判定・番号の振り直し・数字のフォントサイズは `steps.ts` の純関数 (`tests/steps.test.mts`)。
+  TextOverlay と同じく DOM もマウスも要らない形にしてある。
+- undo は TextOverlay と同じく、押した時ではなく**動いた最初の 1 回**で積む (`exceedsDragSlop`)。
+  追加と削除はその場で積む。
+- 書き出し (`renderComposite`) は円 (白縁は半径 +2 の白い円を下に敷く。影は白縁があればそちらに、無ければ本体に、
+  共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
+  と同じ幾何なので、見た目と書き出しがずれない。
+- 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は選択中のバッジにも効く
+  (`updateStepSetting` → `updateActiveAttribute`、テキストと同じ)。
+- IPC コマンドは増やしていないので `build.rs` の `APP_COMMANDS` と capability は触っていない。
 
 ## 画像の表示サイズ (src/routes/+page.svelte + resize_window_for_image)
 
