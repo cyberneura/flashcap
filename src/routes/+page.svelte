@@ -56,6 +56,7 @@
     height: number;
     data: string;
     file_path: string;
+    annotation_scale: number;
   }
 
   const SUPPORTED_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
@@ -186,6 +187,10 @@
   let shareScaleDown = $state(false);
   // 今の画像が撮影で得たものか (貼り付け / ファイル / サイドバーから開いたものなら false)
   let imageFromCapture = $state(false);
+  // 注釈の線の太さ・文字の大きさに掛ける倍率 (CYBERNEURA-DEV-1237)。Retina の撮影なら 2、それ以外は 1。
+  // 注釈の座標は画像の自然解像度 px なので、そのままだと Retina の撮影では見た目が半分になる。
+  // 太さや font-size の値はツールバーの値のまま持ち、描画する時にだけ掛ける (ツールバーの表示は変えない)
+  let annotationScale = $state(1);
 
   interface ShareImage {
     path: string;
@@ -709,6 +714,7 @@
   function applyScreenshotResult(result: ScreenshotResult, source: "capture" | "paste" | "file") {
     imageGeneration++;
     imageFromCapture = source === "capture";
+    annotationScale = result.annotation_scale;
     // 画像を表示する際は動画モードを解除する
     videoMode = false;
     videoUrl = null;
@@ -971,7 +977,9 @@
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0);
 
-        // Coords are already in natural pixels, no scale conversion needed
+        // Coords are already in natural pixels, no scale conversion needed.
+        // 太さ・文字・影は Retina の撮影なら 2 倍で描く (オーバーレイと同じ倍率)
+        const k = annotationScale;
 
         // 影付き描画用の共有オフスクリーンキャンバス
         // 各描画を1レイヤーにまとめることで、影のシームや二重影を防ぐ
@@ -994,9 +1002,9 @@
           color: string, blur: number, dx: number, dy: number,
         ) {
           ctx.shadowColor = color;
-          ctx.shadowBlur = blur;
-          ctx.shadowOffsetX = dx;
-          ctx.shadowOffsetY = dy;
+          ctx.shadowBlur = blur * k;
+          ctx.shadowOffsetX = dx * k;
+          ctx.shadowOffsetY = dy * k;
           ctx.drawImage(offCanvas!, 0, 0);
           ctx.shadowColor = "transparent";
           ctx.shadowBlur = 0;
@@ -1009,7 +1017,7 @@
           const sy = arrow.startY;
           const ex = arrow.endX;
           const ey = arrow.endY;
-          const t = arrow.thickness;
+          const t = arrow.thickness * k;
           const hs = t * 4;
 
           const dx = sx - ex;
@@ -1033,7 +1041,7 @@
           // 描画ヘルパー: 白枠を指定コンテキストに描画
           function drawWhiteStroke(c: CanvasRenderingContext2D) {
             c.strokeStyle = "white";
-            c.lineWidth = t + 4;
+            c.lineWidth = t + 4 * k;
             c.lineCap = "round";
             c.beginPath();
             c.moveTo(lsX, lsY);
@@ -1048,7 +1056,7 @@
             c.lineTo(bX - perpX * halfW, bY - perpY * halfW);
             c.closePath();
             c.fill();
-            c.lineWidth = 4;
+            c.lineWidth = 4 * k;
             c.stroke();
           }
 
@@ -1132,14 +1140,14 @@
           function drawShapeWhiteStroke(c: CanvasRenderingContext2D) {
             if (shape.type === "rect") {
               c.strokeStyle = "white";
-              c.lineWidth = shape.thickness + 4;
+              c.lineWidth = (shape.thickness + 4) * k;
               c.lineJoin = "round";
               c.strokeRect(shape.x, shape.y, shape.width, shape.height);
             } else {
               const cx = shape.x + shape.width / 2;
               const cy = shape.y + shape.height / 2;
               c.strokeStyle = "white";
-              c.lineWidth = shape.thickness + 4;
+              c.lineWidth = (shape.thickness + 4) * k;
               c.beginPath();
               c.ellipse(cx, cy, shape.width / 2, shape.height / 2, 0, 0, Math.PI * 2);
               c.stroke();
@@ -1149,14 +1157,14 @@
           function drawShapeBody(c: CanvasRenderingContext2D) {
             if (shape.type === "rect") {
               c.strokeStyle = shape.color;
-              c.lineWidth = shape.thickness;
+              c.lineWidth = shape.thickness * k;
               c.lineJoin = "round";
               c.strokeRect(shape.x, shape.y, shape.width, shape.height);
             } else {
               const cx = shape.x + shape.width / 2;
               const cy = shape.y + shape.height / 2;
               c.strokeStyle = shape.color;
-              c.lineWidth = shape.thickness;
+              c.lineWidth = shape.thickness * k;
               c.beginPath();
               c.ellipse(cx, cy, shape.width / 2, shape.height / 2, 0, 0, Math.PI * 2);
               c.stroke();
@@ -1184,8 +1192,10 @@
           if (!t.text) continue;
           const fontStyle = t.italic ? "italic" : "";
           const fontWeight = t.bold ? "900" : "normal";
-          const fontStr = `${fontStyle} ${fontWeight} ${t.fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`.trim();
-          const lineHeight = t.fontSize * 1.3;
+          const fontPx = t.fontSize * k;
+          const textX = t.x + 4 * k;
+          const fontStr = `${fontStyle} ${fontWeight} ${fontPx}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`.trim();
+          const lineHeight = fontPx * 1.3;
           const lines = t.text.split("\n");
 
           if (t.dropShadow && t.whiteStroke && offCtx) {
@@ -1194,10 +1204,10 @@
             offCtx.font = fontStr;
             offCtx.textBaseline = "top";
             offCtx.strokeStyle = "white";
-            offCtx.lineWidth = 3;
+            offCtx.lineWidth = 3 * k;
             offCtx.lineJoin = "round";
             for (let i = 0; i < lines.length; i++) {
-              offCtx.strokeText(lines[i], t.x + 4, t.y + i * lineHeight);
+              offCtx.strokeText(lines[i], textX, t.y + i * lineHeight);
             }
             transferWithShadow("rgba(0,0,0,0.6)", 3, 1, 1);
             // 本体は影なしで直接描画
@@ -1205,15 +1215,15 @@
             ctx.textBaseline = "top";
             ctx.fillStyle = t.color;
             for (let i = 0; i < lines.length; i++) {
-              ctx.fillText(lines[i], t.x + 4, t.y + i * lineHeight);
+              ctx.fillText(lines[i], textX, t.y + i * lineHeight);
             }
           } else {
             ctx.save();
             if (t.dropShadow) {
               ctx.shadowColor = "rgba(0,0,0,0.6)";
-              ctx.shadowBlur = 3;
-              ctx.shadowOffsetX = 1;
-              ctx.shadowOffsetY = 1;
+              ctx.shadowBlur = 3 * k;
+              ctx.shadowOffsetX = k;
+              ctx.shadowOffsetY = k;
             }
             ctx.font = fontStr;
             ctx.textBaseline = "top";
@@ -1221,12 +1231,12 @@
               const ly = t.y + i * lineHeight;
               if (t.whiteStroke) {
                 ctx.strokeStyle = "white";
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 3 * k;
                 ctx.lineJoin = "round";
-                ctx.strokeText(lines[i], t.x + 4, ly);
+                ctx.strokeText(lines[i], textX, ly);
               }
               ctx.fillStyle = t.color;
-              ctx.fillText(lines[i], t.x + 4, ly);
+              ctx.fillText(lines[i], textX, ly);
             }
             ctx.restore();
           }
@@ -1234,14 +1244,15 @@
 
         // Step (numbered counter) badges: a filled circle (white rim when whiteStroke, shadow on
         // the outermost layer via the shared offscreen path) and the number centered in white.
-        // Same geometry as StepOverlay.svelte (rim = 2px outside the circle)
+        // Same geometry as StepOverlay.svelte (rim = 2px x k outside the circle)
         for (const s of steps) {
-          const r = s.size / 2;
-          const fontSize = stepFontSize(s.size, s.number);
+          const size = s.size * k;
+          const r = size / 2;
+          const fontSize = stepFontSize(size, s.number);
           function drawStepRim(c: CanvasRenderingContext2D) {
             c.fillStyle = "white";
             c.beginPath();
-            c.arc(s.x, s.y, r + 2, 0, Math.PI * 2);
+            c.arc(s.x, s.y, r + 2 * k, 0, Math.PI * 2);
             c.fill();
           }
           function drawStepBody(c: CanvasRenderingContext2D) {
@@ -1938,6 +1949,7 @@
           toolActive={shapeToolActive}
           interactive={shapeToolActive || (noToolActive && shapes.length > 0)}
           scale={displayScale}
+          {annotationScale}
           onBeforeMutate={pushUndo}
           onShapesChange={(newShapes) => (shapes = newShapes)}
         />
@@ -1948,6 +1960,7 @@
           toolActive={textToolActive}
           interactive={textToolActive || (noToolActive && textAnnotations.length > 0)}
           scale={displayScale}
+          {annotationScale}
           onBeforeMutate={pushUndo}
           onTextsChange={(newTexts) => (textAnnotations = newTexts)}
         />
@@ -1958,6 +1971,7 @@
           toolActive={arrowToolActive}
           interactive={arrowToolActive || noToolActive}
           scale={displayScale}
+          {annotationScale}
           onBeforeMutate={pushUndo}
           onArrowsChange={(newArrows) => (arrows = newArrows)}
         />
@@ -1970,6 +1984,7 @@
           toolActive={stepToolActive}
           interactive={stepToolActive || (noToolActive && steps.length > 0)}
           scale={displayScale}
+          {annotationScale}
           onBeforeMutate={pushUndo}
           onStepsChange={(newSteps) => (steps = newSteps)}
           onSelect={() => {

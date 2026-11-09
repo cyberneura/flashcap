@@ -7,11 +7,13 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
+    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
+    annotationScale?: number;
     onShapesChange: (shapes: Shape[]) => void;
     onBeforeMutate?: () => void;
   }
 
-  let { shapes, settings, toolActive, interactive, scale, onShapesChange, onBeforeMutate }: Props = $props();
+  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, onShapesChange, onBeforeMutate }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move" | "resize" | null>(null);
@@ -102,7 +104,7 @@
 
   // 線(stroke)の近くをクリックで選択
   function hitTestShape(shape: Shape, px: number, py: number): boolean {
-    const threshold = shape.thickness + 6 / scale;
+    const threshold = shape.thickness * annotationScale + 6 / scale;
     const { x, y, width: w, height: h } = shape;
 
     if (shape.type === "rect") {
@@ -299,7 +301,7 @@
 >
   <defs>
     <filter id="shape-shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.5" />
+      <feDropShadow dx={2 * annotationScale} dy={2 * annotationScale} stdDeviation={2 * annotationScale} flood-opacity="0.5" />
     </filter>
   </defs>
 
@@ -311,12 +313,12 @@
       {#if shape.type === "rect"}
         <rect
           x={shape.x} y={shape.y} width={shape.width} height={shape.height}
-          fill="none" stroke="white" stroke-width={shape.thickness + 4}
+          fill="none" stroke="white" stroke-width={(shape.thickness + 4) * annotationScale}
           stroke-linejoin="round" filter="url(#shape-shadow)"
         />
         <rect
           x={shape.x} y={shape.y} width={shape.width} height={shape.height}
-          fill="none" stroke={shape.color} stroke-width={shape.thickness}
+          fill="none" stroke={shape.color} stroke-width={shape.thickness * annotationScale}
           stroke-linejoin="round"
         />
       {:else}
@@ -326,12 +328,12 @@
         {@const ry = shape.height / 2}
         <ellipse
           cx={cx} cy={cy} rx={rx} ry={ry}
-          fill="none" stroke="white" stroke-width={shape.thickness + 4}
+          fill="none" stroke="white" stroke-width={(shape.thickness + 4) * annotationScale}
           filter="url(#shape-shadow)"
         />
         <ellipse
           cx={cx} cy={cy} rx={rx} ry={ry}
-          fill="none" stroke={shape.color} stroke-width={shape.thickness}
+          fill="none" stroke={shape.color} stroke-width={shape.thickness * annotationScale}
         />
       {/if}
     {:else}
@@ -340,13 +342,13 @@
         {#if shape.whiteStroke}
           <rect
             x={shape.x} y={shape.y} width={shape.width} height={shape.height}
-            fill="none" stroke="white" stroke-width={shape.thickness + 4}
+            fill="none" stroke="white" stroke-width={(shape.thickness + 4) * annotationScale}
             stroke-linejoin="round"
           />
         {/if}
         <rect
           x={shape.x} y={shape.y} width={shape.width} height={shape.height}
-          fill="none" stroke={shape.color} stroke-width={shape.thickness}
+          fill="none" stroke={shape.color} stroke-width={shape.thickness * annotationScale}
           stroke-linejoin="round" filter={filterAttr}
         />
       {:else}
@@ -357,12 +359,12 @@
         {#if shape.whiteStroke}
           <ellipse
             cx={cx} cy={cy} rx={rx} ry={ry}
-            fill="none" stroke="white" stroke-width={shape.thickness + 4}
+            fill="none" stroke="white" stroke-width={(shape.thickness + 4) * annotationScale}
           />
         {/if}
         <ellipse
           cx={cx} cy={cy} rx={rx} ry={ry}
-          fill="none" stroke={shape.color} stroke-width={shape.thickness}
+          fill="none" stroke={shape.color} stroke-width={shape.thickness * annotationScale}
           filter={filterAttr}
         />
       {/if}

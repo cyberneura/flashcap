@@ -80,6 +80,13 @@ check("topmostStepAt prefers the later (drawn on top) step", () => {
   assert.equal(topmostStepAt([a, b], 200, 200), null);
 });
 
+check("annotationScale widens the hit circle with the drawn badge", () => {
+  // 直径 32 x 2 = 半径 32 で描かれるので、中心から 30 の点は当たる (倍率 1 なら外れる)
+  assert.equal(hitsStep(step(), 130, 100), false);
+  assert.equal(hitsStep(step(), 130, 100, 0, 2), true);
+  assert.equal(topmostStepAt([step()], 130, 100, 0, 2)?.id, "a");
+});
+
 check("stepFontSize shrinks for 2 and 3 digit numbers", () => {
   assert.ok(stepFontSize(32, 9) > stepFontSize(32, 10));
   assert.ok(stepFontSize(32, 10) > stepFontSize(32, 100));

@@ -33,6 +33,9 @@ pub struct ScreenshotResult {
     pub height: usize,
     pub data: String,      // base64 encoded PNG
     pub file_path: String, // saved file path
+    /// 注釈の線の太さ・文字の大きさに掛ける倍率 (CYBERNEURA-DEV-1237)。Retina の撮影なら 2。
+    /// 撮影以外 (貼り付け / ファイル) は撮影倍率が分からないので 1
+    pub annotation_scale: u32,
 }
 
 /// flashcap が一時ファイルと既定の保存先に使うディレクトリ ($TMPDIR/flashcap)
@@ -639,6 +642,7 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
             height: height as usize,
             data: STANDARD.encode(&png_data),
             file_path: absolute_path,
+            annotation_scale: 1,
         });
     }
 
@@ -663,6 +667,7 @@ fn load_image_result(file_path: String) -> Result<ScreenshotResult, String> {
         height: img.height() as usize,
         data: STANDARD.encode(&png_data),
         file_path: absolute_path,
+        annotation_scale: 1,
     })
 }
 
@@ -703,7 +708,8 @@ async fn take_screenshot_interactive(
 
     capture_screen_to(&app, &file_path, None).await?;
 
-    let result = load_image_result(file_path)?;
+    let mut result = load_image_result(file_path)?;
+    result.annotation_scale = share_image::capture_annotation_scale(&app, &result.file_path);
     auto_copy::copy_after_capture(&app, &result);
     resize_window_for_image(&app, result.width, result.height);
     Ok(result)
@@ -855,7 +861,8 @@ async fn take_screenshot_timer(
 
     capture_screen_to(&app, &file_path, Some(get_timer_delay())).await?;
 
-    let result = load_image_result(file_path)?;
+    let mut result = load_image_result(file_path)?;
+    result.annotation_scale = share_image::capture_annotation_scale(&app, &result.file_path);
     auto_copy::copy_after_capture(&app, &result);
     resize_window_for_image(&app, result.width, result.height);
     Ok(result)
@@ -1022,6 +1029,7 @@ fn save_pasted_image(
         height,
         data: data_base64,
         file_path,
+        annotation_scale: 1,
     })
 }
 

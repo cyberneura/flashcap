@@ -264,6 +264,24 @@ CYBERNEURA-DEV-1210)。`ocr_image_boxes` コマンド (`ocr.rs`) が `ocr.swift 
   マスクが重なる (隠れている分には害は無い)。
 - IPC コマンド `ocr_image_boxes` は `build.rs` の `APP_COMMANDS` と `capabilities/default.json` に登録。
 
+## Retina の撮影の注釈 (`annotationScale`、CYBERNEURA-DEV-1237)
+
+注釈の座標は画像の自然解像度 px なので、そのままだと Retina の撮影では線も文字も見た目が半分になる。
+撮影で得た画像は `ScreenshotResult.annotation_scale` (2 か 1) を持ち、`+page.svelte` の
+`annotationScale` が **描画の時にだけ** 太さ・白枠・影・文字・ステップの大きさに掛ける。
+
+- **`thickness` / `fontSize` / `size` の値はツールバーの値のまま持つ。** 注釈に掛けた値を保存すると
+  ツールバーとの同期 (選択中の注釈の属性変更) で倍率が消えたり重なったりする。
+- **描画は `renderComposite` と各オーバーレイの 2 系統あり、両方に掛ける。** 当たり判定
+  (`textHit.ts` / `steps.ts` の `annotationScale` 引数、矢印・図形の閾値) も同じ倍率で揃える。
+- マスク (モザイクの粒度・ぼかし半径) には掛けない。線でも文字でもなく、Preferences の値が画像 px の意味を持つため。
+- 判定は `share_scale.rs` の `png_density_scale` (PNG の pHYs。macOS の screencapture は Retina で 144 dpi、
+  等倍で 72 dpi を書く) → 無ければメインウインドウのモニターの倍率 (Windows)。**モニターだけで判定しない** —
+  MacBook + 等倍の外部モニターでは撮影したモニターとウインドウのあるモニターが食い違う。
+  `should_scale_down` と違って論理サイズとの比較はしない (Retina の小さな範囲選択も 2 倍で描くため)。
+- 貼り付け / ファイル / サイドバーから開いた画像は常に 1 (撮影倍率が分からない。Flashcap が書き戻した
+  PNG は pHYs を持たないので、開き直した画像に pHYs を使っても一貫しない)。
+
 ## 共有用の縮小 (src-tauri/src/share_image.rs + share_scale.rs)
 
 Preferences の Save Location 節の「Share at 1x」(設定ファイルの `share_scale_down`、既定 OFF。

@@ -104,6 +104,9 @@ fails, install them with `xcode-select --install`.
   contain an email address, an IPv4 address, an API key / token (`sk-`, `ghp_`, `xoxb-`,
   `AKIA`…, JWT-like, long alphanumeric secrets) or a card number that passes the Luhn check.
   The masks are ordinary mask annotations: delete a false positive, add what was missed
+- Retina captures: annotations keep their on-screen size. On a capture from a 2x display, arrow
+  and shape thickness, outlines, text and step markers are drawn at twice their pixel size
+  (pasted images and files opened from disk are drawn as is)
 - "Share at 1x" (Preferences): downscale Retina (2x) captures to 1x only for the copies that
   leave the app (image copy, drag to another app, auto-copy after capture). Saved files keep
   the full size

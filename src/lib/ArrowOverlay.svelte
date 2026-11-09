@@ -7,11 +7,13 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
+    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
+    annotationScale?: number;
     onArrowsChange: (arrows: Arrow[]) => void;
     onBeforeMutate?: () => void;
   }
 
-  let { arrows, settings, toolActive, interactive, scale, onArrowsChange, onBeforeMutate }: Props = $props();
+  let { arrows, settings, toolActive, interactive, scale, annotationScale = 1, onArrowsChange, onBeforeMutate }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move-start" | "move-end" | null>(null);
@@ -19,7 +21,7 @@
   let hoverCursor = $state<string>("default");
 
   function headSize(thickness: number): number {
-    return thickness * 4;
+    return thickness * annotationScale * 4;
   }
 
   // Skitch style: arrowhead at drag start point (start side)
@@ -105,7 +107,7 @@
     }
 
     // Click existing arrow to select
-    const hit = [...arrows].reverse().find((a) => distToArrow(a, pt.x, pt.y) < a.thickness + 6 / scale);
+    const hit = [...arrows].reverse().find((a) => distToArrow(a, pt.x, pt.y) < a.thickness * annotationScale + 6 / scale);
     if (hit) {
       selectedId = hit.id;
       return;
@@ -148,7 +150,7 @@
     }
 
     // 既存の矢印の上 → pointer（再選択可能）
-    const hit = [...arrows].reverse().find((a) => distToArrow(a, pt.x, pt.y) < a.thickness + 6 / scale);
+    const hit = [...arrows].reverse().find((a) => distToArrow(a, pt.x, pt.y) < a.thickness * annotationScale + 6 / scale);
     if (hit) {
       hoverCursor = "pointer";
       return;
@@ -223,7 +225,7 @@
 >
   <defs>
     <filter id="arrow-shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.5" />
+      <feDropShadow dx={2 * annotationScale} dy={2 * annotationScale} stdDeviation={2 * annotationScale} flood-opacity="0.5" />
     </filter>
   </defs>
 
@@ -238,16 +240,16 @@
         <line
           x1={ls.x} y1={ls.y} x2={arrow.endX} y2={arrow.endY}
           stroke="white"
-          stroke-width={arrow.thickness + 4}
+          stroke-width={(arrow.thickness + 4) * annotationScale}
           stroke-linecap="round"
         />
-        <polygon points={hp} fill="white" stroke="white" stroke-width="4" stroke-linejoin="round" />
+        <polygon points={hp} fill="white" stroke="white" stroke-width={4 * annotationScale} stroke-linejoin="round" />
       </g>
       <!-- 本体は影なし -->
       <line
         x1={ls.x} y1={ls.y} x2={arrow.endX} y2={arrow.endY}
         stroke={arrow.color}
-        stroke-width={arrow.thickness}
+        stroke-width={arrow.thickness * annotationScale}
         stroke-linecap="round"
       />
       <polygon points={hp} fill={arrow.color} />
@@ -257,7 +259,7 @@
         <line
           x1={ls.x} y1={ls.y} x2={arrow.endX} y2={arrow.endY}
           stroke={arrow.color}
-          stroke-width={arrow.thickness}
+          stroke-width={arrow.thickness * annotationScale}
           stroke-linecap="round"
         />
         <polygon points={hp} fill={arrow.color} />
@@ -268,15 +270,15 @@
         <line
           x1={ls.x} y1={ls.y} x2={arrow.endX} y2={arrow.endY}
           stroke="white"
-          stroke-width={arrow.thickness + 4}
+          stroke-width={(arrow.thickness + 4) * annotationScale}
           stroke-linecap="round"
         />
-        <polygon points={hp} fill="white" stroke="white" stroke-width="4" stroke-linejoin="round" />
+        <polygon points={hp} fill="white" stroke="white" stroke-width={4 * annotationScale} stroke-linejoin="round" />
       {/if}
       <line
         x1={ls.x} y1={ls.y} x2={arrow.endX} y2={arrow.endY}
         stroke={arrow.color}
-        stroke-width={arrow.thickness}
+        stroke-width={arrow.thickness * annotationScale}
         stroke-linecap="round"
       />
       <polygon points={hp} fill={arrow.color} />
