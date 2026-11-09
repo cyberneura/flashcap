@@ -36,19 +36,27 @@ export interface TextBBox {
  *
  * 空文字でも `fontSize * 2` の幅を持つ。入力を始めたばかりの注釈が掴めない
  * (= 選べない、消せない) と、画面に何も無いのに何かがある状態になる。
+ *
+ * `annotationScale` は描画時に文字へ掛ける倍率 (Retina の撮影なら 2)。`fontSize` は
+ * ツールバーの値のまま持っているので、ここで掛けないと箱が字面の半分になる。
  */
-export function textBBox(t: Pick<TextAnnotation, "x" | "y" | "text" | "fontSize">): TextBBox {
+export function textBBox(
+  t: Pick<TextAnnotation, "x" | "y" | "text" | "fontSize">,
+  annotationScale = 1,
+): TextBBox {
+  const fontSize = t.fontSize * annotationScale;
+  const padding = PADDING * annotationScale;
   const lines = t.text.split("\n");
-  const lineHeight = t.fontSize * LINE_HEIGHT_RATIO;
+  const lineHeight = fontSize * LINE_HEIGHT_RATIO;
   const width = Math.max(
-    ...lines.map((line) => line.length * t.fontSize * CHAR_WIDTH_RATIO),
-    t.fontSize * 2,
+    ...lines.map((line) => line.length * fontSize * CHAR_WIDTH_RATIO),
+    fontSize * 2,
   );
   return {
     x: t.x,
     y: t.y,
-    width: width + PADDING,
-    height: lineHeight * lines.length + PADDING,
+    width: width + padding,
+    height: lineHeight * lines.length + padding,
   };
 }
 
@@ -56,8 +64,9 @@ export function hitsText(
   t: Pick<TextAnnotation, "x" | "y" | "text" | "fontSize">,
   px: number,
   py: number,
+  annotationScale = 1,
 ): boolean {
-  const bbox = textBBox(t);
+  const bbox = textBBox(t, annotationScale);
   return px >= bbox.x && px <= bbox.x + bbox.width && py >= bbox.y && py <= bbox.y + bbox.height;
 }
 
@@ -71,9 +80,10 @@ export function topmostTextAt<T extends Pick<TextAnnotation, "x" | "y" | "text" 
   texts: readonly T[],
   px: number,
   py: number,
+  annotationScale = 1,
 ): T | null {
   for (let i = texts.length - 1; i >= 0; i--) {
-    if (hitsText(texts[i], px, py)) return texts[i];
+    if (hitsText(texts[i], px, py, annotationScale)) return texts[i];
   }
   return null;
 }

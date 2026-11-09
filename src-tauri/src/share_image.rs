@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::Manager;
 
-use crate::share_scale::{maybe_scale_down, should_scale_down, ScreenInfo};
+use crate::share_scale::{
+    annotation_scale, maybe_scale_down, png_density_scale, should_scale_down, ScreenInfo,
+};
 
 /// 設定ファイルのキー。Preferences の "Share at 1x" トグルが書く
 pub(crate) const SHARE_SCALE_DOWN_KEY: &str = "share_scale_down";
@@ -35,6 +37,17 @@ pub(crate) fn screen_info(app: &tauri::AppHandle) -> Option<ScreenInfo> {
         logical_h: (size.height as f64 / scale).round() as u32,
         scale_factor: scale,
     })
+}
+
+/// 撮影した画像に描く注釈の倍率 (CYBERNEURA-DEV-1237)。PNG に記録された解像度 (macOS の
+/// screencapture が書く) を優先し、無ければ `screen_info` と同じモニターの倍率で判断する。
+/// **PNG を先に見るのは、撮影したモニターとウインドウのあるモニターが同じとは限らないから**
+/// (MacBook + 等倍の外部モニター等)
+pub(crate) fn capture_annotation_scale(app: &tauri::AppHandle, path: &str) -> u32 {
+    let density = std::fs::read(path)
+        .ok()
+        .and_then(|png| png_density_scale(&png));
+    annotation_scale(density, screen_info(app).map(|s| s.scale_factor))
 }
 
 /// 縮小が有効な時だけモニター情報を返す (自動コピーが撮影スレッドの外で使う)

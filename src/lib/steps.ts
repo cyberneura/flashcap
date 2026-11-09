@@ -30,18 +30,21 @@ export function nextStep(
   };
 }
 
-/** 点がバッジ (円) の上にあるか。`slack` は画面 px の余裕を画像 px に直したもの */
-export function hitsStep(step: Step, px: number, py: number, slack = 0): boolean {
-  const r = step.size / 2 + slack;
+/**
+ * 点がバッジ (円) の上にあるか。`slack` は画面 px の余裕を画像 px に直したもの。
+ * `annotationScale` は描画時に大きさへ掛ける倍率 (Retina の撮影なら 2)
+ */
+export function hitsStep(step: Step, px: number, py: number, slack = 0, annotationScale = 1): boolean {
+  const r = (step.size * annotationScale) / 2 + slack;
   const dx = px - step.x;
   const dy = py - step.y;
   return dx * dx + dy * dy <= r * r;
 }
 
 /** 点の上にある一番手前 (配列の後ろ) のステップ */
-export function topmostStepAt(steps: readonly Step[], px: number, py: number, slack = 0): Step | null {
+export function topmostStepAt(steps: readonly Step[], px: number, py: number, slack = 0, annotationScale = 1): Step | null {
   for (let i = steps.length - 1; i >= 0; i--) {
-    if (hitsStep(steps[i], px, py, slack)) return steps[i];
+    if (hitsStep(steps[i], px, py, slack, annotationScale)) return steps[i];
   }
   return null;
 }

@@ -87,4 +87,15 @@ const text = (over: Partial<Text> = {}): Text => ({
   assert.ok(exceedsDragSlop(100, 0, 0));
 }
 
+{
+  // Retina の撮影 (倍率 2) では字面が 2 倍で描かれるので、箱も余白ごと 2 倍になる
+  const bbox = textBBox(text({ text: "hello", fontSize: 20 }), 2);
+  assert.equal(bbox.width, (5 * 20 * 0.6 + 8) * 2);
+  assert.equal(bbox.height, (20 * 1.3 + 8) * 2);
+  const inDoubledBox = bbox.width - 1;
+  assert.ok(!hitsText(text(), inDoubledBox, 1), "倍率 1 なら箱の外");
+  assert.ok(hitsText(text(), inDoubledBox, 1, 2), "倍率 2 なら箱の中");
+  assert.equal(topmostTextAt([text()], inDoubledBox, 1, 2)?.id, "a");
+}
+
 console.log("text-hit: ok");

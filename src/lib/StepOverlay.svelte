@@ -15,13 +15,15 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
+    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
+    annotationScale?: number;
     onStepsChange: (steps: Step[]) => void;
     onBeforeMutate?: () => void;
     /** バッジを選んだ時 (親が他のオーバーレイの選択を外す。Delete が両方に効かないように) */
     onSelect?: () => void;
   }
 
-  let { steps, settings, toolActive, interactive, scale, onStepsChange, onBeforeMutate, onSelect }: Props = $props();
+  let { steps, settings, toolActive, interactive, scale, annotationScale = 1, onStepsChange, onBeforeMutate, onSelect }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state(false);
@@ -47,7 +49,7 @@
     const pt = getSvgCoords(e);
     if (!pt) return;
 
-    const hit = topmostStepAt(steps, pt.x, pt.y, hitSlack());
+    const hit = topmostStepAt(steps, pt.x, pt.y, hitSlack(), annotationScale);
     if (hit) {
       // 選ぶと同時に移動を始められる (undo は動いた時に積む)
       selectedId = hit.id;
@@ -159,14 +161,16 @@
 >
   <defs>
     <filter id="step-shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.5" />
+      <feDropShadow dx={2 * annotationScale} dy={2 * annotationScale} stdDeviation={2 * annotationScale} flood-opacity="0.5" />
     </filter>
   </defs>
 
   {#each steps as s (s.id)}
     {@const isSelected = s.id === selectedId}
-    {@const r = s.size / 2}
-    {@const fontSize = stepFontSize(s.size, s.number)}
+    {@const size = s.size * annotationScale}
+    {@const r = size / 2}
+    {@const rim = 2 * annotationScale}
+    {@const fontSize = stepFontSize(size, s.number)}
     <!-- 白縁は円の外側に 2px (太さ 4 の線の外半分)。影は白縁があればそちらに、無ければ本体に付ける。
          バッジの群だけがポインタを受ける (interactive の間)。当たり判定の円は hitSlack ぶん広い -->
     <g
@@ -174,10 +178,10 @@
       style:pointer-events={interactive ? "auto" : "none"}
       style:cursor={dragging ? "move" : isSelected ? "move" : "pointer"}
     >
-    <circle cx={s.x} cy={s.y} r={r + 2 + hitSlack()} fill="transparent" />
+    <circle cx={s.x} cy={s.y} r={r + rim + hitSlack()} fill="transparent" />
     {#if s.whiteStroke}
       <circle
-        cx={s.x} cy={s.y} r={r + 2}
+        cx={s.x} cy={s.y} r={r + rim}
         fill="white"
         filter={s.dropShadow ? "url(#step-shadow)" : undefined}
       />
@@ -199,7 +203,7 @@
     >{s.number}</text>
     {#if isSelected}
       <circle
-        cx={s.x} cy={s.y} r={r + 4}
+        cx={s.x} cy={s.y} r={r + 4 * annotationScale}
         fill="none" stroke="#0066cc" stroke-width={2 / scale} stroke-dasharray="{4 / scale} {2 / scale}"
       />
     {/if}

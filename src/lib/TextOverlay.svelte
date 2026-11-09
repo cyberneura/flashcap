@@ -15,11 +15,13 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
+    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
+    annotationScale?: number;
     onTextsChange: (texts: TextAnnotation[]) => void;
     onBeforeMutate?: () => void;
   }
 
-  let { texts, settings, toolActive, interactive, scale, onTextsChange, onBeforeMutate }: Props = $props();
+  let { texts, settings, toolActive, interactive, scale, annotationScale = 1, onTextsChange, onBeforeMutate }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
@@ -45,8 +47,8 @@
   // 箱と当たり判定は `textHit.ts`。選択・ダブルクリック・カーソルの全部がこの
   // 判定で決まるので、DOM もマウスも要らない形にしてテストから直接呼べる場所に
   // 置いてある。
-  const getTextBBox = textBBox;
-  const hitTestText = hitsText;
+  const getTextBBox = (t: TextAnnotation) => textBBox(t, annotationScale);
+  const hitTestText = (t: TextAnnotation, px: number, py: number) => hitsText(t, px, py, annotationScale);
 
   function handleMouseDown(e: MouseEvent) {
     // 編集中の input クリックは透過
@@ -78,7 +80,7 @@
     // (handleDoubleClick) で、1 回のクリックでは入らない — 選んで動かすつもりの
     // クリックが編集を開くと、位置を直すたびにキーボードが割り込む
     // (CYBERNEURA-DEV-695)。
-    const hit = topmostTextAt(texts, pt.x, pt.y);
+    const hit = topmostTextAt(texts, pt.x, pt.y, annotationScale);
     if (hit) {
       selectedId = hit.id;
       editingId = null;
@@ -167,7 +169,7 @@
 
     const pt = getSvgCoords(e);
     if (!pt) return;
-    const hit = topmostTextAt(texts, pt.x, pt.y);
+    const hit = topmostTextAt(texts, pt.x, pt.y, annotationScale);
     if (!hit) return;
 
     e.preventDefault();
@@ -194,7 +196,7 @@
       }
     }
 
-    if (topmostTextAt(texts, pt.x, pt.y)) {
+    if (topmostTextAt(texts, pt.x, pt.y, annotationScale)) {
       hoverCursor = "pointer";
       return;
     }
@@ -302,7 +304,7 @@
 >
   <defs>
     <filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="1" dy="1" stdDeviation="1.5" flood-opacity="0.6" />
+      <feDropShadow dx={annotationScale} dy={annotationScale} stdDeviation={1.5 * annotationScale} flood-opacity="0.6" />
     </filter>
   </defs>
 
@@ -311,20 +313,21 @@
     {@const isEditing = t.id === editingId}
     {@const filterAttr = t.dropShadow ? "url(#text-shadow)" : undefined}
     {@const bbox = getTextBBox(t)}
-    {@const lineHeight = t.fontSize * LINE_HEIGHT_RATIO}
+    {@const fontSize = t.fontSize * annotationScale}
+    {@const lineHeight = fontSize * LINE_HEIGHT_RATIO}
     {@const fontWeight = t.bold ? "900" : "normal"}
     {@const fontStyle = t.italic ? "italic" : "normal"}
 
     {#if isEditing}
       <foreignObject
         x={t.x} y={t.y}
-        width={Math.max(200, bbox.width + 40)}
-        height={Math.max(lineHeight + 16, bbox.height + 16)}
+        width={Math.max(200 * annotationScale, bbox.width + 40 * annotationScale)}
+        height={Math.max(lineHeight + 16 * annotationScale, bbox.height + 16 * annotationScale)}
       >
         <textarea
           xmlns="http://www.w3.org/1999/xhtml"
           class="text-edit-input"
-          style="font-size:{t.fontSize}px;color:{t.color};line-height:{lineHeight}px;min-width:180px;min-height:{lineHeight}px;font-weight:{fontWeight};font-style:{fontStyle};"
+          style="font-size:{fontSize}px;color:{t.color};line-height:{lineHeight}px;min-width:{180 * annotationScale}px;min-height:{lineHeight}px;padding:{2 * annotationScale}px {4 * annotationScale}px;font-weight:{fontWeight};font-style:{fontStyle};"
           value={pendingText && pendingText.id === t.id ? pendingText.text : t.text}
           oninput={(e) => handleEditInput(e, t.id)}
           onkeydown={handleEditKeyDown}
@@ -338,14 +341,14 @@
           <g filter="url(#text-shadow)">
             {#each t.text.split("\n") as line, i}
               <text
-                x={t.x + 4} y={t.y + t.fontSize + i * lineHeight}
-                font-size={t.fontSize}
+                x={t.x + 4 * annotationScale} y={t.y + fontSize + i * lineHeight}
+                font-size={fontSize}
                 font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
                 font-weight={fontWeight}
                 font-style={fontStyle}
                 fill="none"
                 stroke="white"
-                stroke-width={3}
+                stroke-width={3 * annotationScale}
                 stroke-linejoin="round"
               >{line}</text>
             {/each}
@@ -353,8 +356,8 @@
           <!-- 本体は影なし -->
           {#each t.text.split("\n") as line, i}
             <text
-              x={t.x + 4} y={t.y + t.fontSize + i * lineHeight}
-              font-size={t.fontSize}
+              x={t.x + 4 * annotationScale} y={t.y + fontSize + i * lineHeight}
+              font-size={fontSize}
               font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
               font-weight={fontWeight}
               font-style={fontStyle}
@@ -365,14 +368,14 @@
           <g filter={filterAttr}>
             {#each t.text.split("\n") as line, i}
               <text
-                x={t.x + 4} y={t.y + t.fontSize + i * lineHeight}
-                font-size={t.fontSize}
+                x={t.x + 4 * annotationScale} y={t.y + fontSize + i * lineHeight}
+                font-size={fontSize}
                 font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
                 font-weight={fontWeight}
                 font-style={fontStyle}
                 fill={t.color}
                 stroke={t.whiteStroke ? "white" : "none"}
-                stroke-width={t.whiteStroke ? 3 : 0}
+                stroke-width={t.whiteStroke ? 3 * annotationScale : 0}
                 stroke-linejoin="round"
                 paint-order="stroke"
               >{line}</text>
