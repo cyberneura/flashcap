@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/ocr.swift": "resources/ocr.swift",
+      "icons/Assets.car": "Assets.car"
+    }
+  }
+}
