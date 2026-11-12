@@ -4,6 +4,8 @@ import {
   findSensitive,
   luhnValid,
   maskRectFor,
+  redactMaskStyle,
+  REDACT_FALLBACK_COLOR,
   type OcrLine,
 } from "../src/lib/sensitiveText.ts";
 
@@ -105,6 +107,17 @@ check("findSensitive keeps only matching lines, in order", () => {
 check("maskRectFor pads the box and clamps to the image", () => {
   assert.deepEqual(maskRectFor(line("a", [10, 20, 100, 14]), 2, 1000, 1000), { x: 8, y: 18, width: 104, height: 18 });
   assert.deepEqual(maskRectFor(line("a", [0, 0, 100, 14]), 2, 101, 15), { x: 0, y: 0, width: 101, height: 15 });
+});
+
+check("redactMaskStyle always fills, whatever the mask settings say", () => {
+  assert.deepEqual(redactMaskStyle("#ff0000"), { mode: "fill", color: "#ff0000" });
+  assert.deepEqual(redactMaskStyle("#FFF"), { mode: "fill", color: "#FFF" });
+});
+
+check("redactMaskStyle falls back to black for colors that may not be opaque", () => {
+  for (const c of ["transparent", "#00000000", "#0008", "rgba(0,0,0,0)", "", "red", "#12345"]) {
+    assert.deepEqual(redactMaskStyle(c), { mode: "fill", color: REDACT_FALLBACK_COLOR }, c);
+  }
 });
 
 if (failures > 0) {

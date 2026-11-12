@@ -112,3 +112,26 @@ export function maskRectFor(
   const bottom = Math.min(imageHeight, by + bh + pad);
   return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
 }
+
+// 自動マスクの既定の塗り色 (マスク設定の色が不透明な色として読めない時に使う)
+export const REDACT_FALLBACK_COLOR = "#000000";
+// 不透明と言い切れる色の書き方だけを通す (#rgb / #rrggbb)。ツールバーの <input type="color"> は
+// 常に #rrggbb だが、config.json を手で書き換えると `transparent` や `#00000000` も入りうる
+const OPAQUE_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/**
+ * 自動マスク (`redactSensitiveText`) に使う mode と色 (CYBERNEURA-DEV-1253)。
+ *
+ * mode はマスク設定に関係なく常に `fill`。モザイクは Retina の撮影ではブロックが論理 3.5px まで
+ * 細かくなり (マスクには annotationScale を掛けない)、等幅のトークンは Depix 系の手法で復元できる
+ * 余地がある。ぼかしも半径次第で読める。「秘密を自動で隠す」機能が可逆なマスクを置くと、
+ * 隠せたと思って共有した人を裏切るので、塗りつぶしに固定する。
+ * 色はマスク設定の色を使うが、不透明な #rgb / #rrggbb でなければ黒にする (透明で塗ると隠れない)。
+ * 置いた後に個々のマスクのモードを手で変えるのは利用者の判断に任せる。
+ */
+export function redactMaskStyle(color: string): { mode: "fill"; color: string } {
+  return {
+    mode: "fill",
+    color: OPAQUE_HEX.test(color) ? color : REDACT_FALLBACK_COLOR,
+  };
+}
