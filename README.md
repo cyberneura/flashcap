@@ -103,7 +103,9 @@ fails, install them with `xcode-select --install`.
 - Redact sensitive text (macOS only): one click runs OCR and places masks over lines that
   contain an email address, an IPv4 address, an API key / token (`sk-`, `ghp_`, `xoxb-`,
   `AKIA`…, JWT-like, long alphanumeric secrets) or a card number that passes the Luhn check.
-  The masks are ordinary mask annotations: delete a false positive, add what was missed
+  The masks are ordinary mask annotations: delete a false positive, add what was missed.
+  They are always solid fills (whatever the mask tool's mode is), because mosaic and blur can be
+  reversed; change a mask's mode afterwards only if you accept that
 - Retina captures: annotations keep their on-screen size. On a capture from a 2x display, arrow
   and shape thickness, outlines, text and step markers are drawn at twice their pixel size
   (pasted images and files opened from disk are drawn as is)

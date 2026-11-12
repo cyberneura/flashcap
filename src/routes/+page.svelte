@@ -15,7 +15,7 @@
   import TextOverlay from "$lib/TextOverlay.svelte";
   import StepOverlay from "$lib/StepOverlay.svelte";
   import { stepFontSize, stepLabelBaseline } from "$lib/steps";
-  import { findSensitive, maskRectFor, type OcrLine } from "$lib/sensitiveText";
+  import { findSensitive, maskRectFor, redactMaskStyle, type OcrLine } from "$lib/sensitiveText";
   import OcrSelectionOverlay from "$lib/OcrSelectionOverlay.svelte";
   import CropOverlay from "$lib/CropOverlay.svelte";
   import { detectEdgeSnapLines, type EdgeSnapLines } from "$lib/edgeSnap";
@@ -1614,8 +1614,8 @@
         .map((r) => ({
           id: crypto.randomUUID(),
           ...r,
-          mode: maskSettings.mode,
-          color: maskSettings.color,
+          // 常に塗りつぶし (モザイク / ぼかしは復元されうる。sensitiveText.ts の redactMaskStyle)
+          ...redactMaskStyle(maskSettings.color),
         }));
       if (added.length === 0) {
         toast.info("No sensitive text found");

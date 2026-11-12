@@ -253,8 +253,15 @@ CYBERNEURA-DEV-1210)。`ocr_image_boxes` コマンド (`ocr.rs`) が `ocr.swift 
 `{ text, box: [x, y, w, h] }` (画像ピクセル、左上原点) を返し、フロントの `findSensitive` が
 メール / IPv4 / 接頭辞付きトークン (`sk-` `ghp_` `gho_` `xox[abp]-` `AKIA`) / JWT 風 / 16 文字以上の
 英数字 (数字と英字の両方を含むもの。普通の長い単語や数字だけの ID は拾わない) / Luhn の通るカード番号を
-含む行を選び、その箱を上下左右 2px 広げた `MaskRect` (モードと色はマスク設定の既定) を `masks` に足す
-(`pushUndo` 対象)。0 件なら toast で知らせる。
+含む行を選び、その箱を上下左右 2px 広げた `MaskRect` を `masks` に足す (`pushUndo` 対象)。0 件なら
+toast で知らせる。
+
+- **自動マスクの mode はマスク設定に関係なく常に `fill`** (`redactMaskStyle`、CYBERNEURA-DEV-1253)。
+  モザイクはマスクに annotationScale を掛けないので Retina では 7px ブロック = 論理 3.5px まで細かくなり、
+  等幅のトークンは Depix 系の手法で復元できる余地がある。ぼかしも半径次第で読める。「秘密を自動で隠す」
+  機能が可逆なマスクを置くと、隠せたと思って共有した人を裏切る。色はマスク設定の色だが、不透明な
+  `#rgb` / `#rrggbb` でなければ黒 (config.json を手で書くと `transparent` 等も入りうる)。置いた後で
+  個々のマスクのモードを手で変えるのは利用者の判断に任せる。
 
 - `ocr.swift --json` は `--region` と併用しない (領域付きの boundingBox は領域基準になる)。Rust 側は常に
   画像全体で呼ぶ。`--json` 無しの出力 (改行区切りの文字列) は変えていない。
