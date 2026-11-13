@@ -578,6 +578,24 @@ About 節のボタン (Windows にはアプリメニューが無いため)。**�
   終わったら `brew list --cask --versions` で入った版を確かめてから再起動を勧める。
 - HTTP は reqwest (`default-features = false` + rustls)。webpki-roots の CDLA-Permissive-2.0 は `about.toml` の accepted に入れてある。
 
+## `flashcap` コマンドのインストール (src-tauri/src/cli_install.rs)
+
+macOS のアプリメニューの `Install Command Line Tools…` (Check for Updates… の下) が
+`/usr/local/bin/flashcap` に `.app` 内の実行ファイルへの symlink を張る (dagscape / beckwell と同じ方式)。
+書けなければ `osascript` の `with administrator privileges` で管理者パスワードを訊き、その 1 操作だけを
+管理者で実行する。既存の symlink は張り替え、symlink でないファイルは上書きせずエラーにする。
+App Translocation のパス (隔離属性が付いたまま開いたアプリ) には張らない (次回の起動で場所が変わる)。
+Windows には無い。
+
+- **symlink 経由の起動 (`current_exe()` が symlink) は、`run()` の先頭で LaunchServices に起動させ直して
+  終わる** (`.app` の実行ファイルをターミナルから動かすと GUI がターミナルにぶら下がるため)。
+  引数が全部実在するファイルなら `open -a <bundle> <絶対パス>` (Finder の「このアプリケーションで開く」と
+  同じ `RunEvent::Opened` で届く)、`--capture` 等を含むなら `open -n <bundle> --args <引数>`
+  (新しいプロセスの single-instance が起動中のインスタンスへ渡す)。起動し直したプロセスの cwd は `/` なので、
+  実在するパスは呼び出し元の cwd で絶対パスにしてから渡す。
+- ランチャーに登録する `/Applications/Flashcap.app/Contents/MacOS/flashcap --capture` は symlink では
+  ないので、この経路を通らず今まで通り動く。
+
 ## コマンドの ACL (src-tauri/build.rs + src-tauri/capabilities/)
 
 アプリ独自のコマンド (`generate_handler!`) も、窓ごとの capability で許可したものしか呼べない
