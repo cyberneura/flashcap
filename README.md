@@ -144,7 +144,16 @@ Pasted images and files opened from disk are never downscaled (their capture sca
 
 ## CLI Options
 
+On macOS, choose **Flashcap › Install Command Line Tools…** in the menu bar to put the
+`flashcap` command at `/usr/local/bin/flashcap` (a symlink to the executable inside the app;
+an administrator password is asked for when `/usr/local/bin` is not writable). Run it again
+after moving the app. Launched through that link, `flashcap` hands the launch to macOS, so
+the app is not tied to the terminal.
+
 ```bash
+# Open images (relative paths are fine)
+flashcap screenshot.png
+
 # Headless OCR: capture region → OCR → copy text → notify → exit
 flashcap --capture-screen-text
 
