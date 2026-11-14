@@ -28,8 +28,10 @@
   import {
     clearEditHistory,
     createEditHistory,
+    dropStaleRedo,
     historyActionForKey,
     isTextEntryTarget,
+    markApplied,
     recordEdit,
     stepRedo,
     stepUndo,
@@ -335,14 +337,29 @@
     }
   }
 
+  /**
+   * 注釈の中身の署名。Undo に積まない編集 (選択中のテキスト / ステップの色などをツールバーから
+   * 変える `updateActiveAttribute`) が Undo / Redo の後に挟まったかを見分けるのに使う。
+   * 土台画像は含めない (画像が変わるのはトリミングだけで、必ず pushUndo を通る)
+   */
+  function annotationSignature(): string {
+    return JSON.stringify([arrows, masks, shapes, textAnnotations, steps]);
+  }
+
   function undo() {
+    dropStaleRedo(editHistory, annotationSignature());
     const entry = stepUndo(editHistory, captureSnapshot);
-    if (entry) applySnapshot(entry);
+    if (!entry) return;
+    applySnapshot(entry);
+    markApplied(editHistory, annotationSignature());
   }
 
   function redo() {
+    dropStaleRedo(editHistory, annotationSignature());
     const entry = stepRedo(editHistory, captureSnapshot);
-    if (entry) applySnapshot(entry);
+    if (!entry) return;
+    applySnapshot(entry);
+    markApplied(editHistory, annotationSignature());
   }
 
   // Image element reference for composite rendering

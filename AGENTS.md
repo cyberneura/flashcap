@@ -220,6 +220,10 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   色を変えた直後の ⌘Z が効かなくなる。
 - ネイティブの Edit > Undo / Redo は WebView の文字入力にしか効かない (注釈の履歴は知らない) ので、
   入力欄の外では JS 側だけが動き、二重には動かない。
+- **Undo に積まない編集** (選択中のテキスト / ステップの色などをツールバーから変える `updateActiveAttribute`) が
+  Undo / Redo の後に挟まったら、次の Undo / Redo の前に Redo の履歴を捨てる (`dropStaleRedo`)。
+  `undo()` / `redo()` が反映直後の注釈の署名 (`annotationSignature()`) を `markApplied` で控え、次回に今の署名と比べる。
+  捨てないと Redo がその編集を黙って消す。積まない編集を足しても、注釈の配列を書き換える限りここで拾える。
 - 履歴は `$state` にしない (テンプレートから読まない。スナップショットを proxy で包まない)。
   Undo / Redo のボタンを置くなら、件数だけを別の `$state` に持つこと。
 

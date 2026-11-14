@@ -12,16 +12,38 @@ export interface EditHistory<T> {
   undo: T[];
   /** Undo で通り過ぎた状態。末尾が次に Redo で戻る状態 */
   redo: T[];
+  /**
+   * 最後の Undo / Redo で反映した直後の状態の署名 (`markApplied`)。`redo` が指す「続き」は
+   * この状態から先のものなので、今の状態の署名がこれと違えば `redo` は使えない。
+   */
+  appliedSignature: string | null;
 }
 
 export function createEditHistory<T>(): EditHistory<T> {
-  return { undo: [], redo: [] };
+  return { undo: [], redo: [], appliedSignature: null };
 }
 
 /** 新しい編集の直前に呼ぶ。`before` は編集前の状態 */
 export function recordEdit<T>(history: EditHistory<T>, before: T): void {
   history.undo.push(before);
   history.redo.length = 0;
+  history.appliedSignature = null;
+}
+
+/** Undo / Redo で取り出したスナップショットを反映した直後に、その状態の署名を控える */
+export function markApplied<T>(history: EditHistory<T>, signature: string): void {
+  history.appliedSignature = signature;
+}
+
+/**
+ * Undo / Redo の前に呼ぶ。最後の Undo / Redo の後に、`recordEdit` を通らない編集
+ * (選択中の注釈の色をツールバーから変える等。Undo には積まない) で状態が変わっていたら、
+ * Redo の履歴を捨てる。捨てないと、Redo がその編集を黙って消して古い続きへ進む。
+ */
+export function dropStaleRedo<T>(history: EditHistory<T>, signature: string): void {
+  if (history.redo.length > 0 && history.appliedSignature !== signature) {
+    history.redo.length = 0;
+  }
 }
 
 /**
@@ -48,6 +70,7 @@ export function stepRedo<T>(history: EditHistory<T>, current: () => T): T | null
 export function clearEditHistory<T>(history: EditHistory<T>): void {
   history.undo.length = 0;
   history.redo.length = 0;
+  history.appliedSignature = null;
 }
 
 export type HistoryAction = "undo" | "redo";

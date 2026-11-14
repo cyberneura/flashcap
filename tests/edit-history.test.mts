@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import {
   clearEditHistory,
   createEditHistory,
+  dropStaleRedo,
   historyActionForKey,
   isTextEntryTarget,
+  markApplied,
   recordEdit,
   stepRedo,
   stepUndo,
@@ -44,15 +46,25 @@ function editor() {
       recordEdit(history, capture());
       change(state);
     },
+    /** An edit that does not go through recordEdit (e.g. recoloring the selected annotation) */
+    untrackedEdit(change: (s: Snapshot) => void) {
+      change(state);
+    },
     undo() {
+      dropStaleRedo(history, JSON.stringify(state));
       const entry = stepUndo(history, capture);
-      if (entry) state = entry;
-      return entry !== null;
+      if (!entry) return false;
+      state = entry;
+      markApplied(history, JSON.stringify(state));
+      return true;
     },
     redo() {
+      dropStaleRedo(history, JSON.stringify(state));
       const entry = stepRedo(history, capture);
-      if (entry) state = entry;
-      return entry !== null;
+      if (!entry) return false;
+      state = entry;
+      markApplied(history, JSON.stringify(state));
+      return true;
     },
   };
 }
@@ -129,7 +141,54 @@ check("undo / redo on an empty history do nothing and do not capture the state",
   assert.equal(stepUndo(history, capture), null);
   assert.equal(stepRedo(history, capture), null);
   assert.equal(captured, 0);
-  assert.deepEqual(history, { undo: [], redo: [] });
+  assert.deepEqual(history, { undo: [], redo: [], appliedSignature: null });
+});
+
+check("an untracked edit after an undo makes redo do nothing and keeps that edit", () => {
+  const ed = editor();
+  ed.edit((s) => s.arrows.push("a"));
+  ed.edit((s) => s.arrows.push("b"));
+  ed.undo();
+  ed.untrackedEdit((s) => (s.arrows[0] = "a-recolored"));
+  assert.equal(ed.redo(), false);
+  assert.deepEqual(ed.state.arrows, ["a-recolored"]);
+});
+
+check("an untracked edit after an undo does not survive as a stale redo behind another undo", () => {
+  const ed = editor();
+  ed.edit((s) => s.arrows.push("a"));
+  ed.edit((s) => s.arrows.push("b"));
+  ed.undo();
+  ed.untrackedEdit((s) => (s.arrows[0] = "a-recolored"));
+  // Undo still works, and redo returns to the recolored state, not to the dropped ["a", "b"]
+  assert.equal(ed.undo(), true);
+  assert.deepEqual(ed.state.arrows, []);
+  assert.equal(ed.redo(), true);
+  assert.deepEqual(ed.state.arrows, ["a-recolored"]);
+  assert.equal(ed.redo(), false);
+});
+
+check("an untracked edit after a redo drops the remaining redo steps", () => {
+  const ed = editor();
+  ed.edit((s) => s.arrows.push("a"));
+  ed.edit((s) => s.arrows.push("b"));
+  ed.undo();
+  ed.undo();
+  ed.redo();
+  ed.untrackedEdit((s) => (s.arrows[0] = "a-recolored"));
+  assert.equal(ed.redo(), false);
+  assert.deepEqual(ed.state.arrows, ["a-recolored"]);
+});
+
+check("an untracked edit that is reverted before redo keeps the redo history", () => {
+  const ed = editor();
+  ed.edit((s) => s.arrows.push("a"));
+  ed.edit((s) => s.arrows.push("b"));
+  ed.undo();
+  ed.untrackedEdit((s) => (s.arrows[0] = "x"));
+  ed.untrackedEdit((s) => (s.arrows[0] = "a"));
+  assert.equal(ed.redo(), true);
+  assert.deepEqual(ed.state.arrows, ["a", "b"]);
 });
 
 check("clearEditHistory empties both directions", () => {
