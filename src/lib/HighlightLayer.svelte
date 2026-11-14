@@ -2,17 +2,21 @@
   // 蛍光ペンの塗り (CYBERNEURA-DEV-1264)。表示だけを受け持ち、操作は ShapeOverlay が受ける。
   //
   // +page.svelte で <img> のすぐ上・MaskOverlay より下に置く。マスクは「隠す」ものなので
-  // 蛍光ペンより上に来る。書き出し (renderComposite) もマスクの範囲には蛍光ペンを描かない。
-  import type { Shape } from "./types";
-  import { highlightPaint, type LumaMap } from "./highlight";
+  // 蛍光ペンより上に来る。さらにマスクの範囲は clip-path でくり抜く — ぼかしのマスクは
+  // backdrop-filter で下の絵をそのままぼかすので、下に蛍光ペンが残っていると色が混ざる。
+  // 書き出し (renderComposite) も同じ矩形をくり抜くので、マスクの中に蛍光ペンは出ない。
+  import type { MaskRect, Shape } from "./types";
+  import { highlightClipPath, highlightPaint, type LumaMap } from "./highlight";
 
   interface Props {
     shapes: Shape[];
+    /** マスクの範囲は蛍光ペンをくり抜く (highlightClipPath) */
+    masks: MaskRect[];
     /** 画像の明るさの地図。乗算で重ねるか半透明で重ねるかの判定に使う (highlight.ts) */
     lumaMap: LumaMap | null;
   }
 
-  let { shapes, lumaMap }: Props = $props();
+  let { shapes, masks, lumaMap }: Props = $props();
 
   let highlights = $derived(shapes.filter((s) => s.type === "highlight"));
 </script>
@@ -33,6 +37,7 @@
     style:background-color={shape.color}
     style:mix-blend-mode={paint.blend}
     style:opacity={paint.opacity}
+    style:clip-path={highlightClipPath(shape, masks)}
   ></div>
 {/each}
 

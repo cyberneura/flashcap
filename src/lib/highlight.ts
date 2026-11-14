@@ -134,3 +134,72 @@ export function hitsHighlight(
     py <= shape.y + shape.height + margin
   );
 }
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * マスクの矩形を、書き出し (renderComposite) がマスクを描く時と同じ丸めで整数にする。
+ * 潰れた (幅か高さが 0 以下の) マスクは null。
+ */
+export function roundedMaskRect(mask: Rect): Rect | null {
+  const width = Math.round(mask.width);
+  const height = Math.round(mask.height);
+  if (width <= 0 || height <= 0) return null;
+  return { x: Math.round(mask.x), y: Math.round(mask.y), width, height };
+}
+
+/**
+ * `rect` から `holes` をくり抜いた残りを、互いに重ならない矩形の並びで返す。
+ * 穴ごとに、掛かった矩形を上の帯・下の帯・左・右の最大 4 つに割る。
+ */
+export function subtractRects(rect: Rect, holes: readonly Rect[]): Rect[] {
+  let pieces: Rect[] = rect.width > 0 && rect.height > 0 ? [rect] : [];
+  for (const hole of holes) {
+    const next: Rect[] = [];
+    for (const p of pieces) {
+      const left = Math.max(p.x, hole.x);
+      const top = Math.max(p.y, hole.y);
+      const right = Math.min(p.x + p.width, hole.x + hole.width);
+      const bottom = Math.min(p.y + p.height, hole.y + hole.height);
+      if (right <= left || bottom <= top) {
+        next.push(p);
+        continue;
+      }
+      if (top > p.y) next.push({ x: p.x, y: p.y, width: p.width, height: top - p.y });
+      if (bottom < p.y + p.height) {
+        next.push({ x: p.x, y: bottom, width: p.width, height: p.y + p.height - bottom });
+      }
+      if (left > p.x) next.push({ x: p.x, y: top, width: left - p.x, height: bottom - top });
+      if (right < p.x + p.width) {
+        next.push({ x: right, y: top, width: p.x + p.width - right, height: bottom - top });
+      }
+    }
+    pieces = next;
+  }
+  return pieces;
+}
+
+/**
+ * 蛍光ペンの div に当てる `clip-path` (マスクの範囲をくり抜く)。座標は蛍光ペンの左上が原点。
+ * どのマスクにも掛かっていなければ null (clip-path を付けない)。全部隠れていれば面積の無い path。
+ *
+ * マスクは「隠す」ものなので蛍光ペンに勝つ。書き出しは同じ矩形を `clearRect` でくり抜くので、
+ * 画面でもマスクの下に蛍光ペンを残さない (ぼかしのマスクは backdrop-filter で下の絵を
+ * そのままぼかすので、残すと蛍光ペンの色がぼかしに混ざり、書き出しと食い違う)。
+ */
+export function highlightClipPath(shape: Rect, masks: readonly Rect[]): string | null {
+  const holes = masks.map(roundedMaskRect).filter((m): m is Rect => m !== null);
+  const pieces = subtractRects(shape, holes);
+  if (pieces.length === 1 && pieces[0] === shape) return null;
+  // 全部隠れた時。空の path は無効な値として無視され、くり抜かれずに全体が出てしまう
+  if (pieces.length === 0) return `path("M0 0Z")`;
+  const path = pieces
+    .map((p) => `M${p.x - shape.x} ${p.y - shape.y}h${p.width}v${p.height}h${-p.width}Z`)
+    .join("");
+  return `path("${path}")`;
+}
