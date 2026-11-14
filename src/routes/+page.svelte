@@ -32,6 +32,7 @@
     lumaMapFromRgba,
     lumaMapSize,
     parseShapeType,
+    roundedMaskRect,
     type LumaMap,
   } from "$lib/highlight";
   import {
@@ -1073,9 +1074,8 @@
 
         // 蛍光ペンは画像のすぐ上 (他の注釈より下) に重ねる。矢印や文字を覆わないため。
         // 乗算か半透明かは画面と同じ highlightPaint で決める (地図も同じ作り方)。
-        // **マスクの範囲には描かない** (画面では HighlightLayer が MaskOverlay の下にあり、
-        // マスクは蛍光ペンの無い <img> から作られる)。ここで描いてしまうと、後のモザイク / ぼかしが
-        // 蛍光ペンの色を拾って画面と食い違う。蛍光ペン 1 つごとに小さなレイヤーへ描き、
+        // **マスクの範囲には描かない** (画面でも HighlightLayer がマスクの範囲をくり抜く)。
+        // ここで描いてしまうと、後のモザイク / ぼかしが蛍光ペンの色を拾う。蛍光ペン 1 つごとに小さなレイヤーへ描き、
         // マスクの矩形をくり抜いてから重ねる
         const highlightShapes = shapes.filter((s) => s.type === "highlight");
         if (highlightShapes.length > 0) {
@@ -1093,11 +1093,9 @@
             layerCtx.fillStyle = shape.color;
             layerCtx.fillRect(shape.x - bx, shape.y - by, shape.width, shape.height);
             for (const mask of masks) {
-              // 下のマスクの描画と同じ丸め
-              layerCtx.clearRect(
-                Math.round(mask.x) - bx, Math.round(mask.y) - by,
-                Math.round(mask.width), Math.round(mask.height),
-              );
+              // 下のマスクの描画と同じ丸め。画面 (HighlightLayer の clip-path) も同じ矩形をくり抜く
+              const hole = roundedMaskRect(mask);
+              if (hole) layerCtx.clearRect(hole.x - bx, hole.y - by, hole.width, hole.height);
             }
             const paint = highlightPaint(map, shape);
             ctx.save();
@@ -2063,7 +2061,7 @@
           draggable="false"
           onload={onImageLoad}
         />
-        <HighlightLayer {shapes} {lumaMap} />
+        <HighlightLayer {shapes} {masks} {lumaMap} />
         <MaskOverlay
           bind:this={maskOverlayRef}
           {masks}
