@@ -26,6 +26,15 @@
   import { THUMBNAIL_SIDEBAR_KEY } from "$lib/thumbnailBrowser";
   import { isModKey, isWindows } from "$lib/platform";
   import {
+    clearEditHistory,
+    createEditHistory,
+    historyActionForKey,
+    isTextEntryTarget,
+    recordEdit,
+    stepRedo,
+    stepUndo,
+  } from "$lib/editHistory";
+  import {
     flushConfig,
     isRecord,
     loadConfig,
@@ -282,10 +291,12 @@
     width: number;
     height: number;
   }
-  let undoHistory = $state<EditSnapshot[]>([]);
+  // Undo / Redo の履歴。積み方・取り出し方は editHistory.ts (テストは tests/edit-history.test.mts)。
+  // テンプレートからは読まないので $state にしない (スナップショットを proxy で包まない)
+  const editHistory = createEditHistory<EditSnapshot>();
 
-  function pushUndo() {
-    undoHistory.push({
+  function captureSnapshot(): EditSnapshot {
+    return {
       arrows: structuredClone($state.snapshot(arrows)),
       masks: structuredClone($state.snapshot(masks)),
       shapes: structuredClone($state.snapshot(shapes)),
@@ -294,12 +305,16 @@
       image: imageBase64,
       width: naturalWidth,
       height: naturalHeight,
-    });
+    };
   }
 
-  function undo() {
-    const entry = undoHistory.pop();
-    if (!entry) return;
+  /** 編集の直前に呼ぶ。新しい編集なので Redo の履歴は捨てる */
+  function pushUndo() {
+    recordEdit(editHistory, captureSnapshot());
+  }
+
+  /** Undo / Redo で取り出したスナップショットを画面に反映する */
+  function applySnapshot(entry: EditSnapshot) {
     arrows = entry.arrows;
     masks = entry.masks;
     shapes = entry.shapes;
@@ -311,13 +326,23 @@
       naturalWidth = entry.width;
       naturalHeight = entry.height;
       // 土台画像が別物に入れ替わるので、旧画像の座標で作った枠と吸着線は持ち越せない
-      // (Cmd+Z は crop ツール表示中でも通るため、閉じないと枠が画像の外にはみ出す)
+      // (Cmd+Z / Cmd+Shift+Z は crop ツール表示中でも通るため、閉じないと枠が画像の外にはみ出す)
       if (cropToolActive) cancelCrop();
       bumpImageRevision();
       // imageModified はここで戻さない。トリミング後に保存やコピーでファイルへ
       // 書き戻していた場合、undo してもディスク上は変更済みのままなので、
       // 「メモリとファイルが一致している」とは言えなくなる
     }
+  }
+
+  function undo() {
+    const entry = stepUndo(editHistory, captureSnapshot);
+    if (entry) applySnapshot(entry);
+  }
+
+  function redo() {
+    const entry = stepRedo(editHistory, captureSnapshot);
+    if (entry) applySnapshot(entry);
   }
 
   // Image element reference for composite rendering
@@ -519,6 +544,10 @@
     });
 
     function handleKeydown(e: KeyboardEvent) {
+      const historyAction = historyActionForKey(
+        { key: e.key, mod: isModKey(e), shift: e.shiftKey, alt: e.altKey },
+        isWindows,
+      );
       if (e.key === "Escape") {
         e.preventDefault();
         if (isRecording) {
@@ -554,9 +583,13 @@
       } else if (isModKey(e) && e.key === "s") {
         e.preventDefault();
         saveImage();
-      } else if (isModKey(e) && e.key === "z") {
+      } else if (historyAction) {
+        // 文字入力欄にいる間は入力欄自身の Undo / Redo (WebView / macOS の Edit メニュー) に
+        // 任せる。ここで横取りすると、打ち間違いを戻すつもりの ⌘Z で注釈が消える
+        if (isTextEntryTarget(e.target as HTMLElement | null)) return;
         e.preventDefault();
-        undo();
+        if (historyAction === "undo") undo();
+        else redo();
       } else if (isWindows && isModKey(e) && e.key === ",") {
         // macOS はアプリメニューの Preferences... (⌘,) が受ける。Windows には
         // アプリメニューを置かないので (lib.rs の set_app_menu)、ここで開く
@@ -727,7 +760,7 @@
     shapes = [];
     textAnnotations = [];
     steps = [];
-    undoHistory = [];
+    clearEditHistory(editHistory);
     naturalWidth = 0;
     naturalHeight = 0;
     cropToolActive = false;
@@ -865,7 +898,7 @@
       shapes = [];
       textAnnotations = [];
       steps = [];
-      undoHistory = [];
+      clearEditHistory(editHistory);
       deactivateAllTools();
       imageGeneration++;
       videoPath = result.file_path;

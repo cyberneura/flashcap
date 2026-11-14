@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -201,6 +201,27 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   **ここで `MIN_SIZE` を閾値に流用しない** — 3px 引いただけでも画面には正当な枠が
   出ているので、離した瞬間にそれが消えることになる。判定は吸着**前**の座標で行う
   (吸着が終点を始点へ引き戻すと、引いているのに「動いていない」になる)。
+
+## Undo / Redo (src/lib/editHistory.ts + src/routes/+page.svelte)
+
+注釈とトリミングの履歴はスナップショット方式 (CYBERNEURA-DEV-1263 で Redo を追加)。
+⌘Z = Undo、⌘⇧Z = Redo (Windows は Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y)。
+
+- 積み方・取り出し方 (`recordEdit` / `stepUndo` / `stepRedo`)、キーの判定 (`historyActionForKey`)、
+  入力欄の判定 (`isTextEntryTarget`) は `editHistory.ts` の純関数 (`tests/edit-history.test.mts`)。
+  `+page.svelte` は `captureSnapshot()` (今の状態の複製) と `applySnapshot()` (反映。Undo / Redo で共通) だけを持つ。
+- **編集の直前に `pushUndo()` を呼ぶ**のは従来どおり。`pushUndo()` は Redo の履歴を捨てる。
+  Undo は取り出す前に今の状態を Redo 側へ積み、Redo はその逆。別の画像に替わる 2 か所
+  (撮影・貼り付け・ファイルを開く / 動画への切り替え) では `clearEditHistory` で両方を空にする。
+- **文字入力欄 (TEXTAREA / contentEditable / 文字を打つ type の INPUT) にフォーカスがある間は横取りしない。**
+  テキスト注釈の編集中の ⌘Z / ⌘⇧Z は入力欄の Undo / Redo (macOS はネイティブの Edit メニューの
+  `PredefinedMenuItem::undo` / `redo`、Windows は WebView2) として働き、注釈の履歴は動かない。
+  **色選択やスライダーの INPUT は入力欄に数えない** — 操作後もフォーカスが残るので、数えると
+  色を変えた直後の ⌘Z が効かなくなる。
+- ネイティブの Edit > Undo / Redo は WebView の文字入力にしか効かない (注釈の履歴は知らない) ので、
+  入力欄の外では JS 側だけが動き、二重には動かない。
+- 履歴は `$state` にしない (テンプレートから読まない。スナップショットを proxy で包まない)。
+  Undo / Redo のボタンを置くなら、件数だけを別の `$state` に持つこと。
 
 ## テキスト注釈 (src/lib/TextOverlay.svelte + src/lib/textHit.ts)
 
