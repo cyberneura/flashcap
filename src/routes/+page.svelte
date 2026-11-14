@@ -26,6 +26,7 @@
   import ThumbnailSidebar from "$lib/ThumbnailSidebar.svelte";
   import { THUMBNAIL_SIDEBAR_KEY } from "$lib/thumbnailBrowser";
   import { isModKey, isWindows } from "$lib/platform";
+  import { toolForKey, type ShortcutTool } from "$lib/toolShortcuts";
   import {
     DEFAULT_HIGHLIGHT_COLOR,
     highlightPaint,
@@ -655,6 +656,17 @@
         // アプリメニューを置かないので (lib.rs の set_app_menu)、ここで開く
         e.preventDefault();
         invoke("open_preferences").catch((err) => console.error("Failed to open Preferences:", err));
+      } else {
+        // 修飾キー無しの 1 文字でツールを切り替える (A / R / E / H / N / T / M / C)。
+        // 入力欄・IME の変換中・撮影中などは toolForKey が弾く (src/lib/toolShortcuts.ts)
+        const tool = toolForKey(e, e.target as HTMLElement | null, {
+          hasImage: imageUrl != null && !videoMode,
+          busy: isCapturing || isRecording,
+        });
+        if (tool) {
+          e.preventDefault();
+          toggleToolByShortcut(tool);
+        }
       }
     }
     window.addEventListener("keydown", handleKeydown);
@@ -1686,6 +1698,20 @@
     if (!wasActive) {
       shapeToolActive = true;
       shapeSettings.type = type;
+    }
+  }
+
+  /** 1 文字のキーからの切り替え。ツールバーのボタンと同じトグルを呼ぶ */
+  function toggleToolByShortcut(tool: ShortcutTool) {
+    switch (tool) {
+      case "arrow": toggleArrowTool(); break;
+      case "rect":
+      case "ellipse":
+      case "highlight": toggleShapeTool(tool); break;
+      case "step": toggleStepTool(); break;
+      case "text": toggleTextTool(); break;
+      case "mask": toggleMaskTool(); break;
+      case "crop": toggleCropTool(); break;
     }
   }
 

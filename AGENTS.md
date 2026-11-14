@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -226,6 +226,24 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   捨てないと Redo がその編集を黙って消す。積まない編集を足しても、注釈の配列を書き換える限りここで拾える。
 - 履歴は `$state` にしない (テンプレートから読まない。スナップショットを proxy で包まない)。
   Undo / Redo のボタンを置くなら、件数だけを別の `$state` に持つこと。
+
+## ツールの 1 文字キー (src/lib/toolShortcuts.ts)
+
+修飾キー無しの 1 文字で注釈ツールを切り替える (CYBERNEURA-DEV-1265)。`A` 矢印 / `R` 矩形 / `E` 楕円 /
+`H` 蛍光ペン / `N` ステップ / `T` テキスト / `M` マスク / `C` トリミング。macOS も Windows も同じキー。
+アプリ全体のグローバルホットキーではなく、ウインドウにフォーカスがある時の keydown だけ。
+
+- 対応表 `TOOL_SHORTCUTS` と判定 `toolForKey` は純関数 (`tests/tool-shortcuts.test.mts`)。`+page.svelte` の
+  `handleKeydown` の最後の分岐が呼び、`toggleToolByShortcut` が**ツールバーのボタンと同じ `toggle…Tool`** を呼ぶ
+  (もう一度押すと解除)。ツールチップのキーの表記も同じ表から出す (`toolShortcutLabel`)。
+- **反応しない条件**: 修飾キー (⌘ / Ctrl / Alt / Shift) 付き (⌘C などを素通しする)、フォーカスが
+  INPUT / TEXTAREA / SELECT / contentEditable (テキスト注釈の入力中、パス欄、太さの select — select は文字キーで
+  選択肢へ飛ぶので、反応すると両方に効く)、IME の変換中 (`isComposing` / `key === "Process"`)、キーの自動リピート、
+  画像が無い・動画モード、撮影中・録画中。
+- **ツールを足したらキーも足す。** 既存の ⌘ 付きショートカット (C / V / S / Z / Y) と同じ文字でも、修飾キー無しなら
+  衝突しない (`C` はトリミングに使っている)。Esc / Enter / Delete は他の分岐と各オーバーレイが使うので割り当てない。
+- Undo / Redo の `isTextEntryTarget` (`editHistory.ts`) とは判定が違う: あちらは色選択やスライダーにフォーカスが
+  残っていても効かせたいので文字入力欄だけを見る。こちらはフォーム部品すべてで止める。
 
 ## テキスト注釈 (src/lib/TextOverlay.svelte + src/lib/textHit.ts)
 
