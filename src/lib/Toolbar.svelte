@@ -11,6 +11,7 @@
   } from "$lib/types";
   import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
   import { isWindows, shortcutLabel } from "$lib/platform";
+  import { toolShortcutLabel } from "$lib/toolShortcuts";
   import ShellCommandMenu from "$lib/ShellCommandMenu.svelte";
   import type { ShellCommand } from "$lib/shellCommands";
 
@@ -213,7 +214,7 @@
     class:active={arrowToolActive}
     onclick={onToggleArrowTool}
     aria-label="Arrow tool"
-    data-tooltip="Arrow tool"
+    data-tooltip="Arrow tool ({toolShortcutLabel('arrow')})"
   >
     <i class="bi bi-arrow-up-right"></i>
   </button>
@@ -308,7 +309,7 @@
     class:active={shapeToolActive && shapeSettings.type === "rect"}
     onclick={() => onToggleShapeTool("rect")}
     aria-label="Rectangle tool"
-    data-tooltip="Rectangle tool"
+    data-tooltip="Rectangle tool ({toolShortcutLabel('rect')})"
   >
     <i class="bi bi-square"></i>
   </button>
@@ -322,7 +323,7 @@
     class:active={shapeToolActive && shapeSettings.type === "ellipse"}
     onclick={() => onToggleShapeTool("ellipse")}
     aria-label="Ellipse tool"
-    data-tooltip="Ellipse tool"
+    data-tooltip="Ellipse tool ({toolShortcutLabel('ellipse')})"
   >
     <i class="bi bi-circle"></i>
   </button>
@@ -336,7 +337,7 @@
     class:active={shapeToolActive && shapeSettings.type === "highlight"}
     onclick={() => onToggleShapeTool("highlight")}
     aria-label="Highlighter tool"
-    data-tooltip="Highlighter tool"
+    data-tooltip="Highlighter tool ({toolShortcutLabel('highlight')})"
   >
     <i class="bi bi-highlighter"></i>
   </button>
@@ -358,7 +359,7 @@
     class:active={stepToolActive}
     onclick={onToggleStepTool}
     aria-label="Step tool"
-    data-tooltip="Step tool (numbered markers)"
+    data-tooltip="Step tool (numbered markers) ({toolShortcutLabel('step')})"
   >
     <i class="bi bi-1-circle-fill"></i>
   </button>
@@ -413,7 +414,7 @@
     class:active={textToolActive}
     onclick={onToggleTextTool}
     aria-label="Text tool"
-    data-tooltip="Text tool"
+    data-tooltip="Text tool ({toolShortcutLabel('text')})"
   >
     <i class="bi bi-fonts" style="font-size: 125%"></i>
   </button>
@@ -488,7 +489,7 @@
     class:active={maskToolActive}
     onclick={onToggleMaskTool}
     aria-label="Mask tool"
-    data-tooltip="Mask tool"
+    data-tooltip="Mask tool ({toolShortcutLabel('mask')})"
   >
     <i class="bi bi-eye-slash"></i>
   </button>
@@ -555,7 +556,7 @@
     onclick={onToggleCropTool}
     disabled={!hasImage}
     aria-label="Crop tool"
-    data-tooltip="Crop tool"
+    data-tooltip="Crop tool ({toolShortcutLabel('crop')})"
   >
     <i class="bi bi-crop"></i>
   </button>

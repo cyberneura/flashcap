@@ -128,6 +128,9 @@ fails, install them with `xcode-select --install`.
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘⇧Z to redo,
   ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on
   Windows, where Ctrl+Y also redoes)
+- Single-key tool shortcuts while an image is open: `A` arrow, `R` rectangle, `E` ellipse,
+  `H` highlighter, `N` step marker, `T` text, `M` mask, `C` crop (press again to leave the tool;
+  ignored while typing in a text annotation or any other field)
 - Shell commands (macOS only): register commands in Preferences and run them on the open image
   from the toolbar. The image path is passed as `$IMAGE_PATH` (write `"${IMAGE_PATH}"` with the
   quotes). Output is logged to `$TMPDIR/flashcap/shell-logs/`
