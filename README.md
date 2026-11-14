@@ -57,7 +57,7 @@ The Windows version differs from the macOS one:
 - No notifications (e.g. after auto-copy).
 - HEIC / HEIF images cannot be opened.
 - Shortcuts use Ctrl instead of ⌘ (Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+S / Ctrl+Z,
-  Ctrl+, for Preferences).
+  Ctrl+Shift+Z or Ctrl+Y to redo, Ctrl+, for Preferences).
 
 ### Check for Updates
 
@@ -123,8 +123,9 @@ fails, install them with `xcode-select --install`.
   file from Finder
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
-- Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘V to paste
-  an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on Windows)
+- Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘⇧Z to redo,
+  ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on
+  Windows, where Ctrl+Y also redoes)
 - Shell commands (macOS only): register commands in Preferences and run them on the open image
   from the toolbar. The image path is passed as `$IMAGE_PATH` (write `"${IMAGE_PATH}"` with the
   quotes). Output is logged to `$TMPDIR/flashcap/shell-logs/`
