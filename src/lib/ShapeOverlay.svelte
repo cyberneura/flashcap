@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Shape, ShapeSettings } from "./types";
+  import { highlightPaint, hitsHighlight, type LumaMap } from "./highlight";
 
   interface Props {
     shapes: Shape[];
@@ -9,11 +10,13 @@
     scale: number;
     /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
     annotationScale?: number;
+    /** 画像の明るさの地図。蛍光ペンを乗算で重ねるか半透明で重ねるかの判定に使う (highlight.ts) */
+    lumaMap?: LumaMap | null;
     onShapesChange: (shapes: Shape[]) => void;
     onBeforeMutate?: () => void;
   }
 
-  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, onShapesChange, onBeforeMutate }: Props = $props();
+  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move" | "resize" | null>(null);
@@ -86,6 +89,8 @@
 
     onBeforeMutate?.();
     dragStart = pt;
+    // 蛍光ペンは塗りだけなので、枠線の設定 (白縁・影) は持たせない
+    const isHighlight = settings.type === "highlight";
     drawingShape = {
       id: crypto.randomUUID(),
       type: settings.type,
@@ -93,10 +98,10 @@
       y: pt.y,
       width: 0,
       height: 0,
-      color: settings.color,
+      color: isHighlight ? settings.highlightColor : settings.color,
       thickness: settings.thickness,
-      whiteStroke: settings.whiteStroke,
-      dropShadow: settings.dropShadow,
+      whiteStroke: isHighlight ? false : settings.whiteStroke,
+      dropShadow: isHighlight ? false : settings.dropShadow,
     };
     dragging = "draw";
     selectedId = null;
@@ -104,6 +109,8 @@
 
   // 線(stroke)の近くをクリックで選択
   function hitTestShape(shape: Shape, px: number, py: number): boolean {
+    // 蛍光ペンは塗りなので内側のどこでも当たる
+    if (shape.type === "highlight") return hitsHighlight(shape, px, py, 6 / scale);
     const threshold = shape.thickness * annotationScale + 6 / scale;
     const { x, y, width: w, height: h } = shape;
 
@@ -290,6 +297,24 @@
 
 <svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} />
 
+<!--
+  置いた蛍光ペンの塗りは HighlightLayer (マスクより下) が描く。ここで描くのは引いている途中の
+  1 つだけ (確定するまでの間だけ、マスクの上に見える)。svg の中には選択枠とハンドルだけを描く。
+-->
+{#if drawingShape && drawingShape.type === "highlight"}
+  {@const paint = highlightPaint(lumaMap, drawingShape)}
+  <div
+    class="highlight-fill"
+    style:left="{drawingShape.x}px"
+    style:top="{drawingShape.y}px"
+    style:width="{drawingShape.width}px"
+    style:height="{drawingShape.height}px"
+    style:background-color={drawingShape.color}
+    style:mix-blend-mode={paint.blend}
+    style:opacity={paint.opacity}
+  ></div>
+{/if}
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svg
   class="shape-overlay"
@@ -308,7 +333,9 @@
   {#each allShapes as shape (shape.id)}
     {@const isSelected = shape.id === selectedId}
 
-    {#if shape.dropShadow && shape.whiteStroke}
+    {#if shape.type === "highlight"}
+      <!-- 蛍光ペンの塗りは HighlightLayer。ここでは選択枠とハンドルだけを描く -->
+    {:else if shape.dropShadow && shape.whiteStroke}
       <!-- 白枠のみに影を適用 -->
       {#if shape.type === "rect"}
         <rect
@@ -411,5 +438,9 @@
 
   .handle {
     @apply pointer-events-auto;
+  }
+
+  .highlight-fill {
+    @apply absolute pointer-events-none;
   }
 </style>

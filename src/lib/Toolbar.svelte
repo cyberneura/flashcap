@@ -5,6 +5,7 @@
     CropRect,
     MaskSettings,
     ShapeSettings,
+    ShapeType,
     StepSettings,
     TextSettings,
   } from "$lib/types";
@@ -103,7 +104,7 @@
     /** OCR でメール / IP / トークン等を見つけて自動でマスクを置く (macOS のみ) */
     onRedactSensitiveText: () => void;
     redactBusy: boolean;
-    onToggleShapeTool: (type: "rect" | "ellipse") => void;
+    onToggleShapeTool: (type: ShapeType) => void;
     onToggleTextTool: () => void;
     onToggleStepTool: () => void;
     onCopyPath: () => void;
@@ -328,6 +329,28 @@
 
   {#if shapeToolActive && shapeSettings.type === "ellipse"}
     {@render shapeSettingsPanel()}
+  {/if}
+
+  <button
+    class="tool-btn"
+    class:active={shapeToolActive && shapeSettings.type === "highlight"}
+    onclick={() => onToggleShapeTool("highlight")}
+    aria-label="Highlighter tool"
+    data-tooltip="Highlighter tool"
+  >
+    <i class="bi bi-highlighter"></i>
+  </button>
+
+  {#if shapeToolActive && shapeSettings.type === "highlight"}
+    <!-- 蛍光ペンは塗りだけなので、太さ・白縁・影は出さない -->
+    <div class="tool-settings">
+      <input
+        type="color"
+        class="color-picker"
+        bind:value={shapeSettings.highlightColor}
+        data-tooltip="Highlighter color"
+      />
+    </div>
   {/if}
 
   <button

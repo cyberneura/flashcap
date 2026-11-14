@@ -36,7 +36,8 @@ export interface MaskSettings {
   mosaicBlockSize: number;
 }
 
-export type ShapeType = "rect" | "ellipse";
+// `highlight` は蛍光ペン (枠線なし・半透明の塗りの矩形。src/lib/highlight.ts)
+export type ShapeType = "rect" | "ellipse" | "highlight";
 
 export interface Shape {
   id: string;
@@ -54,6 +55,8 @@ export interface Shape {
 export interface ShapeSettings {
   type: ShapeType;
   color: string;
+  /** 蛍光ペンの色。枠線の色 (`color`) とは別に持つ (赤い枠の設定のまま蛍光ペンが赤くならないように) */
+  highlightColor: string;
   thickness: number;
   whiteStroke: boolean;
   dropShadow: boolean;

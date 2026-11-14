@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
   import { Toaster, toast } from "svelte-sonner";
@@ -12,6 +12,7 @@
   import ArrowOverlay from "$lib/ArrowOverlay.svelte";
   import MaskOverlay from "$lib/MaskOverlay.svelte";
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
+  import HighlightLayer from "$lib/HighlightLayer.svelte";
   import TextOverlay from "$lib/TextOverlay.svelte";
   import StepOverlay from "$lib/StepOverlay.svelte";
   import { stepFontSize, stepLabelBaseline } from "$lib/steps";
@@ -25,6 +26,14 @@
   import ThumbnailSidebar from "$lib/ThumbnailSidebar.svelte";
   import { THUMBNAIL_SIDEBAR_KEY } from "$lib/thumbnailBrowser";
   import { isModKey, isWindows } from "$lib/platform";
+  import {
+    DEFAULT_HIGHLIGHT_COLOR,
+    highlightPaint,
+    lumaMapFromRgba,
+    lumaMapSize,
+    parseShapeType,
+    type LumaMap,
+  } from "$lib/highlight";
   import {
     clearEditHistory,
     createEditHistory,
@@ -60,7 +69,7 @@
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
   let stepOverlayRef = $state<ReturnType<typeof StepOverlay> | null>(null);
-  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
+  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, ShapeType, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -167,13 +176,14 @@
     mosaicBlockSize: 7,
   });
 
-  // Shape tool state (rect / ellipse)
+  // Shape tool state (rect / ellipse / highlight)
   let shapeToolActive = $state(false);
   let shapes = $state<Shape[]>([]);
   const SHAPE_SETTINGS_KEY = "shape_settings";
   let shapeSettings = $state<ShapeSettings>({
     type: "rect",
     color: "#FF0000",
+    highlightColor: DEFAULT_HIGHLIGHT_COLOR,
     thickness: 4,
     whiteStroke: true,
     dropShadow: true,
@@ -414,6 +424,38 @@
     imageRevision++;
   }
 
+  // 蛍光ペンの重ね方 (乗算か半透明か) を決める、画像の明るさの粗い地図 (src/lib/highlight.ts)。
+  // 画面 (ShapeOverlay) には表示中の <img> から作ったものを渡し、書き出し (renderComposite) は
+  // 自分で読み込んだ画像から同じ関数で作る。元の画素も縮め方も同じなので答えは一致する
+  let lumaMap = $state.raw<LumaMap | null>(null);
+
+  function buildLumaMap(source: HTMLImageElement): LumaMap | null {
+    const imageWidth = source.naturalWidth;
+    const imageHeight = source.naturalHeight;
+    if (imageWidth <= 0 || imageHeight <= 0) return null;
+    const { width, height } = lumaMapSize(imageWidth, imageHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, width, height);
+    return lumaMapFromRgba(ctx.getImageData(0, 0, width, height).data, width, height, imageWidth, imageHeight);
+  }
+
+  // imageRevision はデコード完了後に進むので、その時点の <img> は新しい画像を描ける。
+  // 蛍光ペンが 1 つも無い間は作らない (撮影のたびに全画像を縮小して読む必要は無い)
+  let hasHighlight = $derived(shapes.some((s) => s.type === "highlight"));
+  let highlightToolActive = $derived(shapeToolActive && shapeSettings.type === "highlight");
+  $effect(() => {
+    imageRevision;
+    if (!imgEl || !imageUrl || !(hasHighlight || highlightToolActive)) {
+      lumaMap = null;
+      return;
+    }
+    lumaMap = untrack(() => buildLumaMap(imgEl!));
+  });
+
   // CSS scale to fit the natural-size wrapper into the viewport
   let displayScale = $derived(
     naturalWidth > 0 && naturalHeight > 0 && viewportWidth > 0 && viewportHeight > 0
@@ -648,8 +690,10 @@
     }
     const shape = config[SHAPE_SETTINGS_KEY];
     if (isRecord(shape)) {
-      shapeSettings.type = pick(shape, "type", shapeSettings.type);
+      // 種別は typeof だけでは足りない (知らない文字列を弾く)。無ければ今の値のまま
+      if ("type" in shape) shapeSettings.type = parseShapeType(shape.type);
       shapeSettings.color = pick(shape, "color", shapeSettings.color);
+      shapeSettings.highlightColor = pick(shape, "highlightColor", shapeSettings.highlightColor);
       shapeSettings.thickness = pick(shape, "thickness", shapeSettings.thickness);
       shapeSettings.whiteStroke = pick(shape, "whiteStroke", shapeSettings.whiteStroke);
       shapeSettings.dropShadow = pick(shape, "dropShadow", shapeSettings.dropShadow);
@@ -693,9 +737,9 @@
   });
 
   $effect(() => {
-    const { type, color, thickness, whiteStroke, dropShadow } = shapeSettings;
+    const { type, color, highlightColor, thickness, whiteStroke, dropShadow } = shapeSettings;
     if (!configLoaded) return;
-    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, thickness, whiteStroke, dropShadow });
+    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, highlightColor, thickness, whiteStroke, dropShadow });
   });
 
   $effect(() => {
@@ -1027,6 +1071,43 @@
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0);
 
+        // 蛍光ペンは画像のすぐ上 (他の注釈より下) に重ねる。矢印や文字を覆わないため。
+        // 乗算か半透明かは画面と同じ highlightPaint で決める (地図も同じ作り方)。
+        // **マスクの範囲には描かない** (画面では HighlightLayer が MaskOverlay の下にあり、
+        // マスクは蛍光ペンの無い <img> から作られる)。ここで描いてしまうと、後のモザイク / ぼかしが
+        // 蛍光ペンの色を拾って画面と食い違う。蛍光ペン 1 つごとに小さなレイヤーへ描き、
+        // マスクの矩形をくり抜いてから重ねる
+        const highlightShapes = shapes.filter((s) => s.type === "highlight");
+        if (highlightShapes.length > 0) {
+          const map = buildLumaMap(img);
+          for (const shape of highlightShapes) {
+            const bx = Math.floor(shape.x);
+            const by = Math.floor(shape.y);
+            const bw = Math.ceil(shape.x + shape.width) - bx;
+            const bh = Math.ceil(shape.y + shape.height) - by;
+            if (bw <= 0 || bh <= 0) continue;
+            const layer = document.createElement("canvas");
+            layer.width = bw;
+            layer.height = bh;
+            const layerCtx = layer.getContext("2d")!;
+            layerCtx.fillStyle = shape.color;
+            layerCtx.fillRect(shape.x - bx, shape.y - by, shape.width, shape.height);
+            for (const mask of masks) {
+              // 下のマスクの描画と同じ丸め
+              layerCtx.clearRect(
+                Math.round(mask.x) - bx, Math.round(mask.y) - by,
+                Math.round(mask.width), Math.round(mask.height),
+              );
+            }
+            const paint = highlightPaint(map, shape);
+            ctx.save();
+            ctx.globalCompositeOperation = paint.blend === "multiply" ? "multiply" : "source-over";
+            ctx.globalAlpha = paint.opacity;
+            ctx.drawImage(layer, bx, by);
+            ctx.restore();
+          }
+        }
+
         // Coords are already in natural pixels, no scale conversion needed.
         // 太さ・文字・影は Retina の撮影なら 2 倍で描く (オーバーレイと同じ倍率)
         const k = annotationScale;
@@ -1185,8 +1266,9 @@
           }
         }
 
-        // Shapes (rect / ellipse)
+        // Shapes (rect / ellipse)。蛍光ペンは上で描いてある
         for (const shape of shapes) {
+          if (shape.type === "highlight") continue;
           function drawShapeWhiteStroke(c: CanvasRenderingContext2D) {
             if (shape.type === "rect") {
               c.strokeStyle = "white";
@@ -1600,7 +1682,7 @@
     maskToolActive = !wasActive;
   }
 
-  function toggleShapeTool(type: "rect" | "ellipse") {
+  function toggleShapeTool(type: ShapeType) {
     const wasActive = shapeToolActive && shapeSettings.type === type;
     deactivateAllTools();
     if (!wasActive) {
@@ -1981,6 +2063,7 @@
           draggable="false"
           onload={onImageLoad}
         />
+        <HighlightLayer {shapes} {lumaMap} />
         <MaskOverlay
           bind:this={maskOverlayRef}
           {masks}
@@ -2000,6 +2083,7 @@
           interactive={shapeToolActive || (noToolActive && shapes.length > 0)}
           scale={displayScale}
           {annotationScale}
+          {lumaMap}
           onBeforeMutate={pushUndo}
           onShapesChange={(newShapes) => (shapes = newShapes)}
         />

@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -258,6 +258,7 @@ images = 保存した画像、image = この画像)。
 |---|---|---|
 | サムネイルブラウザ | `bi-images` | 保存した画像の一覧 |
 | 矢印 / 矩形 / 楕円 / ステップ / テキスト | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | 描くものの形そのもの |
+| 蛍光ペン | `bi-highlighter` | 文字列を目立たせる半透明の塗り (矩形 / 楕円と同じ shape ツールの種別) |
 | 白縁 / 影 | `bi-border-outer` / `bi-shadows` | 縁取り / 影 (4 つのツールで共通) |
 | 太字 / 斜体 | `bi-type-bold` / `bi-type-italic` | |
 | マスク | `bi-eye-slash` | 隠す。モードは `bi-grid-3x3-gap-fill` (モザイク) / `bi-droplet-half` (ぼかし) / `bi-paint-bucket` (塗り) |
@@ -270,6 +271,36 @@ images = 保存した画像、image = この画像)。
 | タイマー撮影 / 撮影 / 録画 | `bi-stopwatch` / `bi-camera` / `bi-record-circle` | |
 
 成功の一時表示は `bi-check-lg`、処理中は `bi-arrow-repeat` (回転)。
+
+## 蛍光ペン (src/lib/highlight.ts + src/lib/ShapeOverlay.svelte)
+
+文字列や行を目立たせる半透明の塗りの矩形 (CYBERNEURA-DEV-1264)。`ShapeType` の 3 つ目の種別 `highlight` で、
+置く・動かす・リサイズ・Delete・Undo は矩形のものをそのまま使う (`shapes` に入る)。ツールバーは楕円の隣の
+`bi-highlighter`。文字の認識に頼るスマートハイライトは入れていない。
+
+- **色は `shape_settings.highlightColor`** (既定 `#ffe600`)。枠線の色 (`color`) と分けてあるのは、赤い枠の設定のまま
+  蛍光ペンが赤くならないため。太さ・白縁・影は蛍光ペンでは出さず、置く時に `whiteStroke` / `dropShadow` を false にする。
+- **重ね方は `highlightPaint()` が範囲ごとに決める**: 明るい地は乗算 (地が色付き、黒い文字はそのまま)、
+  平均輝度が `DARK_LUMA_THRESHOLD` 未満の暗い地 (ダークモードの画面) は不透明度 0.4 の通常合成
+  (乗算だと地がさらに暗くなるだけで色が出ない)。平均輝度は、画像を長辺 256 升に縮めた `LumaMap` から取る。
+  **画面 (`ShapeOverlay` の `lumaMap` prop) と書き出し (`renderComposite`) の両方が同じ関数・同じ作り方の地図
+  (`buildLumaMap`) を通る。** 片方だけ判定を変えると見た目と保存した画像が食い違う。
+  地図は蛍光ペンがあるか蛍光ペンツールが有効な間だけ作る。
+- **画面では svg ではなく `<div>` に `mix-blend-mode` を当てて描く** (`src/lib/HighlightLayer.svelte`。表示だけで、
+  操作は ShapeOverlay の svg が受ける。svg には選択枠とハンドルだけを描く)。svg の中の要素に当てた mix-blend-mode が
+  svg の外の `<img>` と混ざるかは描画エンジン次第なので頼らない (Chrome では混ざった。WKWebView は未確認)。
+  div 方式は「transform + overflow-hidden の入れ物の中の img の上に div を重ねる」構成を Chrome で描かせ、同じ絵を
+  キャンバスの `multiply` / `globalAlpha` で描いたものと一致することを確かめてある (明るい地の乗算、暗い地の 0.4。
+  暗い地の乗算は色が出ないことも)。
+- **重ね順は画像のすぐ上で、マスクより下。** `HighlightLayer` は `<img>` と `MaskOverlay` の間に置く
+  (矩形・楕円・文字・矢印・ステップは更に上)。マスクは「隠す」ものなので蛍光ペンに勝ち、モザイク / ぼかしは
+  蛍光ペンの無い `<img>` から作られる。**書き出しも同じにする**: `drawImage` の直後に描くが、蛍光ペン 1 つごとに
+  小さなレイヤーへ塗ってマスクの矩形を `clearRect` でくり抜いてから重ねる。くり抜かずに描くと、後のモザイク / ぼかしが
+  蛍光ペンの色を拾い (境界をまたぐブロックでは平均されて滲む)、画面と食い違う。
+  引いている途中の 1 つだけは ShapeOverlay が自分で描く (確定するまでの間だけマスクの上に見える)。
+- 当たり判定は内側のどこでも (`hitsHighlight`)。枠線の近くだけに反応する矩形と違う。
+- 設定の `type` は `parseShapeType` で検め、知らない値は `rect` に戻す (`pick` は typeof しか見ない)。
+- テストは `tests/highlight.test.mts` (種別の検証、地図、平均輝度、重ね方の切り替え、当たり判定)。
 
 ## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
 
