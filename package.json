@@ -1,6 +1,6 @@
 {
   "name": "flashcap",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts && node --experimental-strip-types tests/region-select.test.mts && node --experimental-strip-types tests/home-path.test.mts && node --experimental-strip-types tests/shell-commands.test.mts && node --experimental-strip-types tests/thumbnail-browser.test.mts && node --experimental-strip-types tests/capabilities.test.mts && node --experimental-strip-types tests/steps.test.mts && node --experimental-strip-types tests/sensitive-text.test.mts && node --experimental-strip-types tests/edit-history.test.mts",
+    "test": "node --experimental-strip-types tests/edge-snap.test.mts && node --experimental-strip-types tests/crop-aspect.test.mts && node --experimental-strip-types tests/text-hit.test.mts && node --experimental-strip-types tests/region-select.test.mts && node --experimental-strip-types tests/home-path.test.mts && node --experimental-strip-types tests/shell-commands.test.mts && node --experimental-strip-types tests/thumbnail-browser.test.mts && node --experimental-strip-types tests/capabilities.test.mts && node --experimental-strip-types tests/steps.test.mts && node --experimental-strip-types tests/sensitive-text.test.mts && node --experimental-strip-types tests/edit-history.test.mts && node --experimental-strip-types tests/highlight.test.mts",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "APPLE_SIGNING_IDENTITY='Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)' tauri",
     "release": "bash scripts/release.sh",

@@ -94,6 +94,8 @@ fails, install them with `xcode-select --install`.
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
 - Rectangle and ellipse tools (color, thickness, white stroke, drop shadow; hold Shift for a
   square / circle) with resize/move handles
+- Highlighter tool: drag a translucent rectangle over a line of text to make it stand out
+  (yellow by default; the text underneath stays readable, on light and dark backgrounds)
 - Text tool (color, size, bold, italic, white stroke, drop shadow). Text can span multiple lines:
   Enter adds a line, ⌘+Enter (Ctrl+Enter on Windows) finishes. Double-click a text annotation to
   edit it again
