@@ -119,6 +119,7 @@ fails, install them with `xcode-select --install`.
 - Clipboard integration (copy path or image)
 - Auto-copy each capture (off / file path / image data) from the toolbar, with a notification
 - Optional menu bar icon (Preferences) to capture, record, and copy text on screen without opening the window
+- **New Image from Clipboard** (File menu, ⌘N, and the menu bar icon): saves the current image with its annotations and opens the image on the clipboard, just like launching Flashcap afresh and pasting
 - Drag & drop to external apps (e.g. Slack)
 - Saved-images sidebar (toggle at the left end of the toolbar): thumbnails of the save folder,
   newest first. Click one to save the current image and open it; drag one to another app like a

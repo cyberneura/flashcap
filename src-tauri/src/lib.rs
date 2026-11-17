@@ -1514,6 +1514,18 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
+    // File > New Image from Clipboard (CYBERNEURA-DEV-1295)。メニューバー常駐のメニューと
+    // 同じ id なので、押された後の振り分けは menu_bar::handle_menu_event がまとめて受ける
+    let new_image_from_clipboard = MenuItem::with_id(
+        handle,
+        menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID,
+        menu_bar::NEW_IMAGE_FROM_CLIPBOARD_LABEL,
+        true,
+        Some("CmdOrCtrl+N"),
+    )?;
+
+    let file_submenu = Submenu::with_items(handle, "File", true, &[&new_image_from_clipboard])?;
+
     let edit_submenu = Submenu::with_items(
         handle,
         "Edit",
@@ -1540,7 +1552,10 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
-    let menu = Menu::with_items(handle, &[&app_submenu, &edit_submenu, &window_submenu])?;
+    let menu = Menu::with_items(
+        handle,
+        &[&app_submenu, &file_submenu, &edit_submenu, &window_submenu],
+    )?;
     handle.set_menu(menu)?;
     Ok(())
 }

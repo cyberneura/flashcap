@@ -84,6 +84,8 @@
   const SUPPORTED_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
 
   let isCapturing = $state(false);
+  // New Image from Clipboard の処理中 (メニューの連打で書き戻しと差し替えが並走しないため)
+  let isCreatingFromClipboard = false;
   let timerDelay = $state(5);
 
   // 撮影後の自動コピー。コピーするのは Rust 側 (auto_copy.rs) で、ここは選択の表示と保存だけ
@@ -549,6 +551,12 @@
       captureScreen(event.payload === "take_screenshot_timer" ? "take_screenshot_timer" : undefined);
     });
 
+    // メニューの「New Image from Clipboard」(macOS の File メニュー / メニューバー常駐のメニュー)。
+    // Rust はフロントの描画後にしか送らないので、frontend-ready の預かり対象ではない
+    const unlistenNewFromClipboard = listen("new-image-from-clipboard", () => {
+      newImageFromClipboard();
+    });
+
     // 範囲選択完了で録画が開始された: アプリ内タイマーを動かす
     const unlistenRecStart = listen("recording-started", () => {
       isRecording = true;
@@ -677,6 +685,7 @@
       unlisten.then((fn) => fn());
       unlistenDoCapture.then((fn) => fn());
       unlistenRecStart.then((fn) => fn());
+      unlistenNewFromClipboard.then((fn) => fn());
       unlistenOpenFile.then((fn) => fn());
       unlistenDragDrop.then((fn) => fn());
       stopRecordTimer();
@@ -869,39 +878,112 @@
     }
 
     try {
-      const [rgba, size] = await Promise.all([
-        clipboardImage.rgba(),
-        clipboardImage.size(),
-      ]);
-
-      // RGBA → PNG (Canvas 経由)
-      const canvas = document.createElement("canvas");
-      canvas.width = size.width;
-      canvas.height = size.height;
-      const ctx = canvas.getContext("2d")!;
-      const imageData = new ImageData(
-        new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
-        size.width,
-        size.height
-      );
-      ctx.putImageData(imageData, 0, 0);
-
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b!), "image/png");
-      });
-      const pngBytes = new Uint8Array(await blob.arrayBuffer());
-      const base64 = uint8ToBase64(pngBytes);
-
-      const result = await invoke<ScreenshotResult>("save_pasted_image", {
-        dataBase64: base64,
-        width: size.width,
-        height: size.height,
-      });
-
-      applyScreenshotResult(result, "paste");
+      applyScreenshotResult(await storeClipboardImage(clipboardImage), "paste");
     } catch (e) {
       console.error("Failed to paste image:", e);
     }
+  }
+
+  // メニューの「New Image from Clipboard」(CYBERNEURA-DEV-1295。Rust の menu_bar.rs が
+  // new-image-from-clipboard を送る)。「Flashcap を新しく起動して貼り付ける」のと同じ結果にする:
+  // 今の画像は注釈・トリミングを書き戻してから捨て、確認ダイアログは出さない。
+  // メニューバー常駐中はウインドウが隠れていることがあるので、最後に必ず出して前面にする
+  // (クリップボードに画像が無かった時も、そう伝えるトーストを見せるため)
+  async function newImageFromClipboard() {
+    if (isCapturing || isRecording || isCreatingFromClipboard) return;
+    isCreatingFromClipboard = true;
+    const startGeneration = imageGeneration;
+    let replaced = false;
+    try {
+      let clipboardImage;
+      try {
+        clipboardImage = await readImage();
+      } catch {
+        toast.error("There is no image on the clipboard");
+        return;
+      }
+
+      // 書き戻しに失敗したら差し替えない (差し替えると注釈が失われる)。
+      // 書き戻し・保存の間にも編集はできるので、openOneFromSidebar と同じく
+      // **書き戻しを始める前に editRevision を控え**、差し替える直前に変わっていたら書き戻し直す。
+      // 間に撮影・貼り付け等で画像が変わっていたら、そちらを優先して何もしない
+      const generation = startGeneration;
+      let edits = editRevision;
+      if (!(await writeBackBeforeSwitching())) return;
+      if (imageGeneration !== generation) return;
+
+      let result: ScreenshotResult;
+      try {
+        result = await storeClipboardImage(clipboardImage);
+      } catch (e) {
+        console.error("Failed to create an image from the clipboard:", e);
+        toast.error("Could not read the image on the clipboard", { description: String(e) });
+        return;
+      }
+      if (imageGeneration !== generation) return;
+      // 最後の確認から applyScreenshotResult までは await を挟まない
+      for (let round = 0; editRevision !== edits; round++) {
+        if (round >= 5) {
+          toast.error("The image kept changing; it was not replaced");
+          return;
+        }
+        edits = editRevision;
+        if (!(await writeBackBeforeSwitching())) return;
+        if (imageGeneration !== generation) return;
+      }
+      applyScreenshotResult(result, "paste");
+      replaced = true;
+    } finally {
+      isCreatingFromClipboard = false;
+      // 途中で撮影・録画が始まった、または別の経路で画像が差し替わった時は出さない。
+      // 撮影は自分でウインドウを隠して撮り終えてから出すので、ここで出すと撮影に写り込む。
+      // 自分で差し替えた時は imageGeneration が 1 だけ進んでいる
+      const interrupted =
+        isCapturing || isRecording || imageGeneration - startGeneration > (replaced ? 1 : 0);
+      if (!interrupted) {
+        try {
+          const appWindow = getCurrentWindow();
+          await appWindow.show();
+          await appWindow.setFocus();
+        } catch (e) {
+          console.error("Failed to show the window:", e);
+        }
+      }
+    }
+  }
+
+  // クリップボードの画像を PNG にして保存先へ書く (表示中の画像は差し替えない)
+  async function storeClipboardImage(
+    clipboardImage: Awaited<ReturnType<typeof readImage>>
+  ): Promise<ScreenshotResult> {
+    const [rgba, size] = await Promise.all([
+      clipboardImage.rgba(),
+      clipboardImage.size(),
+    ]);
+
+    // RGBA → PNG (Canvas 経由)
+    const canvas = document.createElement("canvas");
+    canvas.width = size.width;
+    canvas.height = size.height;
+    const ctx = canvas.getContext("2d")!;
+    const imageData = new ImageData(
+      new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+      size.width,
+      size.height
+    );
+    ctx.putImageData(imageData, 0, 0);
+
+    const blob = await new Promise<Blob>((resolve) => {
+      canvas.toBlob((b) => resolve(b!), "image/png");
+    });
+    const pngBytes = new Uint8Array(await blob.arrayBuffer());
+    const base64 = uint8ToBase64(pngBytes);
+
+    return await invoke<ScreenshotResult>("save_pasted_image", {
+      dataBase64: base64,
+      width: size.width,
+      height: size.height,
+    });
   }
 
   async function captureScreen(command: string = "take_screenshot_interactive") {
