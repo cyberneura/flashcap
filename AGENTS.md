@@ -492,12 +492,38 @@ CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧
   `CLIPBOARD_WRITE` のロックの中で一緒に行う** (照合を通った後の遅い書き込みが、
   後の撮影の書き込みを上書きしないため)。デコードと通知はロックの外。
 
+## New Image from Clipboard (CYBERNEURA-DEV-1295)
+
+「Flashcap を新しく起動して画像を貼り付ける」のと同じ結果を、起動したまま得るメニュー。
+macOS のアプリメニュー File > New Image from Clipboard (⌘N) と、メニューバー常駐のメニューに置く
+(Windows はアプリメニューを置かないので常駐のメニューだけ)。
+
+- **id は両方とも `menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID`** で、押された後は
+  `menu_bar::handle_menu_event` → `run` の振り分け (描画前・録画中・範囲選択中・撮影中は始めない) を通る。
+  Rust はウインドウを出して `new-image-from-clipboard` を main に送るだけ。
+- フロントの `newImageFromClipboard()` が「クリップボードを読む → 今の画像を書き戻す
+  (`writeBackBeforeSwitching`、失敗したら差し替えない) → `save_pasted_image` で保存 → 差し替え」を行う。
+  **⌘V の貼り付けと違い確認ダイアログは出さない** (書き戻してから捨てるので失うものが無い)。
+  書き戻し・保存の間の編集は `openOneFromSidebar` と同じく `editRevision` で拾って書き戻し直し、
+  `imageGeneration` が変わっていたら (撮影等が割り込んだら) 差し替えない。
+- **ウインドウは Rust (`run`) が emit の前に出す** (`show_main_window`)。`run` の振り分けで撮影・録画・
+  範囲選択中でないと確かめた時点なら写り込まない。フロントが処理の後に出すと、その間にメニューバーから
+  始めた OCR (`copy_text_on_screen`) や録画の範囲選択に写り込む (フロントの `isCapturing` / `isRecording` は
+  それらを知らない)。「クリップボードに画像が無い」トーストもこのウインドウに出る。
+- 書き戻しの前に `textOverlayRef.deselect()` で入力中のテキストを確定させる。未確定のテキストは
+  TextOverlay の `pendingText` にしか無く、注釈にも `editRevision` にも入っていないので、
+  そのままだと書き戻しから漏れ、差し替え後の画像に乗ってしまう。
+- **貼り付けの保存名は `unused_file_path` で空いている名前を選ぶ** (`flashcap-paste-<秒>.png`、
+  ぶつかったら `-2`, `-3` ...)。以前は同じ秒の貼り付けで上書きしていたので、直前に貼って書き戻した
+  画像をこの操作 (書き戻し → 保存 → 差し替え) が消すことがあった。⌘V の貼り付けも同じ関数を通る。
+- 描画前は Rust が送らないので、`frontend-ready` の預かり対象ではない。
+
 ## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
 
 - Preferences の「Keep Flashcap in the menu bar」(設定ファイルの `show_in_menu_bar`、
   未設定は OFF) を ON にすると、メニューバーにアイコンを置く (CYBERNEURA-DEV-761)。
   クリックで Open Flashcap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
-  Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap。
+  New Image from Clipboard / Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap。
   N は Preferences の Timer delay。
 - Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
   メニューの秒数を追従させるため)。`sync` は「保存値を読んでアイコンの有無と文言を合わせる」
