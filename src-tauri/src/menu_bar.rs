@@ -276,8 +276,12 @@ fn run(app: &tauri::AppHandle, action: MenuAction) {
         MenuAction::Capture => crate::request_capture(app, CaptureKind::Interactive),
         MenuAction::CaptureWithTimer => crate::request_capture(app, CaptureKind::Timer),
         // 読み取り・書き戻し・差し替えはフロントの newImageFromClipboard() に任せる。
-        // ウインドウを出すのもあちら (差し替え後に出す。先に出すと古い画像が一瞬見える)
+        // ウインドウはここで出す: 上の振り分けで撮影・録画・範囲選択中でないことを確かめた
+        // この時点なら写り込まない。フロントが処理の後に出すと、その間にメニューバーから
+        // 始めた OCR や録画の範囲選択に写り込む (フロントはそれらを知らない)。
+        // 画像が無かった時のトーストもこのウインドウに出る
         MenuAction::NewImageFromClipboard => {
+            show_main_window(app);
             if let Err(e) = app.emit_to("main", NEW_IMAGE_FROM_CLIPBOARD_EVENT, ()) {
                 eprintln!(
                     "[flashcap] Failed to request a new image from the clipboard: {}",

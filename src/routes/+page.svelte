@@ -887,13 +887,11 @@
   // メニューの「New Image from Clipboard」(CYBERNEURA-DEV-1295。Rust の menu_bar.rs が
   // new-image-from-clipboard を送る)。「Flashcap を新しく起動して貼り付ける」のと同じ結果にする:
   // 今の画像は注釈・トリミングを書き戻してから捨て、確認ダイアログは出さない。
-  // メニューバー常駐中はウインドウが隠れていることがあるので、最後に必ず出して前面にする
-  // (クリップボードに画像が無かった時も、そう伝えるトーストを見せるため)
+  // ウインドウは Rust (menu_bar.rs の run) が撮影・録画・範囲選択中でないことを確かめてから出す。
+  // ここで出すと、その間に始まったメニューバーからの OCR や録画の範囲選択に写り込む
   async function newImageFromClipboard() {
     if (isCapturing || isRecording || isCreatingFromClipboard) return;
     isCreatingFromClipboard = true;
-    const startGeneration = imageGeneration;
-    let replaced = false;
     try {
       let clipboardImage;
       try {
@@ -907,7 +905,12 @@
       // 書き戻し・保存の間にも編集はできるので、openOneFromSidebar と同じく
       // **書き戻しを始める前に editRevision を控え**、差し替える直前に変わっていたら書き戻し直す。
       // 間に撮影・貼り付け等で画像が変わっていたら、そちらを優先して何もしない
-      const generation = startGeneration;
+      // 入力中で未確定のテキストは TextOverlay の中にしか無く、注釈にも editRevision にも
+      // 入っていない。確定させてから (effect が editRevision を進めるのを待ってから) 書き戻す。
+      // 確定させないと書き戻しから漏れ、しかも差し替え後の画像に乗ってしまう
+      textOverlayRef?.deselect();
+      await tick();
+      const generation = imageGeneration;
       let edits = editRevision;
       if (!(await writeBackBeforeSwitching())) return;
       if (imageGeneration !== generation) return;
@@ -932,23 +935,8 @@
         if (imageGeneration !== generation) return;
       }
       applyScreenshotResult(result, "paste");
-      replaced = true;
     } finally {
       isCreatingFromClipboard = false;
-      // 途中で撮影・録画が始まった、または別の経路で画像が差し替わった時は出さない。
-      // 撮影は自分でウインドウを隠して撮り終えてから出すので、ここで出すと撮影に写り込む。
-      // 自分で差し替えた時は imageGeneration が 1 だけ進んでいる
-      const interrupted =
-        isCapturing || isRecording || imageGeneration - startGeneration > (replaced ? 1 : 0);
-      if (!interrupted) {
-        try {
-          const appWindow = getCurrentWindow();
-          await appWindow.show();
-          await appWindow.setFocus();
-        } catch (e) {
-          console.error("Failed to show the window:", e);
-        }
-      }
     }
   }
 

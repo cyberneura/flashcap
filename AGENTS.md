@@ -500,16 +500,20 @@ macOS のアプリメニュー File > New Image from Clipboard (⌘N) と、メ�
 
 - **id は両方とも `menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID`** で、押された後は
   `menu_bar::handle_menu_event` → `run` の振り分け (描画前・録画中・範囲選択中・撮影中は始めない) を通る。
-  Rust は `new-image-from-clipboard` を main に送るだけで、ウインドウも出さない。
+  Rust はウインドウを出して `new-image-from-clipboard` を main に送るだけ。
 - フロントの `newImageFromClipboard()` が「クリップボードを読む → 今の画像を書き戻す
   (`writeBackBeforeSwitching`、失敗したら差し替えない) → `save_pasted_image` で保存 → 差し替え」を行う。
   **⌘V の貼り付けと違い確認ダイアログは出さない** (書き戻してから捨てるので失うものが無い)。
   書き戻し・保存の間の編集は `openOneFromSidebar` と同じく `editRevision` で拾って書き戻し直し、
   `imageGeneration` が変わっていたら (撮影等が割り込んだら) 差し替えない。
-- 終わったら (画像が無かった時も) ウインドウを出して前面にする。常駐中は隠れていることがあり、
-  「クリップボードに画像が無い」トーストを見せるため。**ただし途中で撮影・録画が始まった時や、
-  別の経路で画像が差し替わった時は出さない** (撮影が隠したウインドウを出すと撮影に写り込む)。描画前は Rust が送らないので、
-  `frontend-ready` の預かり対象ではない。
+- **ウインドウは Rust (`run`) が emit の前に出す** (`show_main_window`)。`run` の振り分けで撮影・録画・
+  範囲選択中でないと確かめた時点なら写り込まない。フロントが処理の後に出すと、その間にメニューバーから
+  始めた OCR (`copy_text_on_screen`) や録画の範囲選択に写り込む (フロントの `isCapturing` / `isRecording` は
+  それらを知らない)。「クリップボードに画像が無い」トーストもこのウインドウに出る。
+- 書き戻しの前に `textOverlayRef.deselect()` で入力中のテキストを確定させる。未確定のテキストは
+  TextOverlay の `pendingText` にしか無く、注釈にも `editRevision` にも入っていないので、
+  そのままだと書き戻しから漏れ、差し替え後の画像に乗ってしまう。
+- 描画前は Rust が送らないので、`frontend-ready` の預かり対象ではない。
 
 ## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
 
