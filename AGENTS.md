@@ -513,6 +513,9 @@ macOS のアプリメニュー File > New Image from Clipboard (⌘N) と、メ�
 - 書き戻しの前に `textOverlayRef.deselect()` で入力中のテキストを確定させる。未確定のテキストは
   TextOverlay の `pendingText` にしか無く、注釈にも `editRevision` にも入っていないので、
   そのままだと書き戻しから漏れ、差し替え後の画像に乗ってしまう。
+- **貼り付けの保存名は `unused_file_path` で空いている名前を選ぶ** (`flashcap-paste-<秒>.png`、
+  ぶつかったら `-2`, `-3` ...)。以前は同じ秒の貼り付けで上書きしていたので、直前に貼って書き戻した
+  画像をこの操作 (書き戻し → 保存 → 差し替え) が消すことがあった。⌘V の貼り付けも同じ関数を通る。
 - 描画前は Rust が送らないので、`frontend-ready` の預かり対象ではない。
 
 ## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
