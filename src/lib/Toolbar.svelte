@@ -661,7 +661,7 @@
       {#if copyImageSuccess}
         <i class="bi bi-check-lg"></i>
       {:else}
-        <i class="bi bi-image"></i>
+        <i class="bi bi-clipboard"></i>
       {/if}
     </button>
   {/if}
