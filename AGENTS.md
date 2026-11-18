@@ -284,7 +284,7 @@ images = 保存した画像、image = この画像)。
 | トリミング / 吸着 | `bi-crop` / `bi-magnet` | |
 | 保存先を開く | `bi-folder2-open` | |
 | ドラッグで渡す | `bi-box-arrow-up` | 共有 (macOS の共有と同じ矢印) |
-| パスをコピー / 画像をコピー | `bi-link-45deg` / `bi-image` | パス (参照) / 画像そのもの |
+| パスをコピー / 画像をコピー | `bi-link-45deg` / `bi-clipboard` | パス (参照) / 画像をクリップボードへ (`bi-image` は絵柄が「この画像」と紛らわしいので使わない。CYBERNEURA-DEV-1309) |
 | OCR: 画像全体 / 範囲を選んで / 画面を撮って | `bi-body-text` / `bi-textarea-t` / `bi-bounding-box` | 文字 / 画像の中の範囲 / 画面上の範囲 |
 | タイマー撮影 / 撮影 / 録画 | `bi-stopwatch` / `bi-camera` / `bi-record-circle` | |
 
