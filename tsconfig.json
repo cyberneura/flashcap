@@ -11,7 +11,7 @@
     "strict": true,
     "moduleResolution": "bundler",
     // tests/*.test.mts は node --experimental-strip-types で src/lib を直接読むので、
-    // src/lib どうしの値の import は .ts 拡張子付きで書く (spotlight.ts → highlight.ts)
+    // src/lib の .ts モジュールどうしの値の import は .ts 拡張子付きで書く (spotlight.ts → highlight.ts)
     "allowImportingTsExtensions": true
   }
   // Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias

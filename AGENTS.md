@@ -342,8 +342,10 @@ images = 保存した画像、image = この画像)。
   `SpotlightLayer` に加える (暗い部分は全部のスポットライトをまとめて計算するため、ShapeOverlay 単独では描けない)。
 - 当たり判定は内側のどこでも (`hitsHighlight` を流用)。座標は自然解像度 px で太さを持たないので、Retina の
   `annotationScale` は関係しない。
-- `src/lib` どうしの値の import は `./highlight.ts` のように拡張子付きで書く (tests が node で直接読むため。
-  tsconfig の `allowImportingTsExtensions`)。テストは `tests/spotlight.test.mts`。
+- **`src/lib` の `.ts` モジュールの中で**別の `.ts` モジュールから値を import する時は、`./highlight.ts` のように
+  拡張子付きで書く (tests が `node --experimental-strip-types` で直接読み、node は拡張子を補わないため。tsconfig の
+  `allowImportingTsExtensions`)。`.svelte` からの import は vite が解決し node は読まないので、従来どおり拡張子なし
+  (`./spotlight` / `$lib/spotlight`) でよい。テストは `tests/spotlight.test.mts`。
 
 ## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
 
