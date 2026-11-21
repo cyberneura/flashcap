@@ -129,6 +129,10 @@ fails, install them with `xcode-select --install`.
   file from Finder
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
+- Restyle placed annotations: select an arrow, shape, highlighter, text, step marker or mask and
+  change its color, thickness, white border, shadow (text: size, bold, italic; mask: mode, fill
+  color) from the toolbar. The change applies to that annotation only (one undo step; dragging
+  the color picker counts as one) and does not change the settings for the next annotation
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘⇧Z to redo,
   ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on
   Windows, where Ctrl+Y also redoes)

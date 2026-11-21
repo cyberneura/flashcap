@@ -21,11 +21,12 @@
     onBeforeMutate?: () => void;
     /** バッジを選んだ時 (親が他のオーバーレイの選択を外す。Delete が両方に効かないように) */
     onSelect?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { steps, settings, toolActive, interactive, scale, annotationScale = 1, onStepsChange, onBeforeMutate, onSelect }: Props = $props();
+  let { steps, settings, toolActive, interactive, scale, annotationScale = 1, onStepsChange, onBeforeMutate, onSelect, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
   let dragging = $state(false);
   /** その移動で undo を積んだか。押しただけの空振りで積まないための印 */
   let dragMutated = $state(false);
@@ -108,7 +109,7 @@
   // バッジを選んだ後に矢印を選んで Delete を押した時、両方の window keydown が走って
   // (stopPropagation は同じ window の別のリスナーを止めない) バッジまで消える。
   // 画像の外 (ツールバーの設定・サイドバー) のクリックでは外さない — 設定を押した瞬間に選択が
-  // 消えると、選択中のバッジへ色や大きさを効かせられなくなる (updateActiveAttribute)
+  // 消えると、選択中のバッジへ色や大きさを効かせられなくなる (+page.svelte の updateStepSetting)
   function handleWindowMouseDown(e: MouseEvent) {
     if (!selectedId || !svgEl || !(e.target instanceof Node)) return;
     if (svgEl.contains(e.target)) return;
@@ -127,12 +128,6 @@
       onStepsChange(renumber(steps.filter((s) => s.id !== selectedId)));
       selectedId = null;
     }
-  }
-
-  /** 選択中のバッジの属性を更新する (ツールバーの設定変更を選択中のものにも効かせる) */
-  export function updateActiveAttribute<K extends keyof StepSettings>(key: K, value: StepSettings[K]) {
-    if (!selectedId) return;
-    onStepsChange(steps.map((s) => (s.id === selectedId ? { ...s, [key]: value } : s)));
   }
 
   export function deselect() {

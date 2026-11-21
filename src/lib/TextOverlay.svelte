@@ -19,12 +19,14 @@
     annotationScale?: number;
     onTextsChange: (texts: TextAnnotation[]) => void;
     onBeforeMutate?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
+    /** 編集中 (入力中) のテキストの id */
+    editingId?: string | null;
   }
 
-  let { texts, settings, toolActive, interactive, scale, annotationScale = 1, onTextsChange, onBeforeMutate }: Props = $props();
+  let { texts, settings, toolActive, interactive, scale, annotationScale = 1, onTextsChange, onBeforeMutate, selectedId = $bindable(null), editingId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
-  let editingId = $state<string | null>(null);
   let dragging = $state<"move" | null>(null);
   /** その移動で undo を積んだか。押しただけの空振りで積まないための印 */
   let dragMutated = $state(false);

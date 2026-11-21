@@ -19,11 +19,12 @@
      * 全部のスポットライトをまとめて描くので、引いている途中のものも親に渡して加える
      */
     onDraftChange?: (shape: Shape | null) => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate, onDraftChange }: Props = $props();
+  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate, onDraftChange, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move" | "resize" | null>(null);
   let drawingShape = $state<Shape | null>(null);
   let dragStart = $state<{ x: number; y: number } | null>(null);

@@ -11,11 +11,12 @@
     imageRevision: number;
     onMasksChange: (masks: MaskRect[]) => void;
     onBeforeMutate?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { masks, settings, toolActive, interactive, scale, imageRevision, onMasksChange, onBeforeMutate }: Props = $props();
+  let { masks, settings, toolActive, interactive, scale, imageRevision, onMasksChange, onBeforeMutate, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move" | "resize" | null>(null);
   let drawingRect = $state<MaskRect | null>(null);
   let dragStart = $state<{ x: number; y: number } | null>(null);
