@@ -13,6 +13,7 @@
   import MaskOverlay from "$lib/MaskOverlay.svelte";
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
   import HighlightLayer from "$lib/HighlightLayer.svelte";
+  import SpotlightLayer from "$lib/SpotlightLayer.svelte";
   import TextOverlay from "$lib/TextOverlay.svelte";
   import StepOverlay from "$lib/StepOverlay.svelte";
   import { stepFontSize, stepLabelBaseline } from "$lib/steps";
@@ -36,6 +37,7 @@
     roundedMaskRect,
     type LumaMap,
   } from "$lib/highlight";
+  import { DEFAULT_SPOTLIGHT_DARKNESS, parseSpotlightDarkness, spotlightDarkRects } from "$lib/spotlight";
   import {
     clearEditHistory,
     createEditHistory,
@@ -184,10 +186,14 @@
   let shapeToolActive = $state(false);
   let shapes = $state<Shape[]>([]);
   const SHAPE_SETTINGS_KEY = "shape_settings";
+  // ShapeOverlay で引いている途中の図形。スポットライトは SpotlightLayer が全部まとめて描くので、
+  // 引いている途中のものもここから加える
+  let shapeDraft = $state.raw<Shape | null>(null);
   let shapeSettings = $state<ShapeSettings>({
     type: "rect",
     color: "#FF0000",
     highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+    spotlightDarkness: DEFAULT_SPOTLIGHT_DARKNESS,
     thickness: 4,
     whiteStroke: true,
     dropShadow: true,
@@ -276,6 +282,8 @@
     // 書き出す絵に効く設定 (renderComposite が読むもの)。Preferences から変えられる
     void maskSettings.blurRadius;
     void maskSettings.mosaicBlockSize;
+    // スポットライトの暗さはツールバーから変えられ、置いてあるスポットライト全部の書き出しに効く
+    void shapeSettings.spotlightDarkness;
     editRevision++;
   });
   let cropToolActive = $state(false);
@@ -716,6 +724,8 @@
       if ("type" in shape) shapeSettings.type = parseShapeType(shape.type);
       shapeSettings.color = pick(shape, "color", shapeSettings.color);
       shapeSettings.highlightColor = pick(shape, "highlightColor", shapeSettings.highlightColor);
+      // 暗さは範囲 (0 より大きく 1 以下) まで検める。無ければ今の値のまま
+      if ("spotlightDarkness" in shape) shapeSettings.spotlightDarkness = parseSpotlightDarkness(shape.spotlightDarkness);
       shapeSettings.thickness = pick(shape, "thickness", shapeSettings.thickness);
       shapeSettings.whiteStroke = pick(shape, "whiteStroke", shapeSettings.whiteStroke);
       shapeSettings.dropShadow = pick(shape, "dropShadow", shapeSettings.dropShadow);
@@ -759,9 +769,9 @@
   });
 
   $effect(() => {
-    const { type, color, highlightColor, thickness, whiteStroke, dropShadow } = shapeSettings;
+    const { type, color, highlightColor, spotlightDarkness, thickness, whiteStroke, dropShadow } = shapeSettings;
     if (!configLoaded) return;
-    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, highlightColor, thickness, whiteStroke, dropShadow });
+    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, highlightColor, spotlightDarkness, thickness, whiteStroke, dropShadow });
   });
 
   $effect(() => {
@@ -1188,6 +1198,18 @@
           }
         }
 
+        // スポットライト: 外側を半透明の黒で暗くする。蛍光ペンの上・他の注釈の下 (画面の
+        // SpotlightLayer と同じ重ね順)。暗くする範囲は画面と同じ spotlightDarkRects で、
+        // 互いに重ならない整数の矩形なので、塗り重ねで濃くなる所も継ぎ目も出ない。
+        // マスクの範囲は暗くしない (画面と同じくマスクを優先する)
+        const darkRects = spotlightDarkRects(canvas.width, canvas.height, shapes, masks);
+        if (darkRects.length > 0) {
+          ctx.save();
+          ctx.fillStyle = `rgba(0, 0, 0, ${shapeSettings.spotlightDarkness})`;
+          for (const r of darkRects) ctx.fillRect(r.x, r.y, r.width, r.height);
+          ctx.restore();
+        }
+
         // Coords are already in natural pixels, no scale conversion needed.
         // 太さ・文字・影は Retina の撮影なら 2 倍で描く (オーバーレイと同じ倍率)
         const k = annotationScale;
@@ -1346,9 +1368,9 @@
           }
         }
 
-        // Shapes (rect / ellipse)。蛍光ペンは上で描いてある
+        // Shapes (rect / ellipse)。蛍光ペンとスポットライトは上で描いてある
         for (const shape of shapes) {
-          if (shape.type === "highlight") continue;
+          if (shape.type === "highlight" || shape.type === "spotlight") continue;
           function drawShapeWhiteStroke(c: CanvasRenderingContext2D) {
             if (shape.type === "rect") {
               c.strokeStyle = "white";
@@ -1777,7 +1799,8 @@
       case "arrow": toggleArrowTool(); break;
       case "rect":
       case "ellipse":
-      case "highlight": toggleShapeTool(tool); break;
+      case "highlight":
+      case "spotlight": toggleShapeTool(tool); break;
       case "step": toggleStepTool(); break;
       case "text": toggleTextTool(); break;
       case "mask": toggleMaskTool(); break;
@@ -2158,6 +2181,13 @@
           onload={onImageLoad}
         />
         <HighlightLayer {shapes} {masks} {lumaMap} />
+        <SpotlightLayer
+          shapes={shapeDraft?.type === "spotlight" ? [...shapes, shapeDraft] : shapes}
+          {masks}
+          imageWidth={naturalWidth}
+          imageHeight={naturalHeight}
+          darkness={shapeSettings.spotlightDarkness}
+        />
         <MaskOverlay
           bind:this={maskOverlayRef}
           {masks}
@@ -2180,6 +2210,7 @@
           {lumaMap}
           onBeforeMutate={pushUndo}
           onShapesChange={(newShapes) => (shapes = newShapes)}
+          onDraftChange={(shape) => (shapeDraft = shape)}
         />
         <TextOverlay
           bind:this={textOverlayRef}

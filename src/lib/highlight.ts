@@ -6,7 +6,7 @@
 
 import type { Shape, ShapeType } from "./types";
 
-export const SHAPE_TYPES: readonly ShapeType[] = ["rect", "ellipse", "highlight"];
+export const SHAPE_TYPES: readonly ShapeType[] = ["rect", "ellipse", "highlight", "spotlight"];
 
 /** 蛍光ペンの既定色 (黄色) */
 export const DEFAULT_HIGHLIGHT_COLOR = "#ffe600";
