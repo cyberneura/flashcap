@@ -12,6 +12,7 @@
   import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
   import { isWindows, shortcutLabel } from "$lib/platform";
   import { toolShortcutLabel } from "$lib/toolShortcuts";
+  import { SPOTLIGHT_DARKNESS_OPTIONS } from "$lib/spotlight";
   import ShellCommandMenu from "$lib/ShellCommandMenu.svelte";
   import type { ShellCommand } from "$lib/shellCommands";
 
@@ -351,6 +352,36 @@
         bind:value={shapeSettings.highlightColor}
         data-tooltip="Highlighter color"
       />
+    </div>
+  {/if}
+
+  <button
+    class="tool-btn"
+    class:active={shapeToolActive && shapeSettings.type === "spotlight"}
+    onclick={() => onToggleShapeTool("spotlight")}
+    aria-label="Spotlight tool"
+    data-tooltip="Spotlight tool: dim everything outside ({toolShortcutLabel('spotlight')})"
+  >
+    <i class="bi bi-brightness-high"></i>
+  </button>
+
+  {#if shapeToolActive && shapeSettings.type === "spotlight"}
+    <!-- 暗さは 1 つの値で、置いてある全部のスポットライトに効く -->
+    <div class="tool-settings">
+      <i class="bi bi-moon text-neutral-400 text-xs"></i>
+      <select
+        class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
+        bind:value={shapeSettings.spotlightDarkness}
+        data-tooltip="Darkness outside the spotlight"
+      >
+        {#each SPOTLIGHT_DARKNESS_OPTIONS as option (option)}
+          <option value={option}>{Math.round(option * 100)}%</option>
+        {/each}
+        {#if !SPOTLIGHT_DARKNESS_OPTIONS.includes(shapeSettings.spotlightDarkness)}
+          <!-- config.json に手で書いた値。選択肢に無くても今の値を出す -->
+          <option value={shapeSettings.spotlightDarkness}>{Math.round(shapeSettings.spotlightDarkness * 100)}%</option>
+        {/if}
+      </select>
     </div>
   {/if}
 

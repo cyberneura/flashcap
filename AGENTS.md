@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -230,7 +230,7 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
 ## ツールの 1 文字キー (src/lib/toolShortcuts.ts)
 
 修飾キー無しの 1 文字で注釈ツールを切り替える (CYBERNEURA-DEV-1265)。`A` 矢印 / `R` 矩形 / `E` 楕円 /
-`H` 蛍光ペン / `N` ステップ / `T` テキスト / `M` マスク / `C` トリミング。macOS も Windows も同じキー。
+`H` 蛍光ペン / `S` スポットライト / `N` ステップ / `T` テキスト / `M` マスク / `C` トリミング。macOS も Windows も同じキー。
 アプリ全体のグローバルホットキーではなく、ウインドウにフォーカスがある時の keydown だけ。
 
 - 対応表 `TOOL_SHORTCUTS` と判定 `toolForKey` は純関数 (`tests/tool-shortcuts.test.mts`)。`+page.svelte` の
@@ -277,6 +277,7 @@ images = 保存した画像、image = この画像)。
 | サムネイルブラウザ | `bi-images` | 保存した画像の一覧 |
 | 矢印 / 矩形 / 楕円 / ステップ / テキスト | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | 描くものの形そのもの |
 | 蛍光ペン | `bi-highlighter` | 文字列を目立たせる半透明の塗り (矩形 / 楕円と同じ shape ツールの種別) |
+| スポットライト | `bi-brightness-high` | 範囲の外側を暗くする (shape ツールの種別)。暗さの選択は `bi-moon` |
 | 白縁 / 影 | `bi-border-outer` / `bi-shadows` | 縁取り / 影 (4 つのツールで共通) |
 | 太字 / 斜体 | `bi-type-bold` / `bi-type-italic` | |
 | マスク | `bi-eye-slash` | 隠す。モードは `bi-grid-3x3-gap-fill` (モザイク) / `bi-droplet-half` (ぼかし) / `bi-paint-bucket` (塗り) |
@@ -320,6 +321,31 @@ images = 保存した画像、image = この画像)。
 - 当たり判定は内側のどこでも (`hitsHighlight`)。枠線の近くだけに反応する矩形と違う。
 - 設定の `type` は `parseShapeType` で検め、知らない値は `rect` に戻す (`pick` は typeof しか見ない)。
 - テストは `tests/highlight.test.mts` (種別の検証、地図、平均輝度、重ね方の切り替え、当たり判定)。
+
+## スポットライト (src/lib/spotlight.ts + src/lib/SpotlightLayer.svelte)
+
+囲んだ範囲の外側を暗くする (CYBERNEURA-DEV-1322)。`ShapeType` の 4 つ目の種別 `spotlight` で、置く・動かす・
+リサイズ・Delete・Undo は矩形のものをそのまま使う (`shapes` に入る)。ツールバーは蛍光ペンの隣の
+`bi-brightness-high`、1 文字キーは `S` (修飾キー付きの ⌘S / Ctrl+S は保存のまま)。
+
+- **暗さは `shape_settings.spotlightDarkness` の 1 つの値** (既定 0.5、ツールバーで 30 / 50 / 70 / 85%)。図形ごとには
+  持たない (暗い部分は全部のスポットライトで 1 枚なので)。変えると置いてあるスポットライトにも効き、Undo には積まない。
+  設定ファイルの値は `parseSpotlightDarkness` で 0 < x <= 1 に検める。色・太さ・白縁・影は使わない (置く時に false)。
+- **暗くする範囲は `spotlightDarkRects()` が「画像全体 − (スポットライトの和集合 ∪ マスク)」を互いに重ならない
+  整数の矩形で返す** (`subtractRects` の流用)。画面 (`SpotlightLayer` の clip-path) と書き出し (`renderComposite` の
+  fillRect) の両方がこの関数を通る。clip-path の evenodd で穴を開ける方式にしないこと — 重なった 2 つの穴の
+  重なりが暗く戻る。整数に丸めるのは隣り合う矩形の継ぎ目 (アンチエイリアスの薄い線) を出さないため。
+- **重ね順は蛍光ペンの上・マスクより下。矢印・枠・文字・ステップは暗くしない** (`SpotlightLayer` は
+  `HighlightLayer` と `MaskOverlay` の間、書き出しは蛍光ペンの直後)。マスクの範囲は暗くしない (蛍光ペンと同じく
+  マスクを優先する。ぼかしのプレビューは backdrop-filter なので、暗い部分が残ると書き出しと食い違う)。
+- 引いている途中の 1 つは `ShapeOverlay` の `onDraftChange` で `+page.svelte` の `shapeDraft` に渡し、
+  `SpotlightLayer` に加える (暗い部分は全部のスポットライトをまとめて計算するため、ShapeOverlay 単独では描けない)。
+- 当たり判定は内側のどこでも (`hitsHighlight` を流用)。座標は自然解像度 px で太さを持たないので、Retina の
+  `annotationScale` は関係しない。
+- **`src/lib` の `.ts` モジュールの中で**別の `.ts` モジュールから値を import する時は、`./highlight.ts` のように
+  拡張子付きで書く (tests が `node --experimental-strip-types` で直接読み、node は拡張子を補わないため。tsconfig の
+  `allowImportingTsExtensions`)。`.svelte` からの import は vite が解決し node は読まないので、従来どおり拡張子なし
+  (`./spotlight` / `$lib/spotlight`) でよい。テストは `tests/spotlight.test.mts`。
 
 ## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
 

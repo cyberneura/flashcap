@@ -96,6 +96,9 @@ fails, install them with `xcode-select --install`.
   square / circle) with resize/move handles
 - Highlighter tool: drag a translucent rectangle over a line of text to make it stand out
   (yellow by default; the text underneath stays readable, on light and dark backgrounds)
+- Spotlight tool: drag a rectangle to dim everything outside it (50% darker by default; 30–85%
+  from the toolbar). Several spotlights all stay bright. Moves, resizes and undoes like a rectangle;
+  arrows, text and other annotations stay on top of the dimming
 - Text tool (color, size, bold, italic, white stroke, drop shadow). Text can span multiple lines:
   Enter adds a line, ⌘+Enter (Ctrl+Enter on Windows) finishes. Double-click a text annotation to
   edit it again
@@ -130,7 +133,7 @@ fails, install them with `xcode-select --install`.
   ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on
   Windows, where Ctrl+Y also redoes)
 - Single-key tool shortcuts while an image is open: `A` arrow, `R` rectangle, `E` ellipse,
-  `H` highlighter, `N` step marker, `T` text, `M` mask, `C` crop (press again to leave the tool;
+  `H` highlighter, `S` spotlight, `N` step marker, `T` text, `M` mask, `C` crop (press again to leave the tool;
   ignored while typing in a text annotation or any other field)
 - Shell commands (macOS only): register commands in Preferences and run them on the open image
   from the toolbar. The image path is passed as `$IMAGE_PATH` (write `"${IMAGE_PATH}"` with the

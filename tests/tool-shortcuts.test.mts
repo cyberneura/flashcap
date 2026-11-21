@@ -51,15 +51,19 @@ check("the table has no duplicate keys or tools, and keys are single lowercase l
 
 check("the keys do not collide with the letters of the mod-key shortcuts being typed alone", () => {
   // Cmd/Ctrl + C / V / S / Z / Y exist, but only with the modifier; the plain letters are free.
-  // "c" is used for crop on purpose; with the modifier it must still fall through (next test).
+  // "c" (crop) and "s" (spotlight) are used on purpose; with the modifier they must still fall
+  // through (next test).
   assert.equal(toolForKey(key("v"), body, ready), null);
-  assert.equal(toolForKey(key("s"), body, ready), null);
+  assert.equal(toolForKey(key("s"), body, ready), "spotlight");
   assert.equal(toolForKey(key("z"), body, ready), null);
 });
 
 check("keys with a modifier fall through to the existing shortcuts", () => {
   assert.equal(toolForKey(key("c", { metaKey: true }), body, ready), null);
   assert.equal(toolForKey(key("c", { ctrlKey: true }), body, ready), null);
+  // Cmd+S / Ctrl+S (save) must not switch to the spotlight
+  assert.equal(toolForKey(key("s", { metaKey: true }), body, ready), null);
+  assert.equal(toolForKey(key("s", { ctrlKey: true }), body, ready), null);
   assert.equal(toolForKey(key("C", { metaKey: true, shiftKey: true }), body, ready), null);
   assert.equal(toolForKey(key("a", { altKey: true }), body, ready), null);
   assert.equal(toolForKey(key("A", { shiftKey: true }), body, ready), null);

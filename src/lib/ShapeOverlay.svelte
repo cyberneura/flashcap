@@ -14,9 +14,14 @@
     lumaMap?: LumaMap | null;
     onShapesChange: (shapes: Shape[]) => void;
     onBeforeMutate?: () => void;
+    /**
+     * 引いている途中の図形 (無ければ null)。スポットライトの暗い部分は SpotlightLayer が
+     * 全部のスポットライトをまとめて描くので、引いている途中のものも親に渡して加える
+     */
+    onDraftChange?: (shape: Shape | null) => void;
   }
 
-  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate }: Props = $props();
+  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate, onDraftChange }: Props = $props();
 
   let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move" | "resize" | null>(null);
@@ -89,8 +94,11 @@
 
     onBeforeMutate?.();
     dragStart = pt;
-    // 蛍光ペンは塗りだけなので、枠線の設定 (白縁・影) は持たせない
+    // 蛍光ペンとスポットライトは枠線を描かないので、枠線の設定 (白縁・影) は持たせない。
+    // スポットライトの色は使わない (暗さは設定の spotlightDarkness で、全部のスポットライトで共通)
     const isHighlight = settings.type === "highlight";
+    const isSpotlight = settings.type === "spotlight";
+    const noOutline = isHighlight || isSpotlight;
     drawingShape = {
       id: crypto.randomUUID(),
       type: settings.type,
@@ -98,10 +106,10 @@
       y: pt.y,
       width: 0,
       height: 0,
-      color: isHighlight ? settings.highlightColor : settings.color,
+      color: isHighlight ? settings.highlightColor : isSpotlight ? "#000000" : settings.color,
       thickness: settings.thickness,
-      whiteStroke: isHighlight ? false : settings.whiteStroke,
-      dropShadow: isHighlight ? false : settings.dropShadow,
+      whiteStroke: noOutline ? false : settings.whiteStroke,
+      dropShadow: noOutline ? false : settings.dropShadow,
     };
     dragging = "draw";
     selectedId = null;
@@ -109,8 +117,8 @@
 
   // 線(stroke)の近くをクリックで選択
   function hitTestShape(shape: Shape, px: number, py: number): boolean {
-    // 蛍光ペンは塗りなので内側のどこでも当たる
-    if (shape.type === "highlight") return hitsHighlight(shape, px, py, 6 / scale);
+    // 蛍光ペンは塗り、スポットライトは明るく残る範囲なので、どちらも内側のどこでも当たる
+    if (shape.type === "highlight" || shape.type === "spotlight") return hitsHighlight(shape, px, py, 6 / scale);
     const threshold = shape.thickness * annotationScale + 6 / scale;
     const { x, y, width: w, height: h } = shape;
 
@@ -290,6 +298,10 @@
 
   let allShapes = $derived(drawingShape ? [...shapes, drawingShape] : shapes);
 
+  $effect(() => {
+    onDraftChange?.(drawingShape);
+  });
+
   export function deselect() {
     selectedId = null;
   }
@@ -333,8 +345,9 @@
   {#each allShapes as shape (shape.id)}
     {@const isSelected = shape.id === selectedId}
 
-    {#if shape.type === "highlight"}
-      <!-- 蛍光ペンの塗りは HighlightLayer。ここでは選択枠とハンドルだけを描く -->
+    {#if shape.type === "highlight" || shape.type === "spotlight"}
+      <!-- 蛍光ペンの塗りは HighlightLayer、スポットライトの暗い部分は SpotlightLayer。
+           ここでは選択枠とハンドルだけを描く -->
     {:else if shape.dropShadow && shape.whiteStroke}
       <!-- 白枠のみに影を適用 -->
       {#if shape.type === "rect"}
