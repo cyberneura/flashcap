@@ -133,8 +133,11 @@ fails, install them with `xcode-select --install`.
   change its color, thickness, white border, shadow (text: size, bold, italic; mask: mode, fill
   color) from the toolbar. The change applies to that annotation only (one undo step; dragging
   the color picker counts as one) and does not change the settings for the next annotation
+- Duplicate the selected annotation with ⌘D (Ctrl+D on Windows; the copy lands slightly to the
+  lower right and is selected), or Option+drag (Alt+drag on Windows) an annotation to drag out a
+  copy. A copied step marker gets the next number. One undo step either way
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘⇧Z to redo,
-  ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on
+  ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save, ⌘D to duplicate the selected annotation; Ctrl instead of ⌘ on
   Windows, where Ctrl+Y also redoes)
 - Single-key tool shortcuts while an image is open: `A` arrow, `R` rectangle, `E` ellipse,
   `H` highlighter, `S` spotlight, `N` step marker, `T` text, `M` mask, `C` crop (press again to leave the tool;

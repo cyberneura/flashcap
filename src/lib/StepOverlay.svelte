@@ -2,6 +2,7 @@
   import type { Step, StepSettings } from "./types";
   import { exceedsDragSlop } from "./textHit";
   import { nextStep, renumber, stepFontSize, stepLabelBaseline, topmostStepAt } from "./steps";
+  import { stepsWithDuplicate } from "./duplicate";
 
   /**
    * 番号付きステップ (カウンター) のオーバーレイ (CYBERNEURA-DEV-1209)。
@@ -30,6 +31,8 @@
   let dragging = $state(false);
   /** その移動で undo を積んだか。押しただけの空振りで積まないための印 */
   let dragMutated = $state(false);
+  /** Option / Alt+ドラッグで複製する元 (動き始めるまでは複製しない) */
+  let duplicateSource: Step | null = null;
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragOrigPos = $state<{ x: number; y: number } | null>(null);
   let svgEl = $state<SVGSVGElement | null>(null);
@@ -52,7 +55,10 @@
 
     const hit = topmostStepAt(steps, pt.x, pt.y, hitSlack(), annotationScale);
     if (hit) {
-      // 選ぶと同時に移動を始められる (undo は動いた時に積む)
+      // 選ぶと同時に移動を始められる (undo は動いた時に積む)。
+      // Option / Alt を押していたら、動き始めた時に複製して複製の方を動かす (CYBERNEURA-DEV-1321。
+      // 複製は末尾に足すので次の番号になる)
+      duplicateSource = e.altKey ? hit : null;
       selectedId = hit.id;
       onSelect?.();
       dragging = true;
@@ -88,6 +94,13 @@
         if (!exceedsDragSlop(dx, dy, scale)) return;
         dragMutated = true;
         onBeforeMutate?.();
+        if (duplicateSource) {
+          const id = crypto.randomUUID();
+          onStepsChange(stepsWithDuplicate(steps, duplicateSource, dx, dy, id));
+          selectedId = id;
+          duplicateSource = null;
+          return;
+        }
       }
       onStepsChange(
         steps.map((s) =>
@@ -99,6 +112,7 @@
   }
 
   function handleMouseUp() {
+    duplicateSource = null;
     dragging = false;
     dragMutated = false;
     dragStart = null;

@@ -28,6 +28,7 @@
   import { THUMBNAIL_SIDEBAR_KEY } from "$lib/thumbnailBrowser";
   import { isModKey, isWindows } from "$lib/platform";
   import { toolForKey, type ShortcutTool } from "$lib/toolShortcuts";
+  import { DUPLICATE_OFFSET, isDuplicateKey, offsetArrowCopy, offsetCopy, stepsWithDuplicate } from "$lib/duplicate";
   import {
     DEFAULT_HIGHLIGHT_COLOR,
     highlightPaint,
@@ -431,6 +432,37 @@
     styleEditKey = continuous ? key : null;
   }
 
+  /**
+   * 選択中の注釈を右下にずらして複製し、複製を選ぶ (⌘D / Ctrl+D、CYBERNEURA-DEV-1321)。
+   * ずらす量は Retina の撮影では annotationScale 倍 (見た目の距離を揃える)。ステップは末尾に足して
+   * 次の番号を振る。選択が無ければ何もしない
+   */
+  function duplicateSelection() {
+    const d = DUPLICATE_OFFSET * annotationScale;
+    const id = crypto.randomUUID();
+    if (selectedArrow) {
+      pushUndo();
+      arrows = [...arrows, offsetArrowCopy(selectedArrow, d, d, id)];
+      arrowSelectedId = id;
+    } else if (selectedShape) {
+      pushUndo();
+      shapes = [...shapes, offsetCopy(selectedShape, d, d, id)];
+      shapeSelectedId = id;
+    } else if (selectedMask) {
+      pushUndo();
+      masks = [...masks, offsetCopy(selectedMask, d, d, id)];
+      maskSelectedId = id;
+    } else if (selectedText) {
+      pushUndo();
+      textAnnotations = [...textAnnotations, offsetCopy(selectedText, d, d, id)];
+      textSelectedId = id;
+    } else if (selectedStep) {
+      pushUndo();
+      steps = stepsWithDuplicate(steps, selectedStep, d, d, id);
+      stepSelectedId = id;
+    }
+  }
+
   function updateArrowSetting<K extends keyof ArrowSettings>(key: K, value: ArrowSettings[K], continuous = false) {
     const sel = selectedArrow;
     if (!sel) {
@@ -787,6 +819,10 @@
       } else if (isModKey(e) && e.key === "c") {
         e.preventDefault();
         copyPath();
+      } else if (isDuplicateKey(e, e.target as HTMLElement | null, isWindows)) {
+        // ⌘D / Ctrl+D: 選択中の注釈を右下にずらして複製する。文字入力中などは isDuplicateKey が弾く
+        e.preventDefault();
+        if (imageUrl != null && !videoMode && !isCapturing && !isRecording) duplicateSelection();
       } else if (isModKey(e) && e.key === "s") {
         e.preventDefault();
         saveImage();
