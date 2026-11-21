@@ -11,11 +11,12 @@
     annotationScale?: number;
     onArrowsChange: (arrows: Arrow[]) => void;
     onBeforeMutate?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { arrows, settings, toolActive, interactive, scale, annotationScale = 1, onArrowsChange, onBeforeMutate }: Props = $props();
+  let { arrows, settings, toolActive, interactive, scale, annotationScale = 1, onArrowsChange, onBeforeMutate, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
   let dragging = $state<"draw" | "move-start" | "move-end" | null>(null);
   let drawingArrow = $state<Arrow | null>(null);
   let hoverCursor = $state<string>("default");

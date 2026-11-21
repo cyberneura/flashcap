@@ -335,6 +335,134 @@
   /** 編集の直前に呼ぶ。新しい編集なので Redo の履歴は捨てる */
   function pushUndo() {
     recordEdit(editHistory, captureSnapshot());
+    // 間に別の編集が入ったので、次の見た目の変更は別の手にする
+    styleEditKey = null;
+  }
+
+  // --- 選択中の注釈の見た目の変更 (CYBERNEURA-DEV-1320) ---
+  //
+  // 各オーバーレイの選択 (selectedId) を bind で受け、選択中の注釈があればツールバーにその値を出し、
+  // ツールバーの変更はその注釈だけを書き換える (次に描く注釈の設定 = config は変えない)。
+  // 選択が無い時は従来どおり設定を変える。選択はオーバーレイをまたいで 1 つだけ (下の $effect)。
+  let arrowSelectedId = $state<string | null>(null);
+  let maskSelectedId = $state<string | null>(null);
+  let shapeSelectedId = $state<string | null>(null);
+  let textSelectedId = $state<string | null>(null);
+  let textEditingId = $state<string | null>(null);
+  let stepSelectedId = $state<string | null>(null);
+
+  type SelectionKind = "arrow" | "shape" | "mask" | "text" | "step";
+
+  /** `keep` 以外のオーバーレイの選択を外す (Delete やツールバーの変更が 2 つに効かないように) */
+  function deselectOthers(keep: SelectionKind) {
+    if (keep !== "arrow") arrowOverlayRef?.deselect();
+    if (keep !== "mask") maskOverlayRef?.deselect();
+    if (keep !== "shape") shapeOverlayRef?.deselect();
+    if (keep !== "text" && textSelectedId) textOverlayRef?.deselect();
+    if (keep !== "step") stepOverlayRef?.deselect();
+  }
+  $effect(() => { if (arrowSelectedId) untrack(() => deselectOthers("arrow")); });
+  $effect(() => { if (maskSelectedId) untrack(() => deselectOthers("mask")); });
+  $effect(() => { if (shapeSelectedId) untrack(() => deselectOthers("shape")); });
+  $effect(() => { if (textSelectedId) untrack(() => deselectOthers("text")); });
+  $effect(() => { if (stepSelectedId) untrack(() => deselectOthers("step")); });
+
+  let selectedArrow = $derived(arrows.find((a) => a.id === arrowSelectedId) ?? null);
+  let selectedMask = $derived(masks.find((m) => m.id === maskSelectedId) ?? null);
+  let selectedShape = $derived(shapes.find((sh) => sh.id === shapeSelectedId) ?? null);
+  // 入力中のテキストは従来どおり (設定と入力中のテキストの両方に効かせる。updateTextSetting)
+  let selectedText = $derived(
+    textEditingId ? null : (textAnnotations.find((t) => t.id === textSelectedId) ?? null),
+  );
+  let selectedStep = $derived(steps.find((st) => st.id === stepSelectedId) ?? null);
+  let selectionKind = $derived<SelectionKind | null>(
+    selectedArrow ? "arrow" : selectedShape ? "shape" : selectedMask ? "mask" : selectedText ? "text" : selectedStep ? "step" : null,
+  );
+
+  // ツールバーに出す値。選択中の注釈があればその値、無ければ設定
+  let arrowPanel = $derived<ArrowSettings>(selectedArrow ?? arrowSettings);
+  let maskPanel = $derived<MaskSettings>(
+    selectedMask ? { ...maskSettings, mode: selectedMask.mode, color: selectedMask.color } : maskSettings,
+  );
+  let shapePanel = $derived<ShapeSettings>(
+    selectedShape
+      ? {
+          ...shapeSettings,
+          // 蛍光ペンの色はツールバーでは highlightColor の欄に出る
+          ...(selectedShape.type === "highlight"
+            ? { highlightColor: selectedShape.color }
+            : { color: selectedShape.color }),
+          thickness: selectedShape.thickness,
+          whiteStroke: selectedShape.whiteStroke,
+          dropShadow: selectedShape.dropShadow,
+        }
+      : shapeSettings,
+  );
+  let textPanel = $derived<TextSettings>(selectedText ?? textSettings);
+  let stepPanel = $derived<StepSettings>(selectedStep ?? stepSettings);
+
+  // 色ピッカーのドラッグのように同じ注釈の同じ属性を続けて変える間は、Undo を最初の 1 回だけ積む。
+  // 「どの注釈のどの属性か」を持ち、別の属性・別の注釈・別の編集 (pushUndo)・Undo / Redo・
+  // ピッカーを閉じた (change) 時に外す。テンプレートから読まないので $state にしない
+  let styleEditKey: string | null = null;
+
+  function endStyleEdit() {
+    styleEditKey = null;
+  }
+
+  /**
+   * 選択中の注釈の属性を書き換える。値が変わらなければ何もしない (Undo に空の手を積まない)。
+   * 書き換えは `write` が配列ごと差し替える (各オーバーレイの onXxxChange と同じ形)
+   */
+  function restyle<T extends { id: string }>(
+    kind: SelectionKind,
+    target: T,
+    patch: Partial<T>,
+    write: (updated: T) => void,
+    continuous: boolean,
+  ) {
+    const changed = (Object.keys(patch) as (keyof T)[]).some((k) => target[k] !== patch[k]);
+    if (!changed) return;
+    const key = `${kind}:${target.id}:${Object.keys(patch).join(",")}`;
+    if (styleEditKey !== key) {
+      recordEdit(editHistory, captureSnapshot());
+    }
+    write({ ...target, ...patch });
+    styleEditKey = continuous ? key : null;
+  }
+
+  function updateArrowSetting<K extends keyof ArrowSettings>(key: K, value: ArrowSettings[K], continuous = false) {
+    const sel = selectedArrow;
+    if (!sel) {
+      arrowSettings[key] = value;
+      return;
+    }
+    restyle("arrow", sel, { [key]: value } as Partial<Arrow>, (u) => (arrows = arrows.map((a) => (a.id === u.id ? u : a))), continuous);
+  }
+
+  function updateMaskSetting<K extends keyof MaskSettings>(key: K, value: MaskSettings[K], continuous = false) {
+    const sel = selectedMask;
+    // マスクが持つのはモードと塗りの色だけ (ぼかし半径・モザイクの粒度は Preferences の値を全部に使う)
+    if (!sel || (key !== "mode" && key !== "color")) {
+      maskSettings[key] = value;
+      return;
+    }
+    restyle("mask", sel, { [key]: value } as Partial<MaskRect>, (u) => (masks = masks.map((m) => (m.id === u.id ? u : m))), continuous);
+  }
+
+  function updateShapeSetting<K extends keyof ShapeSettings>(key: K, value: ShapeSettings[K], continuous = false) {
+    const sel = selectedShape;
+    // スポットライトの暗さは全部のスポットライトで 1 つの値なので、選択があっても設定を変える
+    if (!sel || key === "type" || key === "spotlightDarkness") {
+      shapeSettings[key] = value;
+      return;
+    }
+    // 蛍光ペンの色は highlightColor の欄、枠の色は color の欄から来る。どちらも図形の color に入れる。
+    // 種別に合わない欄 (蛍光ペンを選んでいる時の枠の色など) はツールバーに出ないが、念のため弾く
+    if (key === "color" && sel.type === "highlight") return;
+    if (key === "highlightColor" && sel.type !== "highlight") return;
+    const field = key === "highlightColor" ? "color" : key;
+    restyle("shape", sel, { [field]: value } as Partial<Shape>, (u) => (shapes = shapes.map((sh) => (sh.id === u.id ? u : sh))), continuous);
   }
 
   /** Undo / Redo で取り出したスナップショットを画面に反映する */
@@ -360,7 +488,7 @@
   }
 
   /**
-   * 注釈の中身の署名。Undo に積まない編集 (選択中のテキスト / ステップの色などをツールバーから
+   * 注釈の中身の署名。Undo に積まない編集 (入力中のテキストの色などをツールバーから
    * 変える `updateActiveAttribute`) が Undo / Redo の後に挟まったかを見分けるのに使う。
    * 土台画像は含めない (画像が変わるのはトリミングだけで、必ず pushUndo を通る)
    */
@@ -369,6 +497,7 @@
   }
 
   function undo() {
+    styleEditKey = null;
     dropStaleRedo(editHistory, annotationSignature());
     const entry = stepUndo(editHistory, captureSnapshot);
     if (!entry) return;
@@ -377,6 +506,7 @@
   }
 
   function redo() {
+    styleEditKey = null;
     dropStaleRedo(editHistory, annotationSignature());
     const entry = stepRedo(editHistory, captureSnapshot);
     if (!entry) return;
@@ -824,16 +954,27 @@
   }
 
 
-  // テキスト属性変更時、編集中/選択中のテキストにも反映する
-  function updateTextSetting<K extends keyof TextSettings>(key: K, value: TextSettings[K]) {
-    textSettings[key] = value;
-    textOverlayRef?.updateActiveAttribute(key, value);
+  // テキストの属性の変更。選んだ (入力中ではない) テキストがあればそれだけを書き換える
+  // (restyle、Undo に積む)。入力中は従来どおり設定と入力中のテキストの両方に効かせる
+  // (新しく書いている途中のテキストは「次に描く注釈」の続きなので)
+  function updateTextSetting<K extends keyof TextSettings>(key: K, value: TextSettings[K], continuous = false) {
+    const sel = selectedText;
+    if (!sel) {
+      textSettings[key] = value;
+      textOverlayRef?.updateActiveAttribute(key, value);
+      return;
+    }
+    restyle("text", sel, { [key]: value } as Partial<TextAnnotation>, (u) => (textAnnotations = textAnnotations.map((t) => (t.id === u.id ? u : t))), continuous);
   }
 
-  // ステップの属性変更時、選択中のバッジにも反映する (テキストと同じ)
-  function updateStepSetting<K extends keyof StepSettings>(key: K, value: StepSettings[K]) {
-    stepSettings[key] = value;
-    stepOverlayRef?.updateActiveAttribute(key, value);
+  // ステップの属性の変更。選択中のバッジがあればそれだけを書き換える (restyle、Undo に積む)
+  function updateStepSetting<K extends keyof StepSettings>(key: K, value: StepSettings[K], continuous = false) {
+    const sel = selectedStep;
+    if (!sel) {
+      stepSettings[key] = value;
+      return;
+    }
+    restyle("step", sel, { [key]: value } as Partial<Step>, (u) => (steps = steps.map((st) => (st.id === u.id ? u : st))), continuous);
   }
 
   // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
@@ -2086,11 +2227,13 @@
     onApplyCrop={applyCrop}
     onResetCrop={resetCropRect}
     onCancelCrop={cancelCrop}
-    {arrowSettings}
-    {maskSettings}
-    {shapeSettings}
-    {textSettings}
-    {stepSettings}
+    arrowSettings={arrowPanel}
+    maskSettings={maskPanel}
+    shapeSettings={shapePanel}
+    textSettings={textPanel}
+    stepSettings={stepPanel}
+    {selectionKind}
+    selectedShapeType={selectedShape?.type ?? null}
     {filePath}
     {copyPathSuccess}
     {copyImageSuccess}
@@ -2115,8 +2258,12 @@
     onCaptureVideo={captureVideo}
     {videoMode}
     onDragFile={handleDragFile}
+    onUpdateArrowSetting={updateArrowSetting}
+    onUpdateShapeSetting={updateShapeSetting}
+    onUpdateMaskSetting={updateMaskSetting}
     onUpdateTextSetting={updateTextSetting}
     onUpdateStepSetting={updateStepSetting}
+    onEndStyleEdit={endStyleEdit}
     {highlightCapture}
     onHighlightEnd={() => highlightCapture = false}
     {autoCopyMode}
@@ -2190,6 +2337,7 @@
         />
         <MaskOverlay
           bind:this={maskOverlayRef}
+          bind:selectedId={maskSelectedId}
           {masks}
           settings={maskSettings}
           toolActive={maskToolActive}
@@ -2201,6 +2349,7 @@
         />
         <ShapeOverlay
           bind:this={shapeOverlayRef}
+          bind:selectedId={shapeSelectedId}
           {shapes}
           settings={shapeSettings}
           toolActive={shapeToolActive}
@@ -2214,6 +2363,8 @@
         />
         <TextOverlay
           bind:this={textOverlayRef}
+          bind:selectedId={textSelectedId}
+          bind:editingId={textEditingId}
           texts={textAnnotations}
           settings={textSettings}
           toolActive={textToolActive}
@@ -2225,6 +2376,7 @@
         />
         <ArrowOverlay
           bind:this={arrowOverlayRef}
+          bind:selectedId={arrowSelectedId}
           {arrows}
           settings={arrowSettings}
           toolActive={arrowToolActive}
@@ -2238,6 +2390,7 @@
              (arrows first, step badges last), so the export matches what was composed -->
         <StepOverlay
           bind:this={stepOverlayRef}
+          bind:selectedId={stepSelectedId}
           {steps}
           settings={stepSettings}
           toolActive={stepToolActive}

@@ -220,12 +220,33 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   色を変えた直後の ⌘Z が効かなくなる。
 - ネイティブの Edit > Undo / Redo は WebView の文字入力にしか効かない (注釈の履歴は知らない) ので、
   入力欄の外では JS 側だけが動き、二重には動かない。
-- **Undo に積まない編集** (選択中のテキスト / ステップの色などをツールバーから変える `updateActiveAttribute`) が
+- **Undo に積まない編集** (入力中のテキストの色などをツールバーから変える `updateActiveAttribute`) が
   Undo / Redo の後に挟まったら、次の Undo / Redo の前に Redo の履歴を捨てる (`dropStaleRedo`)。
   `undo()` / `redo()` が反映直後の注釈の署名 (`annotationSignature()`) を `markApplied` で控え、次回に今の署名と比べる。
   捨てないと Redo がその編集を黙って消す。積まない編集を足しても、注釈の配列を書き換える限りここで拾える。
 - 履歴は `$state` にしない (テンプレートから読まない。スナップショットを proxy で包まない)。
   Undo / Redo のボタンを置くなら、件数だけを別の `$state` に持つこと。
+
+## 選択中の注釈の見た目の変更 (+page.svelte の restyle、CYBERNEURA-DEV-1320)
+
+置いた後の注釈を選び、ツールバーで色・太さ・白縁・影 (テキストは文字サイズ・太字・斜体、マスクはモードと塗りの色) を
+変える。選択中は**その注釈だけを書き換え、設定 (次に描く注釈の設定 = config) は変えない**。選択が無い時は従来どおり設定を変える。
+
+- 各オーバーレイの `selectedId` (TextOverlay は `editingId` も) は `$bindable` で、`+page.svelte` が bind する。
+  **選択はオーバーレイをまたいで 1 つだけ**: どれかが選ばれたら `$effect` が他の `deselect()` を呼ぶ
+  (Delete とツールバーの変更が 2 つに効かないように)。ツールの切り替え (`deactivateAllTools`) は従来どおり全部外す。
+- ツールバーには `arrowPanel` / `shapePanel` / `maskPanel` / `textPanel` / `stepPanel` (選択中の注釈の値か設定) を渡し、
+  `selectionKind` があればツールが有効でなくてもその種類の設定を出す。図形は選択中の種別 (`selectedShapeType`) の欄を出す
+  (矩形ツールのまま蛍光ペンを選んだら蛍光ペンの欄)。**Toolbar は設定を `bind:value` で直接書き換えない** —
+  `onUpdate…Setting(key, value, continuous)` で +page.svelte に渡し、選択の有無で振り分ける。
+- **Undo は 1 変更 1 手**。色ピッカーのドラッグ (`oninput` の連続) は `styleEditKey` (注釈の種類:id:属性) が同じ間は積まず、
+  ピッカーの `change`・別の属性 / 注釈・別の編集 (`pushUndo`)・Undo / Redo で区切る。値が変わらない変更は積まない。
+- 例外: **入力中のテキスト** (新規・ダブルクリックで再編集中) は従来どおり設定と入力中のテキストの両方に効かせる
+  (`updateActiveAttribute`。書いている途中のテキストは「次に描く注釈」の続きなので)。**スポットライトの暗さ**は
+  全部のスポットライトで 1 つの値なので、選択中でも設定を変える。マスクのモードを塗りから変えるかは利用者の判断
+  (秘密の自動マスクの節)。蛍光ペンの色は図形の `color` に入る (ツールバーでは highlightColor の欄)。
+- 描いた直後の注釈は選択状態なので、続けてツールバーを触るとその注釈だけが変わる (次の注釈の設定は変わらない)。
+  ステップは以前「選択中のバッジと設定の両方」に効いていたが、他の注釈と揃えた。
 
 ## ツールの 1 文字キー (src/lib/toolShortcuts.ts)
 
@@ -433,8 +454,8 @@ CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧
   共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
   と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを
   最後 (矢印の上) に描くので、テンプレートでも `StepOverlay` を `ArrowOverlay` の後ろに置く。
-- 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は選択中のバッジにも効く
-  (`updateStepSetting` → `updateActiveAttribute`、テキストと同じ)。
+- 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は、選択中のバッジがあればそれだけに効く
+  (`updateStepSetting` → `restyle`。「選択中の注釈の見た目の変更」の節)。
 - IPC コマンドは増やしていないので `build.rs` の `APP_COMMANDS` と capability は触っていない。
 
 ## 画像の表示サイズ (src/routes/+page.svelte + resize_window_for_image)
