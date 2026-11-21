@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -247,6 +247,19 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   (秘密の自動マスクの節)。蛍光ペンの色は図形の `color` に入る (ツールバーでは highlightColor の欄)。
 - 描いた直後の注釈は選択状態なので、続けてツールバーを触るとその注釈だけが変わる (次の注釈の設定は変わらない)。
   ステップは以前「選択中のバッジと設定の両方」に効いていたが、他の注釈と揃えた。
+
+## 注釈の複製 (src/lib/duplicate.ts、CYBERNEURA-DEV-1321)
+
+- **⌘D / Ctrl+D** (`+page.svelte` の `handleKeydown` → `duplicateSelection`): 選択中の注釈 (「選択中の注釈の見た目の変更」の
+  `selectedArrow` 等) を右下に `DUPLICATE_OFFSET` (16 画像 px x `annotationScale`) ずらして末尾に足し、複製を選ぶ。
+  `pushUndo` 1 回。判定 `isDuplicateKey` は OS の主キー 1 つだけ (⌘⇧D 等は別)、フォーム部品・IME の変換中・自動リピートでは
+  反応しない (`toolForKey` と同じ `isFormControlTarget`)。⌘C / ⌘⇧C はパス / 画像のコピーのままで、注釈のコピー&ペーストは無い。
+- **Option / Alt+ドラッグ** (各オーバーレイの `handleMouseDown` の先頭): Option を押して注釈を押すと `dragging = "duplicate"` で待ち、
+  `exceedsDragSlop` を超えて動いた最初の 1 回で `onBeforeMutate` → 複製を足して選び、以後は複製を普通の移動で動かす
+  (複製と移動で Undo 1 手)。動かさずに離したら複製せず元を選ぶ。選択済みかは問わない (押した注釈が複製元)。
+  **矢印は複製時だけ丸ごと動かす** (`move-all`。普段の矢印のドラッグは端点だけ)。テキストは入力中は対象外。
+- ステップの複製は `stepsWithDuplicate` (末尾に足して `renumber`)。複製は次の番号になり、元の番号は変わらない。
+- テストは `tests/duplicate.test.mts` (キー判定、ずらし、ステップの番号: 複製 → 削除 → Undo)。
 
 ## ツールの 1 文字キー (src/lib/toolShortcuts.ts)
 

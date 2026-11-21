@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Shape, ShapeSettings } from "./types";
   import { highlightPaint, hitsHighlight, type LumaMap } from "./highlight";
+  import { exceedsDragSlop } from "./textHit";
 
   interface Props {
     shapes: Shape[];
@@ -25,7 +26,9 @@
 
   let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate, onDraftChange, selectedId = $bindable(null) }: Props = $props();
 
-  let dragging = $state<"draw" | "move" | "resize" | null>(null);
+  let dragging = $state<"draw" | "move" | "resize" | "duplicate" | null>(null);
+  /** Option / Alt+ドラッグで複製する元 (動き始めるまでは複製しない) */
+  let duplicateSource: Shape | null = null;
   let drawingShape = $state<Shape | null>(null);
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let hoverCursor = $state<string>("default");
@@ -59,6 +62,18 @@
   function handleMouseDown(e: MouseEvent) {
     const pt = getSvgCoords(e);
     if (!pt) return;
+
+    // Option / Alt を押しながら注釈を押した: 動かし始めたら複製して、複製の方を動かす
+    // (CYBERNEURA-DEV-1321)。押しただけで離したら複製せずに選ぶだけ
+    if (e.altKey) {
+      const source = [...shapes].reverse().find((s) => hitTestShape(s, pt.x, pt.y));
+      if (source) {
+        duplicateSource = source;
+        dragging = "duplicate";
+        dragStart = pt;
+        return;
+      }
+    }
 
     if (selectedId) {
       const sel = shapes.find((s) => s.id === selectedId);
@@ -243,6 +258,19 @@
     const dx = pt.x - dragStart.x;
     const dy = pt.y - dragStart.y;
 
+    if (dragging === "duplicate" && duplicateSource) {
+      if (!exceedsDragSlop(dx, dy, scale)) return;
+      onBeforeMutate?.();
+      const source = duplicateSource;
+      const copy = { ...source, id: crypto.randomUUID(), x: source.x + dx, y: source.y + dy };
+      onShapesChange([...shapes, copy]);
+      selectedId = copy.id;
+      dragOrigRect = { x: source.x, y: source.y, width: source.width, height: source.height };
+      duplicateSource = null;
+      dragging = "move";
+      return;
+    }
+
     if (dragging === "draw" && drawingShape && dragStart) {
       if (shiftHeld) {
         const constrained = constrainSquare(dragStart.x, dragStart.y, pt.x, pt.y);
@@ -271,6 +299,9 @@
   }
 
   function handleMouseUp() {
+    // Option / Alt を押して離しただけ: 複製せずに選ぶ
+    if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
+    duplicateSource = null;
     if (dragging === "draw" && drawingShape && drawingShape.width > 3 && drawingShape.height > 3) {
       onShapesChange([...shapes, drawingShape]);
       selectedId = drawingShape.id;

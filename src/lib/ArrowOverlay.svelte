@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { Arrow, ArrowSettings } from "./types";
+  import { exceedsDragSlop } from "./textHit";
+  import { offsetArrowCopy } from "./duplicate";
 
   interface Props {
     arrows: Arrow[];
@@ -17,7 +19,13 @@
 
   let { arrows, settings, toolActive, interactive, scale, annotationScale = 1, onArrowsChange, onBeforeMutate, selectedId = $bindable(null) }: Props = $props();
 
-  let dragging = $state<"draw" | "move-start" | "move-end" | null>(null);
+  // "duplicate" = Option / Alt で押して、動き始めるのを待っている。"move-all" = 複製した矢印を丸ごと動かす
+  let dragging = $state<"draw" | "move-start" | "move-end" | "duplicate" | "move-all" | null>(null);
+  /** Option / Alt+ドラッグで複製する元と、押した位置 */
+  let duplicateSource: Arrow | null = null;
+  let duplicateStart: { x: number; y: number } | null = null;
+  /** 丸ごと動かしている複製の、動かし始めの位置 */
+  let moveOrig: Arrow | null = null;
   let drawingArrow = $state<Arrow | null>(null);
   let hoverCursor = $state<string>("default");
 
@@ -89,6 +97,18 @@
   function handleMouseDown(e: MouseEvent) {
     const pt = getSvgCoords(e);
     if (!pt) return;
+
+    // Option / Alt を押しながら注釈を押した: 動かし始めたら複製して、複製の方を動かす (矢印は端点ではなく丸ごと)
+    // (CYBERNEURA-DEV-1321)。押しただけで離したら複製せずに選ぶだけ
+    if (e.altKey) {
+      const source = [...arrows].reverse().find((a) => distToArrow(a, pt.x, pt.y) < a.thickness * annotationScale + 6 / scale);
+      if (source) {
+        duplicateSource = source;
+        duplicateStart = pt;
+        dragging = "duplicate";
+        return;
+      }
+    }
 
     // Drag endpoints of selected arrow
     if (selectedId) {
@@ -169,7 +189,21 @@
       return;
     }
 
-    if (dragging === "draw" && drawingArrow) {
+    if (dragging === "duplicate" && duplicateSource && duplicateStart) {
+      const dx = pt.x - duplicateStart.x;
+      const dy = pt.y - duplicateStart.y;
+      if (!exceedsDragSlop(dx, dy, scale)) return;
+      onBeforeMutate?.();
+      const copy = offsetArrowCopy(duplicateSource, 0, 0, crypto.randomUUID());
+      moveOrig = copy;
+      onArrowsChange([...arrows, offsetArrowCopy(copy, dx, dy, copy.id)]);
+      selectedId = copy.id;
+      duplicateSource = null;
+      dragging = "move-all";
+    } else if (dragging === "move-all" && selectedId && moveOrig && duplicateStart) {
+      const moved = offsetArrowCopy(moveOrig, pt.x - duplicateStart.x, pt.y - duplicateStart.y, moveOrig.id);
+      onArrowsChange(arrows.map((a) => (a.id === selectedId ? moved : a)));
+    } else if (dragging === "draw" && drawingArrow) {
       drawingArrow = { ...drawingArrow, endX: pt.x, endY: pt.y };
     } else if (dragging === "move-start" && selectedId) {
       onArrowsChange(
@@ -183,6 +217,11 @@
   }
 
   function handleMouseUp() {
+    // Option / Alt を押して離しただけ: 複製せずに選ぶ
+    if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
+    duplicateSource = null;
+    duplicateStart = null;
+    moveOrig = null;
     if (dragging === "draw" && drawingArrow) {
       const dx = drawingArrow.endX - drawingArrow.startX;
       const dy = drawingArrow.endY - drawingArrow.startY;
