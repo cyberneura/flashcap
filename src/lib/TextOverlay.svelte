@@ -15,7 +15,7 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
-    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
+    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Annotations on Retina captures」) */
     annotationScale?: number;
     onTextsChange: (texts: TextAnnotation[]) => void;
     onBeforeMutate?: () => void;
