@@ -5,11 +5,14 @@
     CropRect,
     MaskSettings,
     ShapeSettings,
+    ShapeType,
     StepSettings,
     TextSettings,
   } from "$lib/types";
   import { ASPECT_SQUARE, ASPECT_WIDESCREEN } from "$lib/cropAspect";
   import { isWindows, shortcutLabel } from "$lib/platform";
+  import { toolShortcutLabel } from "$lib/toolShortcuts";
+  import { SPOTLIGHT_DARKNESS_OPTIONS } from "$lib/spotlight";
   import ShellCommandMenu from "$lib/ShellCommandMenu.svelte";
   import type { ShellCommand } from "$lib/shellCommands";
 
@@ -59,8 +62,14 @@
     onOcrRegionSelect,
     onOcrCaptureRegion,
     onDragFile,
+    onUpdateArrowSetting,
+    onUpdateShapeSetting,
+    onUpdateMaskSetting,
     onUpdateTextSetting,
     onUpdateStepSetting,
+    onEndStyleEdit,
+    selectionKind,
+    selectedShapeType,
     highlightCapture,
     onHighlightEnd,
     autoCopyMode,
@@ -103,7 +112,7 @@
     /** OCR でメール / IP / トークン等を見つけて自動でマスクを置く (macOS のみ) */
     onRedactSensitiveText: () => void;
     redactBusy: boolean;
-    onToggleShapeTool: (type: "rect" | "ellipse") => void;
+    onToggleShapeTool: (type: ShapeType) => void;
     onToggleTextTool: () => void;
     onToggleStepTool: () => void;
     onCopyPath: () => void;
@@ -118,8 +127,22 @@
     onCaptureVideo: () => void;
     videoMode: boolean;
     onDragFile: () => void;
-    onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K]) => void;
-    onUpdateStepSetting: <K extends keyof StepSettings>(key: K, value: StepSettings[K]) => void;
+    // 設定の変更。選択中の注釈があればその注釈だけを書き換え、無ければ次に描く注釈の設定を変える
+    // (+page.svelte)。`continuous` は色ピッカーのドラッグのような連続した入力で、Undo の 1 手にまとめる
+    onUpdateArrowSetting: <K extends keyof ArrowSettings>(key: K, value: ArrowSettings[K], continuous?: boolean) => void;
+    onUpdateShapeSetting: <K extends keyof ShapeSettings>(key: K, value: ShapeSettings[K], continuous?: boolean) => void;
+    onUpdateMaskSetting: <K extends keyof MaskSettings>(key: K, value: MaskSettings[K], continuous?: boolean) => void;
+    onUpdateTextSetting: <K extends keyof TextSettings>(key: K, value: TextSettings[K], continuous?: boolean) => void;
+    onUpdateStepSetting: <K extends keyof StepSettings>(key: K, value: StepSettings[K], continuous?: boolean) => void;
+    /** 連続した入力 (色ピッカー) が終わった。次の変更は Undo の別の手になる */
+    onEndStyleEdit: () => void;
+    /**
+     * 選択中の注釈の種類。あればツールが有効でなくてもその種類の設定を出し、値は選択中の注釈のもの
+     * (`arrowSettings` などは +page.svelte が選択中の注釈の値に差し替えて渡す)
+     */
+    selectionKind: "arrow" | "shape" | "mask" | "text" | "step" | null;
+    /** 選択中の図形の種別 (矩形・楕円・蛍光ペン・スポットライトで出す設定が違う) */
+    selectedShapeType: ShapeType | null;
     highlightCapture: boolean;
     onHighlightEnd: () => void;
     /** null = 設定をまだ読めていない (ボタンを押せない) */
@@ -135,6 +158,14 @@
     sidebarToggleReady: boolean;
     onToggleSidebar: () => void;
   } = $props();
+
+  // 図形の設定を出す種別。選択中の図形があればその種別 (ツールが別の種別でも)、無ければ有効なツールの種別
+  let shapePanelType = $derived<ShapeType | null>(
+    selectedShapeType ?? (shapeToolActive ? shapeSettings.type : null),
+  );
+
+  const colorOf = (e: Event) => (e.target as HTMLInputElement).value;
+  const numberOf = (e: Event) => Number((e.target as HTMLSelectElement).value);
 
   const AUTO_COPY_OPTIONS: { mode: AutoCopyMode; label: string }[] = [
     { mode: "none", label: "Don't copy" },
@@ -212,23 +243,26 @@
     class:active={arrowToolActive}
     onclick={onToggleArrowTool}
     aria-label="Arrow tool"
-    data-tooltip="Arrow tool"
+    data-tooltip="Arrow tool ({toolShortcutLabel('arrow')})"
   >
     <i class="bi bi-arrow-up-right"></i>
   </button>
 
-  {#if arrowToolActive}
+  {#if arrowToolActive || selectionKind === "arrow"}
     <div class="tool-settings">
       <input
         type="color"
         class="color-picker"
-        bind:value={arrowSettings.color}
+        value={arrowSettings.color}
+        oninput={(e) => onUpdateArrowSetting("color", colorOf(e), true)}
+        onchange={onEndStyleEdit}
         data-tooltip="Arrow color"
       />
 
       <select
         class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
-        bind:value={arrowSettings.thickness}
+        value={arrowSettings.thickness}
+        onchange={(e) => onUpdateArrowSetting("thickness", numberOf(e))}
         data-tooltip="Arrow thickness"
       >
         <option value={2}>Thin</option>
@@ -240,7 +274,7 @@
       <button
         class="tool-btn"
         class:active={arrowSettings.whiteStroke}
-        onclick={() => (arrowSettings.whiteStroke = !arrowSettings.whiteStroke)}
+        onclick={() => onUpdateArrowSetting("whiteStroke", !arrowSettings.whiteStroke)}
         aria-label="White border"
         data-tooltip="White border"
       >
@@ -250,7 +284,7 @@
       <button
         class="tool-btn"
         class:active={arrowSettings.dropShadow}
-        onclick={() => (arrowSettings.dropShadow = !arrowSettings.dropShadow)}
+        onclick={() => onUpdateArrowSetting("dropShadow", !arrowSettings.dropShadow)}
         aria-label="Drop shadow"
         data-tooltip="Drop shadow"
       >
@@ -264,14 +298,17 @@
       <input
         type="color"
         class="color-picker"
-        bind:value={shapeSettings.color}
+        value={shapeSettings.color}
+        oninput={(e) => onUpdateShapeSetting("color", colorOf(e), true)}
+        onchange={onEndStyleEdit}
         data-tooltip="Shape color"
       />
 
       <i class="bi bi-border-width text-neutral-400 text-xs"></i>
       <select
         class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
-        bind:value={shapeSettings.thickness}
+        value={shapeSettings.thickness}
+        onchange={(e) => onUpdateShapeSetting("thickness", numberOf(e))}
         data-tooltip="Shape thickness"
       >
         <option value={2}>Thin</option>
@@ -283,7 +320,7 @@
       <button
         class="tool-btn"
         class:active={shapeSettings.whiteStroke}
-        onclick={() => (shapeSettings.whiteStroke = !shapeSettings.whiteStroke)}
+        onclick={() => onUpdateShapeSetting("whiteStroke", !shapeSettings.whiteStroke)}
         aria-label="White border"
         data-tooltip="White border"
       >
@@ -293,7 +330,7 @@
       <button
         class="tool-btn"
         class:active={shapeSettings.dropShadow}
-        onclick={() => (shapeSettings.dropShadow = !shapeSettings.dropShadow)}
+        onclick={() => onUpdateShapeSetting("dropShadow", !shapeSettings.dropShadow)}
         aria-label="Drop shadow"
         data-tooltip="Drop shadow"
       >
@@ -307,12 +344,12 @@
     class:active={shapeToolActive && shapeSettings.type === "rect"}
     onclick={() => onToggleShapeTool("rect")}
     aria-label="Rectangle tool"
-    data-tooltip="Rectangle tool"
+    data-tooltip="Rectangle tool ({toolShortcutLabel('rect')})"
   >
     <i class="bi bi-square"></i>
   </button>
 
-  {#if shapeToolActive && shapeSettings.type === "rect"}
+  {#if shapePanelType === "rect"}
     {@render shapeSettingsPanel()}
   {/if}
 
@@ -321,13 +358,68 @@
     class:active={shapeToolActive && shapeSettings.type === "ellipse"}
     onclick={() => onToggleShapeTool("ellipse")}
     aria-label="Ellipse tool"
-    data-tooltip="Ellipse tool"
+    data-tooltip="Ellipse tool ({toolShortcutLabel('ellipse')})"
   >
     <i class="bi bi-circle"></i>
   </button>
 
-  {#if shapeToolActive && shapeSettings.type === "ellipse"}
+  {#if shapePanelType === "ellipse"}
     {@render shapeSettingsPanel()}
+  {/if}
+
+  <button
+    class="tool-btn"
+    class:active={shapeToolActive && shapeSettings.type === "highlight"}
+    onclick={() => onToggleShapeTool("highlight")}
+    aria-label="Highlighter tool"
+    data-tooltip="Highlighter tool ({toolShortcutLabel('highlight')})"
+  >
+    <i class="bi bi-highlighter"></i>
+  </button>
+
+  {#if shapePanelType === "highlight"}
+    <!-- 蛍光ペンは塗りだけなので、太さ・白縁・影は出さない -->
+    <div class="tool-settings">
+      <input
+        type="color"
+        class="color-picker"
+        value={shapeSettings.highlightColor}
+        oninput={(e) => onUpdateShapeSetting("highlightColor", colorOf(e), true)}
+        onchange={onEndStyleEdit}
+        data-tooltip="Highlighter color"
+      />
+    </div>
+  {/if}
+
+  <button
+    class="tool-btn"
+    class:active={shapeToolActive && shapeSettings.type === "spotlight"}
+    onclick={() => onToggleShapeTool("spotlight")}
+    aria-label="Spotlight tool"
+    data-tooltip="Spotlight tool: dim everything outside ({toolShortcutLabel('spotlight')})"
+  >
+    <i class="bi bi-brightness-high"></i>
+  </button>
+
+  {#if shapePanelType === "spotlight"}
+    <!-- 暗さは 1 つの値で、置いてある全部のスポットライトに効く -->
+    <div class="tool-settings">
+      <i class="bi bi-moon text-neutral-400 text-xs"></i>
+      <select
+        class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
+        value={shapeSettings.spotlightDarkness}
+        onchange={(e) => onUpdateShapeSetting("spotlightDarkness", numberOf(e))}
+        data-tooltip="Darkness outside the spotlight"
+      >
+        {#each SPOTLIGHT_DARKNESS_OPTIONS as option (option)}
+          <option value={option}>{Math.round(option * 100)}%</option>
+        {/each}
+        {#if !SPOTLIGHT_DARKNESS_OPTIONS.includes(shapeSettings.spotlightDarkness)}
+          <!-- config.json に手で書いた値。選択肢に無くても今の値を出す -->
+          <option value={shapeSettings.spotlightDarkness}>{Math.round(shapeSettings.spotlightDarkness * 100)}%</option>
+        {/if}
+      </select>
+    </div>
   {/if}
 
   <button
@@ -335,25 +427,26 @@
     class:active={stepToolActive}
     onclick={onToggleStepTool}
     aria-label="Step tool"
-    data-tooltip="Step tool (numbered markers)"
+    data-tooltip="Step tool (numbered markers) ({toolShortcutLabel('step')})"
   >
     <i class="bi bi-1-circle-fill"></i>
   </button>
 
-  {#if stepToolActive}
+  {#if stepToolActive || selectionKind === "step"}
     <div class="tool-settings">
       <input
         type="color"
         class="color-picker"
         value={stepSettings.color}
-        oninput={(e) => onUpdateStepSetting("color", (e.target as HTMLInputElement).value)}
+        oninput={(e) => onUpdateStepSetting("color", colorOf(e), true)}
+        onchange={onEndStyleEdit}
         data-tooltip="Marker color"
       />
 
       <select
         class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
         value={stepSettings.size}
-        onchange={(e) => onUpdateStepSetting("size", Number((e.target as HTMLSelectElement).value))}
+        onchange={(e) => onUpdateStepSetting("size", numberOf(e))}
         data-tooltip="Marker size"
       >
         <option value={24}>24px</option>
@@ -390,25 +483,26 @@
     class:active={textToolActive}
     onclick={onToggleTextTool}
     aria-label="Text tool"
-    data-tooltip="Text tool"
+    data-tooltip="Text tool ({toolShortcutLabel('text')})"
   >
     <i class="bi bi-fonts" style="font-size: 125%"></i>
   </button>
 
-  {#if textToolActive}
+  {#if textToolActive || selectionKind === "text"}
     <div class="tool-settings">
       <input
         type="color"
         class="color-picker"
         value={textSettings.color}
-        oninput={(e) => onUpdateTextSetting("color", (e.target as HTMLInputElement).value)}
+        oninput={(e) => onUpdateTextSetting("color", colorOf(e), true)}
+        onchange={onEndStyleEdit}
         data-tooltip="Text color"
       />
 
       <select
         class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
         value={textSettings.fontSize}
-        onchange={(e) => onUpdateTextSetting("fontSize", Number((e.target as HTMLSelectElement).value))}
+        onchange={(e) => onUpdateTextSetting("fontSize", numberOf(e))}
         data-tooltip="Font size"
       >
         <option value={16}>16px</option>
@@ -465,24 +559,24 @@
     class:active={maskToolActive}
     onclick={onToggleMaskTool}
     aria-label="Mask tool"
-    data-tooltip="Mask tool"
+    data-tooltip="Mask tool ({toolShortcutLabel('mask')})"
   >
     <i class="bi bi-eye-slash"></i>
   </button>
 
-  {#if maskToolActive}
+  {#if maskToolActive || selectionKind === "mask"}
     <div class="tool-settings">
       <button
         class="tool-btn text-xs"
         class:active={maskSettings.mode === "mosaic"}
-        onclick={() => (maskSettings.mode = "mosaic")}
+        onclick={() => onUpdateMaskSetting("mode", "mosaic")}
         aria-label="Mosaic"
         data-tooltip="Mosaic"
       ><i class="bi bi-grid-3x3-gap-fill"></i></button>
       <button
         class="tool-btn text-xs"
         class:active={maskSettings.mode === "blur"}
-        onclick={() => (maskSettings.mode = "blur")}
+        onclick={() => onUpdateMaskSetting("mode", "blur")}
         aria-label="Blur"
         data-tooltip="Blur"
       >
@@ -491,7 +585,7 @@
       <button
         class="tool-btn text-xs"
         class:active={maskSettings.mode === "fill"}
-        onclick={() => (maskSettings.mode = "fill")}
+        onclick={() => onUpdateMaskSetting("mode", "fill")}
         aria-label="Fill"
         data-tooltip="Fill"
       >
@@ -502,7 +596,9 @@
         <input
           type="color"
           class="color-picker"
-          bind:value={maskSettings.color}
+          value={maskSettings.color}
+          oninput={(e) => onUpdateMaskSetting("color", colorOf(e), true)}
+          onchange={onEndStyleEdit}
           data-tooltip="Fill color"
         />
       {/if}
@@ -532,7 +628,7 @@
     onclick={onToggleCropTool}
     disabled={!hasImage}
     aria-label="Crop tool"
-    data-tooltip="Crop tool"
+    data-tooltip="Crop tool ({toolShortcutLabel('crop')})"
   >
     <i class="bi bi-crop"></i>
   </button>
@@ -637,7 +733,7 @@
       {#if copyImageSuccess}
         <i class="bi bi-check-lg"></i>
       {:else}
-        <i class="bi bi-image"></i>
+        <i class="bi bi-clipboard"></i>
       {/if}
     </button>
   {/if}

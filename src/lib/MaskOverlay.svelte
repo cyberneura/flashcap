@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { MaskRect, MaskSettings } from "./types";
+  import { exceedsDragSlop } from "./textHit";
 
   interface Props {
     masks: MaskRect[];
@@ -11,12 +12,15 @@
     imageRevision: number;
     onMasksChange: (masks: MaskRect[]) => void;
     onBeforeMutate?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { masks, settings, toolActive, interactive, scale, imageRevision, onMasksChange, onBeforeMutate }: Props = $props();
+  let { masks, settings, toolActive, interactive, scale, imageRevision, onMasksChange, onBeforeMutate, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
-  let dragging = $state<"draw" | "move" | "resize" | null>(null);
+  let dragging = $state<"draw" | "move" | "resize" | "duplicate" | null>(null);
+  /** Option / Alt+ドラッグで複製する元 (動き始めるまでは複製しない) */
+  let duplicateSource: MaskRect | null = null;
   let drawingRect = $state<MaskRect | null>(null);
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let hoverCursor = $state<string>("default");
@@ -35,6 +39,20 @@
   function handleMouseDown(e: MouseEvent) {
     const pt = getSvgCoords(e);
     if (!pt) return;
+
+    // Option / Alt を押しながら注釈を押した: 動かし始めたら複製して、複製の方を動かす
+    // (CYBERNEURA-DEV-1321)。押しただけで離したら複製せずに選ぶだけ
+    if (e.altKey) {
+      const source = [...masks].reverse().find((m) =>
+        pt.x >= m.x && pt.x <= m.x + m.width && pt.y >= m.y && pt.y <= m.y + m.height
+      );
+      if (source) {
+        duplicateSource = source;
+        dragging = "duplicate";
+        dragStart = pt;
+        return;
+      }
+    }
 
     // 選択中マスクのハンドル or 本体をドラッグ
     if (selectedId) {
@@ -146,6 +164,19 @@
     const dx = pt.x - dragStart.x;
     const dy = pt.y - dragStart.y;
 
+    if (dragging === "duplicate" && duplicateSource) {
+      if (!exceedsDragSlop(dx, dy, scale)) return;
+      onBeforeMutate?.();
+      const source = duplicateSource;
+      const copy = { ...source, id: crypto.randomUUID(), x: source.x + dx, y: source.y + dy };
+      onMasksChange([...masks, copy]);
+      selectedId = copy.id;
+      dragOrigRect = { x: source.x, y: source.y, width: source.width, height: source.height };
+      duplicateSource = null;
+      dragging = "move";
+      return;
+    }
+
     if (dragging === "draw" && drawingRect) {
       const x = Math.min(dragStart.x, pt.x);
       const y = Math.min(dragStart.y, pt.y);
@@ -169,6 +200,9 @@
   }
 
   function handleMouseUp() {
+    // Option / Alt を押して離しただけ: 複製せずに選ぶ
+    if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
+    duplicateSource = null;
     if (dragging === "draw" && drawingRect && drawingRect.width > 3 && drawingRect.height > 3) {
       onMasksChange([...masks, drawingRect]);
       selectedId = drawingRect.id;

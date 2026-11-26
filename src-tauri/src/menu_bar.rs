@@ -15,7 +15,7 @@
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::CaptureKind;
 
@@ -23,6 +23,15 @@ use crate::CaptureKind;
 const STORE_KEY: &str = "show_in_menu_bar";
 
 const TRAY_ID: &str = "menu-bar";
+
+/// 「New Image from Clipboard」の id と文言。macOS のアプリメニュー (lib.rs の
+/// `set_app_menu` の File) にも同じ id で置き、どちらから押されても `handle_menu_event`
+/// の同じ振り分けを通す (CYBERNEURA-DEV-1295)
+pub(crate) const NEW_IMAGE_FROM_CLIPBOARD_MENU_ID: &str = "menu-bar-new-from-clipboard";
+pub(crate) const NEW_IMAGE_FROM_CLIPBOARD_LABEL: &str = "New Image from Clipboard";
+
+/// フロント (`+page.svelte`) が受けて、今の画像を書き戻してからクリップボードの画像で差し替える
+const NEW_IMAGE_FROM_CLIPBOARD_EVENT: &str = "new-image-from-clipboard";
 
 /// メニューバーのアイコン (36x36 のテンプレート画像。scripts/make-tray-icons.py で生成)。
 /// tray-icon crate が高さ 18pt に揃えるので、Retina で等倍になる
@@ -35,6 +44,7 @@ enum MenuAction {
     OpenMainWindow,
     Capture,
     CaptureWithTimer,
+    NewImageFromClipboard,
     RecordVideo,
     RecordVideoWithTimer,
     CopyTextOnScreen,
@@ -42,10 +52,11 @@ enum MenuAction {
 }
 
 impl MenuAction {
-    const ALL: [MenuAction; 7] = [
+    const ALL: [MenuAction; 8] = [
         MenuAction::OpenMainWindow,
         MenuAction::Capture,
         MenuAction::CaptureWithTimer,
+        MenuAction::NewImageFromClipboard,
         MenuAction::RecordVideo,
         MenuAction::RecordVideoWithTimer,
         MenuAction::CopyTextOnScreen,
@@ -57,6 +68,7 @@ impl MenuAction {
             MenuAction::OpenMainWindow => "menu-bar-open",
             MenuAction::Capture => "menu-bar-capture",
             MenuAction::CaptureWithTimer => "menu-bar-capture-timer",
+            MenuAction::NewImageFromClipboard => NEW_IMAGE_FROM_CLIPBOARD_MENU_ID,
             MenuAction::RecordVideo => "menu-bar-record",
             MenuAction::RecordVideoWithTimer => "menu-bar-record-timer",
             MenuAction::CopyTextOnScreen => "menu-bar-ocr",
@@ -76,6 +88,7 @@ impl MenuAction {
             MenuAction::CaptureWithTimer => {
                 format!("Capture Screenshot with Timer ({}s)", timer_delay)
             }
+            MenuAction::NewImageFromClipboard => NEW_IMAGE_FROM_CLIPBOARD_LABEL.to_string(),
             MenuAction::RecordVideo => "Record Video".to_string(),
             MenuAction::RecordVideoWithTimer => {
                 format!("Record Video with Timer ({}s)", timer_delay)
@@ -102,7 +115,7 @@ impl MenuAction {
         matches!(
             self,
             MenuAction::OpenMainWindow
-                | MenuAction::CaptureWithTimer
+                | MenuAction::NewImageFromClipboard
                 | MenuAction::RecordVideoWithTimer
                 | MenuAction::CopyTextOnScreen
         )
@@ -262,6 +275,20 @@ fn run(app: &tauri::AppHandle, action: MenuAction) {
         // (撮影前に隠し、撮影後に結果を出す。ウインドウを出すのもあちらの仕事)
         MenuAction::Capture => crate::request_capture(app, CaptureKind::Interactive),
         MenuAction::CaptureWithTimer => crate::request_capture(app, CaptureKind::Timer),
+        // 読み取り・書き戻し・差し替えはフロントの newImageFromClipboard() に任せる。
+        // ウインドウはここで出す: 上の振り分けで撮影・録画・範囲選択中でないことを確かめた
+        // この時点なら写り込まない。フロントが処理の後に出すと、その間にメニューバーから
+        // 始めた OCR や録画の範囲選択に写り込む (フロントはそれらを知らない)。
+        // 画像が無かった時のトーストもこのウインドウに出る
+        MenuAction::NewImageFromClipboard => {
+            show_main_window(app);
+            if let Err(e) = app.emit_to("main", NEW_IMAGE_FROM_CLIPBOARD_EVENT, ()) {
+                eprintln!(
+                    "[flashcap] Failed to request a new image from the clipboard: {}",
+                    e
+                );
+            }
+        }
         MenuAction::RecordVideo => start_recording(app, None),
         MenuAction::RecordVideoWithTimer => start_recording(app, Some(crate::get_timer_delay())),
         MenuAction::CopyTextOnScreen => copy_text_on_screen(app),
@@ -333,6 +360,20 @@ mod tests {
             "Record Video with Timer (3s)"
         );
         assert_eq!(MenuAction::Capture.label(10), "Capture Screenshot");
+    }
+
+    #[test]
+    fn new_image_from_clipboard_is_offered_on_every_os() {
+        // クリップボードの読み取りは Windows でも動くので、macOS 限定にしない
+        assert!(MenuAction::NewImageFromClipboard.is_available());
+        assert_eq!(
+            MenuAction::from_menu_id(NEW_IMAGE_FROM_CLIPBOARD_MENU_ID),
+            Some(MenuAction::NewImageFromClipboard)
+        );
+        assert_eq!(
+            MenuAction::NewImageFromClipboard.label(3),
+            "New Image from Clipboard"
+        );
     }
 
     #[test]

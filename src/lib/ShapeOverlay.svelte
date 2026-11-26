@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { Shape, ShapeSettings } from "./types";
+  import { highlightPaint, hitsHighlight, type LumaMap } from "./highlight";
+  import { exceedsDragSlop } from "./textHit";
 
   interface Props {
     shapes: Shape[];
@@ -9,14 +11,24 @@
     scale: number;
     /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
     annotationScale?: number;
+    /** 画像の明るさの地図。蛍光ペンを乗算で重ねるか半透明で重ねるかの判定に使う (highlight.ts) */
+    lumaMap?: LumaMap | null;
     onShapesChange: (shapes: Shape[]) => void;
     onBeforeMutate?: () => void;
+    /**
+     * 引いている途中の図形 (無ければ null)。スポットライトの暗い部分は SpotlightLayer が
+     * 全部のスポットライトをまとめて描くので、引いている途中のものも親に渡して加える
+     */
+    onDraftChange?: (shape: Shape | null) => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, onShapesChange, onBeforeMutate }: Props = $props();
+  let { shapes, settings, toolActive, interactive, scale, annotationScale = 1, lumaMap = null, onShapesChange, onBeforeMutate, onDraftChange, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
-  let dragging = $state<"draw" | "move" | "resize" | null>(null);
+  let dragging = $state<"draw" | "move" | "resize" | "duplicate" | null>(null);
+  /** Option / Alt+ドラッグで複製する元 (動き始めるまでは複製しない) */
+  let duplicateSource: Shape | null = null;
   let drawingShape = $state<Shape | null>(null);
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let hoverCursor = $state<string>("default");
@@ -50,6 +62,18 @@
   function handleMouseDown(e: MouseEvent) {
     const pt = getSvgCoords(e);
     if (!pt) return;
+
+    // Option / Alt を押しながら注釈を押した: 動かし始めたら複製して、複製の方を動かす
+    // (CYBERNEURA-DEV-1321)。押しただけで離したら複製せずに選ぶだけ
+    if (e.altKey) {
+      const source = [...shapes].reverse().find((s) => hitTestShape(s, pt.x, pt.y));
+      if (source) {
+        duplicateSource = source;
+        dragging = "duplicate";
+        dragStart = pt;
+        return;
+      }
+    }
 
     if (selectedId) {
       const sel = shapes.find((s) => s.id === selectedId);
@@ -86,6 +110,11 @@
 
     onBeforeMutate?.();
     dragStart = pt;
+    // 蛍光ペンとスポットライトは枠線を描かないので、枠線の設定 (白縁・影) は持たせない。
+    // スポットライトの色は使わない (暗さは設定の spotlightDarkness で、全部のスポットライトで共通)
+    const isHighlight = settings.type === "highlight";
+    const isSpotlight = settings.type === "spotlight";
+    const noOutline = isHighlight || isSpotlight;
     drawingShape = {
       id: crypto.randomUUID(),
       type: settings.type,
@@ -93,10 +122,10 @@
       y: pt.y,
       width: 0,
       height: 0,
-      color: settings.color,
+      color: isHighlight ? settings.highlightColor : isSpotlight ? "#000000" : settings.color,
       thickness: settings.thickness,
-      whiteStroke: settings.whiteStroke,
-      dropShadow: settings.dropShadow,
+      whiteStroke: noOutline ? false : settings.whiteStroke,
+      dropShadow: noOutline ? false : settings.dropShadow,
     };
     dragging = "draw";
     selectedId = null;
@@ -104,6 +133,8 @@
 
   // 線(stroke)の近くをクリックで選択
   function hitTestShape(shape: Shape, px: number, py: number): boolean {
+    // 蛍光ペンは塗り、スポットライトは明るく残る範囲なので、どちらも内側のどこでも当たる
+    if (shape.type === "highlight" || shape.type === "spotlight") return hitsHighlight(shape, px, py, 6 / scale);
     const threshold = shape.thickness * annotationScale + 6 / scale;
     const { x, y, width: w, height: h } = shape;
 
@@ -227,6 +258,19 @@
     const dx = pt.x - dragStart.x;
     const dy = pt.y - dragStart.y;
 
+    if (dragging === "duplicate" && duplicateSource) {
+      if (!exceedsDragSlop(dx, dy, scale)) return;
+      onBeforeMutate?.();
+      const source = duplicateSource;
+      const copy = { ...source, id: crypto.randomUUID(), x: source.x + dx, y: source.y + dy };
+      onShapesChange([...shapes, copy]);
+      selectedId = copy.id;
+      dragOrigRect = { x: source.x, y: source.y, width: source.width, height: source.height };
+      duplicateSource = null;
+      dragging = "move";
+      return;
+    }
+
     if (dragging === "draw" && drawingShape && dragStart) {
       if (shiftHeld) {
         const constrained = constrainSquare(dragStart.x, dragStart.y, pt.x, pt.y);
@@ -255,6 +299,9 @@
   }
 
   function handleMouseUp() {
+    // Option / Alt を押して離しただけ: 複製せずに選ぶ
+    if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
+    duplicateSource = null;
     if (dragging === "draw" && drawingShape && drawingShape.width > 3 && drawingShape.height > 3) {
       onShapesChange([...shapes, drawingShape]);
       selectedId = drawingShape.id;
@@ -283,12 +330,34 @@
 
   let allShapes = $derived(drawingShape ? [...shapes, drawingShape] : shapes);
 
+  $effect(() => {
+    onDraftChange?.(drawingShape);
+  });
+
   export function deselect() {
     selectedId = null;
   }
 </script>
 
 <svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} />
+
+<!--
+  置いた蛍光ペンの塗りは HighlightLayer (マスクより下) が描く。ここで描くのは引いている途中の
+  1 つだけ (確定するまでの間だけ、マスクの上に見える)。svg の中には選択枠とハンドルだけを描く。
+-->
+{#if drawingShape && drawingShape.type === "highlight"}
+  {@const paint = highlightPaint(lumaMap, drawingShape)}
+  <div
+    class="highlight-fill"
+    style:left="{drawingShape.x}px"
+    style:top="{drawingShape.y}px"
+    style:width="{drawingShape.width}px"
+    style:height="{drawingShape.height}px"
+    style:background-color={drawingShape.color}
+    style:mix-blend-mode={paint.blend}
+    style:opacity={paint.opacity}
+  ></div>
+{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svg
@@ -308,7 +377,10 @@
   {#each allShapes as shape (shape.id)}
     {@const isSelected = shape.id === selectedId}
 
-    {#if shape.dropShadow && shape.whiteStroke}
+    {#if shape.type === "highlight" || shape.type === "spotlight"}
+      <!-- 蛍光ペンの塗りは HighlightLayer、スポットライトの暗い部分は SpotlightLayer。
+           ここでは選択枠とハンドルだけを描く -->
+    {:else if shape.dropShadow && shape.whiteStroke}
       <!-- 白枠のみに影を適用 -->
       {#if shape.type === "rect"}
         <rect
@@ -411,5 +483,9 @@
 
   .handle {
     @apply pointer-events-auto;
+  }
+
+  .highlight-fill {
+    @apply absolute pointer-events-none;
   }
 </style>

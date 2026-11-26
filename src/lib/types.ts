@@ -36,7 +36,9 @@ export interface MaskSettings {
   mosaicBlockSize: number;
 }
 
-export type ShapeType = "rect" | "ellipse";
+// `highlight` は蛍光ペン (枠線なし・半透明の塗りの矩形。src/lib/highlight.ts)、
+// `spotlight` はスポットライト (範囲の外側を暗くする。src/lib/spotlight.ts)
+export type ShapeType = "rect" | "ellipse" | "highlight" | "spotlight";
 
 export interface Shape {
   id: string;
@@ -54,6 +56,10 @@ export interface Shape {
 export interface ShapeSettings {
   type: ShapeType;
   color: string;
+  /** 蛍光ペンの色。枠線の色 (`color`) とは別に持つ (赤い枠の設定のまま蛍光ペンが赤くならないように) */
+  highlightColor: string;
+  /** スポットライトの外側に重ねる黒の不透明度 (0〜1)。全部のスポットライトで 1 つの値 */
+  spotlightDarkness: number;
   thickness: number;
   whiteStroke: boolean;
   dropShadow: boolean;

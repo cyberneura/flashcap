@@ -57,7 +57,7 @@ The Windows version differs from the macOS one:
 - No notifications (e.g. after auto-copy).
 - HEIC / HEIF images cannot be opened.
 - Shortcuts use Ctrl instead of ⌘ (Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+S / Ctrl+Z,
-  Ctrl+, for Preferences).
+  Ctrl+Shift+Z or Ctrl+Y to redo, Ctrl+, for Preferences).
 
 ### Check for Updates
 
@@ -94,6 +94,11 @@ fails, install them with `xcode-select --install`.
 - Arrow annotation tool (color, thickness, white stroke, drop shadow)
 - Rectangle and ellipse tools (color, thickness, white stroke, drop shadow; hold Shift for a
   square / circle) with resize/move handles
+- Highlighter tool: drag a translucent rectangle over a line of text to make it stand out
+  (yellow by default; the text underneath stays readable, on light and dark backgrounds)
+- Spotlight tool: drag a rectangle to dim everything outside it (50% darker by default; 30–85%
+  from the toolbar). Several spotlights all stay bright. Moves, resizes and undoes like a rectangle;
+  arrows, text and other annotations stay on top of the dimming
 - Text tool (color, size, bold, italic, white stroke, drop shadow). Text can span multiple lines:
   Enter adds a line, ⌘+Enter (Ctrl+Enter on Windows) finishes. Double-click a text annotation to
   edit it again
@@ -117,14 +122,26 @@ fails, install them with `xcode-select --install`.
 - Clipboard integration (copy path or image)
 - Auto-copy each capture (off / file path / image data) from the toolbar, with a notification
 - Optional menu bar icon (Preferences) to capture, record, and copy text on screen without opening the window
+- **New Image from Clipboard** (File menu, ⌘N, and the menu bar icon): saves the current image with its annotations and opens the image on the clipboard, just like launching Flashcap afresh and pasting
 - Drag & drop to external apps (e.g. Slack)
 - Saved-images sidebar (toggle at the left end of the toolbar): thumbnails of the save folder,
   newest first. Click one to save the current image and open it; drag one to another app like a
   file from Finder
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
-- Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘V to paste
-  an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save; Ctrl instead of ⌘ on Windows)
+- Restyle placed annotations: select an arrow, shape, highlighter, text, step marker or mask and
+  change its color, thickness, white border, shadow (text: size, bold, italic; mask: mode, fill
+  color) from the toolbar. The change applies to that annotation only (one undo step; dragging
+  the color picker counts as one) and does not change the settings for the next annotation
+- Duplicate the selected annotation with ⌘D (Ctrl+D on Windows; the copy lands slightly to the
+  lower right and is selected), or Option+drag (Alt+drag on Windows) an annotation to drag out a
+  copy. A copied step marker gets the next number. One undo step either way
+- Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘⇧Z to redo,
+  ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save, ⌘D to duplicate the selected annotation; Ctrl instead of ⌘ on
+  Windows, where Ctrl+Y also redoes)
+- Single-key tool shortcuts while an image is open: `A` arrow, `R` rectangle, `E` ellipse,
+  `H` highlighter, `S` spotlight, `N` step marker, `T` text, `M` mask, `C` crop (press again to leave the tool;
+  ignored while typing in a text annotation or any other field)
 - Shell commands (macOS only): register commands in Preferences and run them on the open image
   from the toolbar. The image path is passed as `$IMAGE_PATH` (write `"${IMAGE_PATH}"` with the
   quotes). Output is logged to `$TMPDIR/flashcap/shell-logs/`

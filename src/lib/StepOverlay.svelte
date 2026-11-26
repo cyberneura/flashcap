@@ -2,6 +2,7 @@
   import type { Step, StepSettings } from "./types";
   import { exceedsDragSlop } from "./textHit";
   import { nextStep, renumber, stepFontSize, stepLabelBaseline, topmostStepAt } from "./steps";
+  import { stepsWithDuplicate } from "./duplicate";
 
   /**
    * 番号付きステップ (カウンター) のオーバーレイ (CYBERNEURA-DEV-1209)。
@@ -21,14 +22,17 @@
     onBeforeMutate?: () => void;
     /** バッジを選んだ時 (親が他のオーバーレイの選択を外す。Delete が両方に効かないように) */
     onSelect?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
   }
 
-  let { steps, settings, toolActive, interactive, scale, annotationScale = 1, onStepsChange, onBeforeMutate, onSelect }: Props = $props();
+  let { steps, settings, toolActive, interactive, scale, annotationScale = 1, onStepsChange, onBeforeMutate, onSelect, selectedId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
   let dragging = $state(false);
   /** その移動で undo を積んだか。押しただけの空振りで積まないための印 */
   let dragMutated = $state(false);
+  /** Option / Alt+ドラッグで複製する元 (動き始めるまでは複製しない) */
+  let duplicateSource: Step | null = null;
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragOrigPos = $state<{ x: number; y: number } | null>(null);
   let svgEl = $state<SVGSVGElement | null>(null);
@@ -51,7 +55,10 @@
 
     const hit = topmostStepAt(steps, pt.x, pt.y, hitSlack(), annotationScale);
     if (hit) {
-      // 選ぶと同時に移動を始められる (undo は動いた時に積む)
+      // 選ぶと同時に移動を始められる (undo は動いた時に積む)。
+      // Option / Alt を押していたら、動き始めた時に複製して複製の方を動かす (CYBERNEURA-DEV-1321。
+      // 複製は末尾に足すので次の番号になる)
+      duplicateSource = e.altKey ? hit : null;
       selectedId = hit.id;
       onSelect?.();
       dragging = true;
@@ -87,6 +94,13 @@
         if (!exceedsDragSlop(dx, dy, scale)) return;
         dragMutated = true;
         onBeforeMutate?.();
+        if (duplicateSource) {
+          const id = crypto.randomUUID();
+          onStepsChange(stepsWithDuplicate(steps, duplicateSource, dx, dy, id));
+          selectedId = id;
+          duplicateSource = null;
+          return;
+        }
       }
       onStepsChange(
         steps.map((s) =>
@@ -98,6 +112,7 @@
   }
 
   function handleMouseUp() {
+    duplicateSource = null;
     dragging = false;
     dragMutated = false;
     dragStart = null;
@@ -108,7 +123,7 @@
   // バッジを選んだ後に矢印を選んで Delete を押した時、両方の window keydown が走って
   // (stopPropagation は同じ window の別のリスナーを止めない) バッジまで消える。
   // 画像の外 (ツールバーの設定・サイドバー) のクリックでは外さない — 設定を押した瞬間に選択が
-  // 消えると、選択中のバッジへ色や大きさを効かせられなくなる (updateActiveAttribute)
+  // 消えると、選択中のバッジへ色や大きさを効かせられなくなる (+page.svelte の updateStepSetting)
   function handleWindowMouseDown(e: MouseEvent) {
     if (!selectedId || !svgEl || !(e.target instanceof Node)) return;
     if (svgEl.contains(e.target)) return;
@@ -127,12 +142,6 @@
       onStepsChange(renumber(steps.filter((s) => s.id !== selectedId)));
       selectedId = null;
     }
-  }
-
-  /** 選択中のバッジの属性を更新する (ツールバーの設定変更を選択中のものにも効かせる) */
-  export function updateActiveAttribute<K extends keyof StepSettings>(key: K, value: StepSettings[K]) {
-    if (!selectedId) return;
-    onStepsChange(steps.map((s) => (s.id === selectedId ? { ...s, [key]: value } : s)));
   }
 
   export function deselect() {

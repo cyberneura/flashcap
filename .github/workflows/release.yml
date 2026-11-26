@@ -229,7 +229,12 @@ jobs:
           fi
           if [ "$draft_count" -eq 1 ]; then
             id="$drafts"
+            # tag_name も必ず送る。draft に target_commitish だけを PATCH すると、GitHub は
+            # tag_name を `untagged-<hash>` に置き換える (2026-11-14 に実測)。そうなると
+            # publish の `gh release edit "v${VERSION}"` が draft を見つけられず失敗し、
+            # 次の run の一覧検索 (tag_name == TAG) からも外れる (CYBERNEURA-DEV-1274)。
             gh api -X PATCH "repos/${GH_REPO}/releases/${id}" \
+              -f tag_name="${TAG}" \
               -f target_commitish="${GITHUB_SHA}" --silent
             echo "Reusing draft ${id} for ${TAG} (target set to ${GITHUB_SHA})."
           else
@@ -504,6 +509,8 @@ jobs:
       # --target: draft ジョブも target をこの run の commit に直しているが、publish までの
       # 間に誰かが draft を編集しうるので、公開の直前にもう一度合わせる。tag は draft を
       # 公開した時に作られるので、ここで target を合わせれば tag と中身が食い違わない。
+      # --tag: target だけを書き換えると tag_name が消えるので、tag も同じ値で送り直す
+      # (draft ジョブの PATCH と同じ理由。CYBERNEURA-DEV-1274)。
       #
       # 公開直前に plan と同じ判定をやり直す。「Re-run failed jobs」は成功済みの plan を
       # 再実行せず当時の release=true を使い回すので、その間に新しい version が
@@ -519,4 +526,4 @@ jobs:
             echo "::error::v${VERSION} should no longer be published (see the message above); leaving the draft as it is."
             exit 1
           fi
-          gh release edit "v${VERSION}" --draft=false --latest --target "${GITHUB_SHA}"
+          gh release edit "v${VERSION}" --draft=false --latest --tag "v${VERSION}" --target "${GITHUB_SHA}"

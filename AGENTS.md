@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 `j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
@@ -202,6 +202,83 @@ frontend-ready を待ってから emit することで、これを 1 箇所で�
   出ているので、離した瞬間にそれが消えることになる。判定は吸着**前**の座標で行う
   (吸着が終点を始点へ引き戻すと、引いているのに「動いていない」になる)。
 
+## Undo / Redo (src/lib/editHistory.ts + src/routes/+page.svelte)
+
+注釈とトリミングの履歴はスナップショット方式 (CYBERNEURA-DEV-1263 で Redo を追加)。
+⌘Z = Undo、⌘⇧Z = Redo (Windows は Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y)。
+
+- 積み方・取り出し方 (`recordEdit` / `stepUndo` / `stepRedo`)、キーの判定 (`historyActionForKey`)、
+  入力欄の判定 (`isTextEntryTarget`) は `editHistory.ts` の純関数 (`tests/edit-history.test.mts`)。
+  `+page.svelte` は `captureSnapshot()` (今の状態の複製) と `applySnapshot()` (反映。Undo / Redo で共通) だけを持つ。
+- **編集の直前に `pushUndo()` を呼ぶ**のは従来どおり。`pushUndo()` は Redo の履歴を捨てる。
+  Undo は取り出す前に今の状態を Redo 側へ積み、Redo はその逆。別の画像に替わる 2 か所
+  (撮影・貼り付け・ファイルを開く / 動画への切り替え) では `clearEditHistory` で両方を空にする。
+- **文字入力欄 (TEXTAREA / contentEditable / 文字を打つ type の INPUT) にフォーカスがある間は横取りしない。**
+  テキスト注釈の編集中の ⌘Z / ⌘⇧Z は入力欄の Undo / Redo (macOS はネイティブの Edit メニューの
+  `PredefinedMenuItem::undo` / `redo`、Windows は WebView2) として働き、注釈の履歴は動かない。
+  **色選択やスライダーの INPUT は入力欄に数えない** — 操作後もフォーカスが残るので、数えると
+  色を変えた直後の ⌘Z が効かなくなる。
+- ネイティブの Edit > Undo / Redo は WebView の文字入力にしか効かない (注釈の履歴は知らない) ので、
+  入力欄の外では JS 側だけが動き、二重には動かない。
+- **Undo に積まない編集** (入力中のテキストの色などをツールバーから変える `updateActiveAttribute`) が
+  Undo / Redo の後に挟まったら、次の Undo / Redo の前に Redo の履歴を捨てる (`dropStaleRedo`)。
+  `undo()` / `redo()` が反映直後の注釈の署名 (`annotationSignature()`) を `markApplied` で控え、次回に今の署名と比べる。
+  捨てないと Redo がその編集を黙って消す。積まない編集を足しても、注釈の配列を書き換える限りここで拾える。
+- 履歴は `$state` にしない (テンプレートから読まない。スナップショットを proxy で包まない)。
+  Undo / Redo のボタンを置くなら、件数だけを別の `$state` に持つこと。
+
+## 選択中の注釈の見た目の変更 (+page.svelte の restyle、CYBERNEURA-DEV-1320)
+
+置いた後の注釈を選び、ツールバーで色・太さ・白縁・影 (テキストは文字サイズ・太字・斜体、マスクはモードと塗りの色) を
+変える。選択中は**その注釈だけを書き換え、設定 (次に描く注釈の設定 = config) は変えない**。選択が無い時は従来どおり設定を変える。
+
+- 各オーバーレイの `selectedId` (TextOverlay は `editingId` も) は `$bindable` で、`+page.svelte` が bind する。
+  **選択はオーバーレイをまたいで 1 つだけ**: どれかが選ばれたら `$effect` が他の `deselect()` を呼ぶ
+  (Delete とツールバーの変更が 2 つに効かないように)。ツールの切り替え (`deactivateAllTools`) は従来どおり全部外す。
+- ツールバーには `arrowPanel` / `shapePanel` / `maskPanel` / `textPanel` / `stepPanel` (選択中の注釈の値か設定) を渡し、
+  `selectionKind` があればツールが有効でなくてもその種類の設定を出す。図形は選択中の種別 (`selectedShapeType`) の欄を出す
+  (矩形ツールのまま蛍光ペンを選んだら蛍光ペンの欄)。**Toolbar は設定を `bind:value` で直接書き換えない** —
+  `onUpdate…Setting(key, value, continuous)` で +page.svelte に渡し、選択の有無で振り分ける。
+- **Undo は 1 変更 1 手**。色ピッカーのドラッグ (`oninput` の連続) は `styleEditKey` (注釈の種類:id:属性) が同じ間は積まず、
+  ピッカーの `change`・別の属性 / 注釈・別の編集 (`pushUndo`)・Undo / Redo で区切る。値が変わらない変更は積まない。
+- 例外: **入力中のテキスト** (新規・ダブルクリックで再編集中) は従来どおり設定と入力中のテキストの両方に効かせる
+  (`updateActiveAttribute`。書いている途中のテキストは「次に描く注釈」の続きなので)。**スポットライトの暗さ**は
+  全部のスポットライトで 1 つの値なので、選択中でも設定を変える。マスクのモードを塗りから変えるかは利用者の判断
+  (秘密の自動マスクの節)。蛍光ペンの色は図形の `color` に入る (ツールバーでは highlightColor の欄)。
+- 描いた直後の注釈は選択状態なので、続けてツールバーを触るとその注釈だけが変わる (次の注釈の設定は変わらない)。
+  ステップは以前「選択中のバッジと設定の両方」に効いていたが、他の注釈と揃えた。
+
+## 注釈の複製 (src/lib/duplicate.ts、CYBERNEURA-DEV-1321)
+
+- **⌘D / Ctrl+D** (`+page.svelte` の `handleKeydown` → `duplicateSelection`): 選択中の注釈 (「選択中の注釈の見た目の変更」の
+  `selectedArrow` 等) を右下に `DUPLICATE_OFFSET` (16 画像 px x `annotationScale`) ずらして末尾に足し、複製を選ぶ。
+  `pushUndo` 1 回。判定 `isDuplicateKey` は OS の主キー 1 つだけ (⌘⇧D 等は別)、フォーム部品・IME の変換中・自動リピートでは
+  反応しない (`toolForKey` と同じ `isFormControlTarget`)。⌘C / ⌘⇧C はパス / 画像のコピーのままで、注釈のコピー&ペーストは無い。
+- **Option / Alt+ドラッグ** (各オーバーレイの `handleMouseDown` の先頭): Option を押して注釈を押すと `dragging = "duplicate"` で待ち、
+  `exceedsDragSlop` を超えて動いた最初の 1 回で `onBeforeMutate` → 複製を足して選び、以後は複製を普通の移動で動かす
+  (複製と移動で Undo 1 手)。動かさずに離したら複製せず元を選ぶ。選択済みかは問わない (押した注釈が複製元)。
+  **矢印は複製時だけ丸ごと動かす** (`move-all`。普段の矢印のドラッグは端点だけ)。テキストは入力中は対象外。
+- ステップの複製は `stepsWithDuplicate` (末尾に足して `renumber`)。複製は次の番号になり、元の番号は変わらない。
+- テストは `tests/duplicate.test.mts` (キー判定、ずらし、ステップの番号: 複製 → 削除 → Undo)。
+
+## ツールの 1 文字キー (src/lib/toolShortcuts.ts)
+
+修飾キー無しの 1 文字で注釈ツールを切り替える (CYBERNEURA-DEV-1265)。`A` 矢印 / `R` 矩形 / `E` 楕円 /
+`H` 蛍光ペン / `S` スポットライト / `N` ステップ / `T` テキスト / `M` マスク / `C` トリミング。macOS も Windows も同じキー。
+アプリ全体のグローバルホットキーではなく、ウインドウにフォーカスがある時の keydown だけ。
+
+- 対応表 `TOOL_SHORTCUTS` と判定 `toolForKey` は純関数 (`tests/tool-shortcuts.test.mts`)。`+page.svelte` の
+  `handleKeydown` の最後の分岐が呼び、`toggleToolByShortcut` が**ツールバーのボタンと同じ `toggle…Tool`** を呼ぶ
+  (もう一度押すと解除)。ツールチップのキーの表記も同じ表から出す (`toolShortcutLabel`)。
+- **反応しない条件**: 修飾キー (⌘ / Ctrl / Alt / Shift) 付き (⌘C などを素通しする)、フォーカスが
+  INPUT / TEXTAREA / SELECT / contentEditable (テキスト注釈の入力中、パス欄、太さの select — select は文字キーで
+  選択肢へ飛ぶので、反応すると両方に効く)、IME の変換中 (`isComposing` / `key === "Process"`)、キーの自動リピート、
+  画像が無い・動画モード、撮影中・録画中。
+- **ツールを足したらキーも足す。** 既存の ⌘ 付きショートカット (C / V / S / Z / Y) と同じ文字でも、修飾キー無しなら
+  衝突しない (`C` はトリミングに使っている)。Esc / Enter / Delete は他の分岐と各オーバーレイが使うので割り当てない。
+- Undo / Redo の `isTextEntryTarget` (`editHistory.ts`) とは判定が違う: あちらは色選択やスライダーにフォーカスが
+  残っていても効かせたいので文字入力欄だけを見る。こちらはフォーム部品すべてで止める。
+
 ## テキスト注釈 (src/lib/TextOverlay.svelte + src/lib/textHit.ts)
 
 - **1 クリックは「選ぶ」「動かす」で、再編集はダブルクリック** (CYBERNEURA-DEV-695)。
@@ -233,6 +310,8 @@ images = 保存した画像、image = この画像)。
 |---|---|---|
 | サムネイルブラウザ | `bi-images` | 保存した画像の一覧 |
 | 矢印 / 矩形 / 楕円 / ステップ / テキスト | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | 描くものの形そのもの |
+| 蛍光ペン | `bi-highlighter` | 文字列を目立たせる半透明の塗り (矩形 / 楕円と同じ shape ツールの種別) |
+| スポットライト | `bi-brightness-high` | 範囲の外側を暗くする (shape ツールの種別)。暗さの選択は `bi-moon` |
 | 白縁 / 影 | `bi-border-outer` / `bi-shadows` | 縁取り / 影 (4 つのツールで共通) |
 | 太字 / 斜体 | `bi-type-bold` / `bi-type-italic` | |
 | マスク | `bi-eye-slash` | 隠す。モードは `bi-grid-3x3-gap-fill` (モザイク) / `bi-droplet-half` (ぼかし) / `bi-paint-bucket` (塗り) |
@@ -240,11 +319,67 @@ images = 保存した画像、image = この画像)。
 | トリミング / 吸着 | `bi-crop` / `bi-magnet` | |
 | 保存先を開く | `bi-folder2-open` | |
 | ドラッグで渡す | `bi-box-arrow-up` | 共有 (macOS の共有と同じ矢印) |
-| パスをコピー / 画像をコピー | `bi-link-45deg` / `bi-image` | パス (参照) / 画像そのもの |
+| パスをコピー / 画像をコピー | `bi-link-45deg` / `bi-clipboard` | パス (参照) / 画像をクリップボードへ (`bi-image` は絵柄が「この画像」と紛らわしいので使わない。CYBERNEURA-DEV-1309) |
 | OCR: 画像全体 / 範囲を選んで / 画面を撮って | `bi-body-text` / `bi-textarea-t` / `bi-bounding-box` | 文字 / 画像の中の範囲 / 画面上の範囲 |
 | タイマー撮影 / 撮影 / 録画 | `bi-stopwatch` / `bi-camera` / `bi-record-circle` | |
 
 成功の一時表示は `bi-check-lg`、処理中は `bi-arrow-repeat` (回転)。
+
+## 蛍光ペン (src/lib/highlight.ts + src/lib/ShapeOverlay.svelte)
+
+文字列や行を目立たせる半透明の塗りの矩形 (CYBERNEURA-DEV-1264)。`ShapeType` の 3 つ目の種別 `highlight` で、
+置く・動かす・リサイズ・Delete・Undo は矩形のものをそのまま使う (`shapes` に入る)。ツールバーは楕円の隣の
+`bi-highlighter`。文字の認識に頼るスマートハイライトは入れていない。
+
+- **色は `shape_settings.highlightColor`** (既定 `#ffe600`)。枠線の色 (`color`) と分けてあるのは、赤い枠の設定のまま
+  蛍光ペンが赤くならないため。太さ・白縁・影は蛍光ペンでは出さず、置く時に `whiteStroke` / `dropShadow` を false にする。
+- **重ね方は `highlightPaint()` が範囲ごとに決める**: 明るい地は乗算 (地が色付き、黒い文字はそのまま)、
+  平均輝度が `DARK_LUMA_THRESHOLD` 未満の暗い地 (ダークモードの画面) は不透明度 0.4 の通常合成
+  (乗算だと地がさらに暗くなるだけで色が出ない)。平均輝度は、画像を長辺 256 升に縮めた `LumaMap` から取る。
+  **画面 (`ShapeOverlay` の `lumaMap` prop) と書き出し (`renderComposite`) の両方が同じ関数・同じ作り方の地図
+  (`buildLumaMap`) を通る。** 片方だけ判定を変えると見た目と保存した画像が食い違う。
+  地図は蛍光ペンがあるか蛍光ペンツールが有効な間だけ作る。
+- **画面では svg ではなく `<div>` に `mix-blend-mode` を当てて描く** (`src/lib/HighlightLayer.svelte`。表示だけで、
+  操作は ShapeOverlay の svg が受ける。svg には選択枠とハンドルだけを描く)。svg の中の要素に当てた mix-blend-mode が
+  svg の外の `<img>` と混ざるかは描画エンジン次第なので頼らない (Chrome では混ざった。WKWebView は未確認)。
+  div 方式は「transform + overflow-hidden の入れ物の中の img の上に div を重ねる」構成を Chrome で描かせ、同じ絵を
+  キャンバスの `multiply` / `globalAlpha` で描いたものと一致することを確かめてある (明るい地の乗算、暗い地の 0.4。
+  暗い地の乗算は色が出ないことも)。
+- **重ね順は画像のすぐ上で、マスクより下。マスクの範囲には蛍光ペンを出さない。** `HighlightLayer` は `<img>` と
+  `MaskOverlay` の間に置き (矩形・楕円・文字・矢印・ステップは更に上)、マスクの矩形を `clip-path` でくり抜く
+  (`highlightClipPath` → `subtractRects`)。下に置くだけでは足りない: 塗りとモザイクは上から覆うが、**ぼかしの
+  プレビューは `backdrop-filter`** で下の絵をそのままぼかすので、蛍光ペンが残っていると色が混ざる。
+  **書き出しも同じ矩形 (`roundedMaskRect`) をくり抜く**: `drawImage` の直後に、蛍光ペン 1 つごとに小さなレイヤーへ
+  塗ってマスクの矩形を `clearRect` してから重ねる。くり抜かずに描くと、後のモザイク / ぼかしが蛍光ペンの色を拾う。
+  引いている途中の 1 つだけは ShapeOverlay が自分で描く (確定するまでの間だけマスクの上に見える)。
+- 当たり判定は内側のどこでも (`hitsHighlight`)。枠線の近くだけに反応する矩形と違う。
+- 設定の `type` は `parseShapeType` で検め、知らない値は `rect` に戻す (`pick` は typeof しか見ない)。
+- テストは `tests/highlight.test.mts` (種別の検証、地図、平均輝度、重ね方の切り替え、当たり判定)。
+
+## スポットライト (src/lib/spotlight.ts + src/lib/SpotlightLayer.svelte)
+
+囲んだ範囲の外側を暗くする (CYBERNEURA-DEV-1322)。`ShapeType` の 4 つ目の種別 `spotlight` で、置く・動かす・
+リサイズ・Delete・Undo は矩形のものをそのまま使う (`shapes` に入る)。ツールバーは蛍光ペンの隣の
+`bi-brightness-high`、1 文字キーは `S` (修飾キー付きの ⌘S / Ctrl+S は保存のまま)。
+
+- **暗さは `shape_settings.spotlightDarkness` の 1 つの値** (既定 0.5、ツールバーで 30 / 50 / 70 / 85%)。図形ごとには
+  持たない (暗い部分は全部のスポットライトで 1 枚なので)。変えると置いてあるスポットライトにも効き、Undo には積まない。
+  設定ファイルの値は `parseSpotlightDarkness` で 0 < x <= 1 に検める。色・太さ・白縁・影は使わない (置く時に false)。
+- **暗くする範囲は `spotlightDarkRects()` が「画像全体 − (スポットライトの和集合 ∪ マスク)」を互いに重ならない
+  整数の矩形で返す** (`subtractRects` の流用)。画面 (`SpotlightLayer` の clip-path) と書き出し (`renderComposite` の
+  fillRect) の両方がこの関数を通る。clip-path の evenodd で穴を開ける方式にしないこと — 重なった 2 つの穴の
+  重なりが暗く戻る。整数に丸めるのは隣り合う矩形の継ぎ目 (アンチエイリアスの薄い線) を出さないため。
+- **重ね順は蛍光ペンの上・マスクより下。矢印・枠・文字・ステップは暗くしない** (`SpotlightLayer` は
+  `HighlightLayer` と `MaskOverlay` の間、書き出しは蛍光ペンの直後)。マスクの範囲は暗くしない (蛍光ペンと同じく
+  マスクを優先する。ぼかしのプレビューは backdrop-filter なので、暗い部分が残ると書き出しと食い違う)。
+- 引いている途中の 1 つは `ShapeOverlay` の `onDraftChange` で `+page.svelte` の `shapeDraft` に渡し、
+  `SpotlightLayer` に加える (暗い部分は全部のスポットライトをまとめて計算するため、ShapeOverlay 単独では描けない)。
+- 当たり判定は内側のどこでも (`hitsHighlight` を流用)。座標は自然解像度 px で太さを持たないので、Retina の
+  `annotationScale` は関係しない。
+- **`src/lib` の `.ts` モジュールの中で**別の `.ts` モジュールから値を import する時は、`./highlight.ts` のように
+  拡張子付きで書く (tests が `node --experimental-strip-types` で直接読み、node は拡張子を補わないため。tsconfig の
+  `allowImportingTsExtensions`)。`.svelte` からの import は vite が解決し node は読まないので、従来どおり拡張子なし
+  (`./spotlight` / `$lib/spotlight`) でよい。テストは `tests/spotlight.test.mts`。
 
 ## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
 
@@ -332,8 +467,8 @@ CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧
   共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
   と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを
   最後 (矢印の上) に描くので、テンプレートでも `StepOverlay` を `ArrowOverlay` の後ろに置く。
-- 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は選択中のバッジにも効く
-  (`updateStepSetting` → `updateActiveAttribute`、テキストと同じ)。
+- 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は、選択中のバッジがあればそれだけに効く
+  (`updateStepSetting` → `restyle`。「選択中の注釈の見た目の変更」の節)。
 - IPC コマンドは増やしていないので `build.rs` の `APP_COMMANDS` と capability は触っていない。
 
 ## 画像の表示サイズ (src/routes/+page.svelte + resize_window_for_image)
@@ -417,12 +552,38 @@ CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧
   `CLIPBOARD_WRITE` のロックの中で一緒に行う** (照合を通った後の遅い書き込みが、
   後の撮影の書き込みを上書きしないため)。デコードと通知はロックの外。
 
+## New Image from Clipboard (CYBERNEURA-DEV-1295)
+
+「Flashcap を新しく起動して画像を貼り付ける」のと同じ結果を、起動したまま得るメニュー。
+macOS のアプリメニュー File > New Image from Clipboard (⌘N) と、メニューバー常駐のメニューに置く
+(Windows はアプリメニューを置かないので常駐のメニューだけ)。
+
+- **id は両方とも `menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID`** で、押された後は
+  `menu_bar::handle_menu_event` → `run` の振り分け (描画前・録画中・範囲選択中・撮影中は始めない) を通る。
+  Rust はウインドウを出して `new-image-from-clipboard` を main に送るだけ。
+- フロントの `newImageFromClipboard()` が「クリップボードを読む → 今の画像を書き戻す
+  (`writeBackBeforeSwitching`、失敗したら差し替えない) → `save_pasted_image` で保存 → 差し替え」を行う。
+  **⌘V の貼り付けと違い確認ダイアログは出さない** (書き戻してから捨てるので失うものが無い)。
+  書き戻し・保存の間の編集は `openOneFromSidebar` と同じく `editRevision` で拾って書き戻し直し、
+  `imageGeneration` が変わっていたら (撮影等が割り込んだら) 差し替えない。
+- **ウインドウは Rust (`run`) が emit の前に出す** (`show_main_window`)。`run` の振り分けで撮影・録画・
+  範囲選択中でないと確かめた時点なら写り込まない。フロントが処理の後に出すと、その間にメニューバーから
+  始めた OCR (`copy_text_on_screen`) や録画の範囲選択に写り込む (フロントの `isCapturing` / `isRecording` は
+  それらを知らない)。「クリップボードに画像が無い」トーストもこのウインドウに出る。
+- 書き戻しの前に `textOverlayRef.deselect()` で入力中のテキストを確定させる。未確定のテキストは
+  TextOverlay の `pendingText` にしか無く、注釈にも `editRevision` にも入っていないので、
+  そのままだと書き戻しから漏れ、差し替え後の画像に乗ってしまう。
+- **貼り付けの保存名は `unused_file_path` で空いている名前を選ぶ** (`flashcap-paste-<秒>.png`、
+  ぶつかったら `-2`, `-3` ...)。以前は同じ秒の貼り付けで上書きしていたので、直前に貼って書き戻した
+  画像をこの操作 (書き戻し → 保存 → 差し替え) が消すことがあった。⌘V の貼り付けも同じ関数を通る。
+- 描画前は Rust が送らないので、`frontend-ready` の預かり対象ではない。
+
 ## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
 
 - Preferences の「Keep Flashcap in the menu bar」(設定ファイルの `show_in_menu_bar`、
   未設定は OFF) を ON にすると、メニューバーにアイコンを置く (CYBERNEURA-DEV-761)。
   クリックで Open Flashcap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
-  Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap。
+  New Image from Clipboard / Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap。
   N は Preferences の Timer delay。
 - Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
   メニューの秒数を追従させるため)。`sync` は「保存値を読んでアイコンの有無と文言を合わせる」

@@ -19,13 +19,17 @@
     annotationScale?: number;
     onTextsChange: (texts: TextAnnotation[]) => void;
     onBeforeMutate?: () => void;
+    /** 選択中の注釈の id。+page.svelte が bind して、ツールバーに選択中の注釈の設定を出す */
+    selectedId?: string | null;
+    /** 編集中 (入力中) のテキストの id */
+    editingId?: string | null;
   }
 
-  let { texts, settings, toolActive, interactive, scale, annotationScale = 1, onTextsChange, onBeforeMutate }: Props = $props();
+  let { texts, settings, toolActive, interactive, scale, annotationScale = 1, onTextsChange, onBeforeMutate, selectedId = $bindable(null), editingId = $bindable(null) }: Props = $props();
 
-  let selectedId = $state<string | null>(null);
-  let editingId = $state<string | null>(null);
-  let dragging = $state<"move" | null>(null);
+  let dragging = $state<"move" | "duplicate" | null>(null);
+  /** Option / Alt+ドラッグで複製する元 (動き始めるまでは複製しない) */
+  let duplicateSource: TextAnnotation | null = null;
   /** その移動で undo を積んだか。押しただけの空振りで積まないための印 */
   let dragMutated = $state(false);
   /** その編集で undo を積んだか。開いて閉じただけの空振りで積まないための印 */
@@ -56,6 +60,19 @@
 
     const pt = getSvgCoords(e);
     if (!pt) return;
+
+    // Option / Alt を押しながら注釈を押した: 動かし始めたら複製して、複製の方を動かす
+    // (CYBERNEURA-DEV-1321)。押しただけで離したら複製せずに選ぶだけ
+    if (e.altKey && !editingId) {
+      const source = topmostTextAt(texts, pt.x, pt.y, annotationScale);
+      if (source) {
+        duplicateSource = source;
+        dragging = "duplicate";
+        dragStart = pt;
+        dragOrigPos = { x: source.x, y: source.y };
+        return;
+      }
+    }
 
     // 選択済みテキストの移動開始
     //
@@ -118,6 +135,21 @@
     const pt = getSvgCoords(e);
     if (!pt) return;
 
+    if (dragging === "duplicate" && duplicateSource && dragStart && dragOrigPos) {
+      const dx = pt.x - dragStart.x;
+      const dy = pt.y - dragStart.y;
+      if (!exceedsDragSlop(dx, dy, scale)) return;
+      // 複製で 1 手。続く移動は同じ手に含める (dragMutated を立てて積まない)
+      onBeforeMutate?.();
+      const copy = { ...duplicateSource, id: crypto.randomUUID(), x: dragOrigPos.x + dx, y: dragOrigPos.y + dy };
+      onTextsChange([...texts, copy]);
+      selectedId = copy.id;
+      duplicateSource = null;
+      dragging = "move";
+      dragMutated = true;
+      return;
+    }
+
     if (dragging === "move" && selectedId && dragStart && dragOrigPos) {
       const dx = pt.x - dragStart.x;
       const dy = pt.y - dragStart.y;
@@ -148,6 +180,9 @@
   }
 
   function handleMouseUp() {
+    // Option / Alt を押して離しただけ: 複製せずに選ぶ
+    if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
+    duplicateSource = null;
     dragging = null;
     dragMutated = false;
     dragStart = null;

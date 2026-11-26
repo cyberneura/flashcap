@@ -996,6 +996,19 @@ pub(crate) fn write_without_following_symlinks(path: &Path, bytes: &[u8]) -> std
     file.write_all(bytes)
 }
 
+/// `dir` の中で、まだ何も無い (symlink も無い) `<stem>.<ext>` / `<stem>-2.<ext>` / ... を返す。
+/// 1000 個埋まっていたら最後の候補を返す (書き込み側が上書きするだけで、ここで失敗にはしない)
+fn unused_file_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let mut candidate = dir.join(format!("{}.{}", stem, ext));
+    for n in 2..=1000 {
+        if std::fs::symlink_metadata(&candidate).is_err() {
+            break;
+        }
+        candidate = dir.join(format!("{}-{}.{}", stem, n, ext));
+    }
+    candidate
+}
+
 /// クリップボードから貼り付けた画像を保存する
 #[tauri::command]
 fn save_pasted_image(
@@ -1006,15 +1019,20 @@ fn save_pasted_image(
 ) -> Result<ScreenshotResult, String> {
     let dir = PathBuf::from(prepare_save_directory(&app)?);
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
-    let filename = format!("flashcap-paste-{}.png", timestamp);
-    let file_path = dir.join(&filename).to_string_lossy().to_string();
+    // 同じ秒に貼ると名前がぶつかる。上書きすると、直前に貼って注釈を書き戻した画像を
+    // 黙って消すことになる (New Image from Clipboard は書き戻してから差し替えるので特に。
+    // CYBERNEURA-DEV-1295)。空いている名前に -2, -3 ... を付けて逃がす
+    let file_path = unused_file_path(&dir, &format!("flashcap-paste-{}", timestamp), "png")
+        .to_string_lossy()
+        .to_string();
 
     let bytes = STANDARD
         .decode(&data_base64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
     // O_NOFOLLOW で書く。名前が予測できる (`flashcap-paste-<秒>.png`) ので、
     // 先置きされた symlink を辿ると別のファイルへ書かされる。
-    // truncate は残す — 同じ秒に 2 回貼ると同名になるため、上書きは正常系。
+    // (名前は上の unused_file_path で空いているものを選んでいるが、選んでから書くまでの間に
+    // 置かれる symlink はここで防ぐ)
     write_without_following_symlinks(Path::new(&file_path), &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
     // 撮影 (load_image_result) と同じく実体のパスで返す。保存先が symlink や .. を含むと、
@@ -1524,6 +1542,18 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
+    // File > New Image from Clipboard (CYBERNEURA-DEV-1295)。メニューバー常駐のメニューと
+    // 同じ id なので、押された後の振り分けは menu_bar::handle_menu_event がまとめて受ける
+    let new_image_from_clipboard = MenuItem::with_id(
+        handle,
+        menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID,
+        menu_bar::NEW_IMAGE_FROM_CLIPBOARD_LABEL,
+        true,
+        Some("CmdOrCtrl+N"),
+    )?;
+
+    let file_submenu = Submenu::with_items(handle, "File", true, &[&new_image_from_clipboard])?;
+
     let edit_submenu = Submenu::with_items(
         handle,
         "Edit",
@@ -1550,7 +1580,10 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
-    let menu = Menu::with_items(handle, &[&app_submenu, &edit_submenu, &window_submenu])?;
+    let menu = Menu::with_items(
+        handle,
+        &[&app_submenu, &file_submenu, &edit_submenu, &window_submenu],
+    )?;
     handle.set_menu(menu)?;
     Ok(())
 }
@@ -2261,6 +2294,24 @@ mod tests {
 
         drop(work);
         assert!(!dir.exists(), "drop で中身ごと消えていない");
+    }
+
+    #[test]
+    fn unused_file_path_skips_existing_files_and_symlinks() {
+        let dir = TempDir::new("unused-name");
+        let first = unused_file_path(&dir.0, "flashcap-paste-1", "png");
+        assert_eq!(first, dir.0.join("flashcap-paste-1.png"));
+
+        std::fs::write(&first, b"a").unwrap();
+        let second = unused_file_path(&dir.0, "flashcap-paste-1", "png");
+        assert_eq!(second, dir.0.join("flashcap-paste-1-2.png"));
+
+        // 宛先の無い symlink も「使われている」として避ける
+        std::os::unix::fs::symlink(dir.0.join("missing"), &second).unwrap();
+        assert_eq!(
+            unused_file_path(&dir.0, "flashcap-paste-1", "png"),
+            dir.0.join("flashcap-paste-1-3.png")
+        );
     }
 
     #[test]

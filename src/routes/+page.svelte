@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
   import { Toaster, toast } from "svelte-sonner";
@@ -12,6 +12,8 @@
   import ArrowOverlay from "$lib/ArrowOverlay.svelte";
   import MaskOverlay from "$lib/MaskOverlay.svelte";
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
+  import HighlightLayer from "$lib/HighlightLayer.svelte";
+  import SpotlightLayer from "$lib/SpotlightLayer.svelte";
   import TextOverlay from "$lib/TextOverlay.svelte";
   import StepOverlay from "$lib/StepOverlay.svelte";
   import { stepFontSize, stepLabelBaseline } from "$lib/steps";
@@ -25,6 +27,29 @@
   import ThumbnailSidebar from "$lib/ThumbnailSidebar.svelte";
   import { THUMBNAIL_SIDEBAR_KEY } from "$lib/thumbnailBrowser";
   import { isModKey, isWindows } from "$lib/platform";
+  import { toolForKey, type ShortcutTool } from "$lib/toolShortcuts";
+  import { DUPLICATE_OFFSET, isDuplicateKey, offsetArrowCopy, offsetCopy, stepsWithDuplicate } from "$lib/duplicate";
+  import {
+    DEFAULT_HIGHLIGHT_COLOR,
+    highlightPaint,
+    lumaMapFromRgba,
+    lumaMapSize,
+    parseShapeType,
+    roundedMaskRect,
+    type LumaMap,
+  } from "$lib/highlight";
+  import { DEFAULT_SPOTLIGHT_DARKNESS, parseSpotlightDarkness, spotlightDarkRects } from "$lib/spotlight";
+  import {
+    clearEditHistory,
+    createEditHistory,
+    dropStaleRedo,
+    historyActionForKey,
+    isTextEntryTarget,
+    markApplied,
+    recordEdit,
+    stepRedo,
+    stepUndo,
+  } from "$lib/editHistory";
   import {
     flushConfig,
     isRecord,
@@ -49,7 +74,7 @@
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
   let stepOverlayRef = $state<ReturnType<typeof StepOverlay> | null>(null);
-  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
+  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, ShapeType, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -62,6 +87,8 @@
   const SUPPORTED_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif", "heic", "heif"];
 
   let isCapturing = $state(false);
+  // New Image from Clipboard の処理中 (メニューの連打で書き戻しと差し替えが並走しないため)
+  let isCreatingFromClipboard = false;
   let timerDelay = $state(5);
 
   // 撮影後の自動コピー。コピーするのは Rust 側 (auto_copy.rs) で、ここは選択の表示と保存だけ
@@ -156,13 +183,18 @@
     mosaicBlockSize: 7,
   });
 
-  // Shape tool state (rect / ellipse)
+  // Shape tool state (rect / ellipse / highlight)
   let shapeToolActive = $state(false);
   let shapes = $state<Shape[]>([]);
   const SHAPE_SETTINGS_KEY = "shape_settings";
+  // ShapeOverlay で引いている途中の図形。スポットライトは SpotlightLayer が全部まとめて描くので、
+  // 引いている途中のものもここから加える
+  let shapeDraft = $state.raw<Shape | null>(null);
   let shapeSettings = $state<ShapeSettings>({
     type: "rect",
     color: "#FF0000",
+    highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+    spotlightDarkness: DEFAULT_SPOTLIGHT_DARKNESS,
     thickness: 4,
     whiteStroke: true,
     dropShadow: true,
@@ -251,6 +283,8 @@
     // 書き出す絵に効く設定 (renderComposite が読むもの)。Preferences から変えられる
     void maskSettings.blurRadius;
     void maskSettings.mosaicBlockSize;
+    // スポットライトの暗さはツールバーから変えられ、置いてあるスポットライト全部の書き出しに効く
+    void shapeSettings.spotlightDarkness;
     editRevision++;
   });
   let cropToolActive = $state(false);
@@ -282,10 +316,12 @@
     width: number;
     height: number;
   }
-  let undoHistory = $state<EditSnapshot[]>([]);
+  // Undo / Redo の履歴。積み方・取り出し方は editHistory.ts (テストは tests/edit-history.test.mts)。
+  // テンプレートからは読まないので $state にしない (スナップショットを proxy で包まない)
+  const editHistory = createEditHistory<EditSnapshot>();
 
-  function pushUndo() {
-    undoHistory.push({
+  function captureSnapshot(): EditSnapshot {
+    return {
       arrows: structuredClone($state.snapshot(arrows)),
       masks: structuredClone($state.snapshot(masks)),
       shapes: structuredClone($state.snapshot(shapes)),
@@ -294,12 +330,175 @@
       image: imageBase64,
       width: naturalWidth,
       height: naturalHeight,
-    });
+    };
   }
 
-  function undo() {
-    const entry = undoHistory.pop();
-    if (!entry) return;
+  /** 編集の直前に呼ぶ。新しい編集なので Redo の履歴は捨てる */
+  function pushUndo() {
+    recordEdit(editHistory, captureSnapshot());
+    // 間に別の編集が入ったので、次の見た目の変更は別の手にする
+    styleEditKey = null;
+  }
+
+  // --- 選択中の注釈の見た目の変更 (CYBERNEURA-DEV-1320) ---
+  //
+  // 各オーバーレイの選択 (selectedId) を bind で受け、選択中の注釈があればツールバーにその値を出し、
+  // ツールバーの変更はその注釈だけを書き換える (次に描く注釈の設定 = config は変えない)。
+  // 選択が無い時は従来どおり設定を変える。選択はオーバーレイをまたいで 1 つだけ (下の $effect)。
+  let arrowSelectedId = $state<string | null>(null);
+  let maskSelectedId = $state<string | null>(null);
+  let shapeSelectedId = $state<string | null>(null);
+  let textSelectedId = $state<string | null>(null);
+  let textEditingId = $state<string | null>(null);
+  let stepSelectedId = $state<string | null>(null);
+
+  type SelectionKind = "arrow" | "shape" | "mask" | "text" | "step";
+
+  /** `keep` 以外のオーバーレイの選択を外す (Delete やツールバーの変更が 2 つに効かないように) */
+  function deselectOthers(keep: SelectionKind) {
+    if (keep !== "arrow") arrowOverlayRef?.deselect();
+    if (keep !== "mask") maskOverlayRef?.deselect();
+    if (keep !== "shape") shapeOverlayRef?.deselect();
+    if (keep !== "text" && textSelectedId) textOverlayRef?.deselect();
+    if (keep !== "step") stepOverlayRef?.deselect();
+  }
+  $effect(() => { if (arrowSelectedId) untrack(() => deselectOthers("arrow")); });
+  $effect(() => { if (maskSelectedId) untrack(() => deselectOthers("mask")); });
+  $effect(() => { if (shapeSelectedId) untrack(() => deselectOthers("shape")); });
+  $effect(() => { if (textSelectedId) untrack(() => deselectOthers("text")); });
+  $effect(() => { if (stepSelectedId) untrack(() => deselectOthers("step")); });
+
+  let selectedArrow = $derived(arrows.find((a) => a.id === arrowSelectedId) ?? null);
+  let selectedMask = $derived(masks.find((m) => m.id === maskSelectedId) ?? null);
+  let selectedShape = $derived(shapes.find((sh) => sh.id === shapeSelectedId) ?? null);
+  // 入力中のテキストは従来どおり (設定と入力中のテキストの両方に効かせる。updateTextSetting)
+  let selectedText = $derived(
+    textEditingId ? null : (textAnnotations.find((t) => t.id === textSelectedId) ?? null),
+  );
+  let selectedStep = $derived(steps.find((st) => st.id === stepSelectedId) ?? null);
+  let selectionKind = $derived<SelectionKind | null>(
+    selectedArrow ? "arrow" : selectedShape ? "shape" : selectedMask ? "mask" : selectedText ? "text" : selectedStep ? "step" : null,
+  );
+
+  // ツールバーに出す値。選択中の注釈があればその値、無ければ設定
+  let arrowPanel = $derived<ArrowSettings>(selectedArrow ?? arrowSettings);
+  let maskPanel = $derived<MaskSettings>(
+    selectedMask ? { ...maskSettings, mode: selectedMask.mode, color: selectedMask.color } : maskSettings,
+  );
+  let shapePanel = $derived<ShapeSettings>(
+    selectedShape
+      ? {
+          ...shapeSettings,
+          // 蛍光ペンの色はツールバーでは highlightColor の欄に出る
+          ...(selectedShape.type === "highlight"
+            ? { highlightColor: selectedShape.color }
+            : { color: selectedShape.color }),
+          thickness: selectedShape.thickness,
+          whiteStroke: selectedShape.whiteStroke,
+          dropShadow: selectedShape.dropShadow,
+        }
+      : shapeSettings,
+  );
+  let textPanel = $derived<TextSettings>(selectedText ?? textSettings);
+  let stepPanel = $derived<StepSettings>(selectedStep ?? stepSettings);
+
+  // 色ピッカーのドラッグのように同じ注釈の同じ属性を続けて変える間は、Undo を最初の 1 回だけ積む。
+  // 「どの注釈のどの属性か」を持ち、別の属性・別の注釈・別の編集 (pushUndo)・Undo / Redo・
+  // ピッカーを閉じた (change) 時に外す。テンプレートから読まないので $state にしない
+  let styleEditKey: string | null = null;
+
+  function endStyleEdit() {
+    styleEditKey = null;
+  }
+
+  /**
+   * 選択中の注釈の属性を書き換える。値が変わらなければ何もしない (Undo に空の手を積まない)。
+   * 書き換えは `write` が配列ごと差し替える (各オーバーレイの onXxxChange と同じ形)
+   */
+  function restyle<T extends { id: string }>(
+    kind: SelectionKind,
+    target: T,
+    patch: Partial<T>,
+    write: (updated: T) => void,
+    continuous: boolean,
+  ) {
+    const changed = (Object.keys(patch) as (keyof T)[]).some((k) => target[k] !== patch[k]);
+    if (!changed) return;
+    const key = `${kind}:${target.id}:${Object.keys(patch).join(",")}`;
+    if (styleEditKey !== key) {
+      recordEdit(editHistory, captureSnapshot());
+    }
+    write({ ...target, ...patch });
+    styleEditKey = continuous ? key : null;
+  }
+
+  /**
+   * 選択中の注釈を右下にずらして複製し、複製を選ぶ (⌘D / Ctrl+D、CYBERNEURA-DEV-1321)。
+   * ずらす量は Retina の撮影では annotationScale 倍 (見た目の距離を揃える)。ステップは末尾に足して
+   * 次の番号を振る。選択が無ければ何もしない
+   */
+  function duplicateSelection() {
+    const d = DUPLICATE_OFFSET * annotationScale;
+    const id = crypto.randomUUID();
+    if (selectedArrow) {
+      pushUndo();
+      arrows = [...arrows, offsetArrowCopy(selectedArrow, d, d, id)];
+      arrowSelectedId = id;
+    } else if (selectedShape) {
+      pushUndo();
+      shapes = [...shapes, offsetCopy(selectedShape, d, d, id)];
+      shapeSelectedId = id;
+    } else if (selectedMask) {
+      pushUndo();
+      masks = [...masks, offsetCopy(selectedMask, d, d, id)];
+      maskSelectedId = id;
+    } else if (selectedText) {
+      pushUndo();
+      textAnnotations = [...textAnnotations, offsetCopy(selectedText, d, d, id)];
+      textSelectedId = id;
+    } else if (selectedStep) {
+      pushUndo();
+      steps = stepsWithDuplicate(steps, selectedStep, d, d, id);
+      stepSelectedId = id;
+    }
+  }
+
+  function updateArrowSetting<K extends keyof ArrowSettings>(key: K, value: ArrowSettings[K], continuous = false) {
+    const sel = selectedArrow;
+    if (!sel) {
+      arrowSettings[key] = value;
+      return;
+    }
+    restyle("arrow", sel, { [key]: value } as Partial<Arrow>, (u) => (arrows = arrows.map((a) => (a.id === u.id ? u : a))), continuous);
+  }
+
+  function updateMaskSetting<K extends keyof MaskSettings>(key: K, value: MaskSettings[K], continuous = false) {
+    const sel = selectedMask;
+    // マスクが持つのはモードと塗りの色だけ (ぼかし半径・モザイクの粒度は Preferences の値を全部に使う)
+    if (!sel || (key !== "mode" && key !== "color")) {
+      maskSettings[key] = value;
+      return;
+    }
+    restyle("mask", sel, { [key]: value } as Partial<MaskRect>, (u) => (masks = masks.map((m) => (m.id === u.id ? u : m))), continuous);
+  }
+
+  function updateShapeSetting<K extends keyof ShapeSettings>(key: K, value: ShapeSettings[K], continuous = false) {
+    const sel = selectedShape;
+    // スポットライトの暗さは全部のスポットライトで 1 つの値なので、選択があっても設定を変える
+    if (!sel || key === "type" || key === "spotlightDarkness") {
+      shapeSettings[key] = value;
+      return;
+    }
+    // 蛍光ペンの色は highlightColor の欄、枠の色は color の欄から来る。どちらも図形の color に入れる。
+    // 種別に合わない欄 (蛍光ペンを選んでいる時の枠の色など) はツールバーに出ないが、念のため弾く
+    if (key === "color" && sel.type === "highlight") return;
+    if (key === "highlightColor" && sel.type !== "highlight") return;
+    const field = key === "highlightColor" ? "color" : key;
+    restyle("shape", sel, { [field]: value } as Partial<Shape>, (u) => (shapes = shapes.map((sh) => (sh.id === u.id ? u : sh))), continuous);
+  }
+
+  /** Undo / Redo で取り出したスナップショットを画面に反映する */
+  function applySnapshot(entry: EditSnapshot) {
     arrows = entry.arrows;
     masks = entry.masks;
     shapes = entry.shapes;
@@ -311,13 +510,40 @@
       naturalWidth = entry.width;
       naturalHeight = entry.height;
       // 土台画像が別物に入れ替わるので、旧画像の座標で作った枠と吸着線は持ち越せない
-      // (Cmd+Z は crop ツール表示中でも通るため、閉じないと枠が画像の外にはみ出す)
+      // (Cmd+Z / Cmd+Shift+Z は crop ツール表示中でも通るため、閉じないと枠が画像の外にはみ出す)
       if (cropToolActive) cancelCrop();
       bumpImageRevision();
       // imageModified はここで戻さない。トリミング後に保存やコピーでファイルへ
       // 書き戻していた場合、undo してもディスク上は変更済みのままなので、
       // 「メモリとファイルが一致している」とは言えなくなる
     }
+  }
+
+  /**
+   * 注釈の中身の署名。Undo に積まない編集 (入力中のテキストの色などをツールバーから
+   * 変える `updateActiveAttribute`) が Undo / Redo の後に挟まったかを見分けるのに使う。
+   * 土台画像は含めない (画像が変わるのはトリミングだけで、必ず pushUndo を通る)
+   */
+  function annotationSignature(): string {
+    return JSON.stringify([arrows, masks, shapes, textAnnotations, steps]);
+  }
+
+  function undo() {
+    styleEditKey = null;
+    dropStaleRedo(editHistory, annotationSignature());
+    const entry = stepUndo(editHistory, captureSnapshot);
+    if (!entry) return;
+    applySnapshot(entry);
+    markApplied(editHistory, annotationSignature());
+  }
+
+  function redo() {
+    styleEditKey = null;
+    dropStaleRedo(editHistory, annotationSignature());
+    const entry = stepRedo(editHistory, captureSnapshot);
+    if (!entry) return;
+    applySnapshot(entry);
+    markApplied(editHistory, annotationSignature());
   }
 
   // Image element reference for composite rendering
@@ -371,6 +597,38 @@
     await waitForImageDecode();
     imageRevision++;
   }
+
+  // 蛍光ペンの重ね方 (乗算か半透明か) を決める、画像の明るさの粗い地図 (src/lib/highlight.ts)。
+  // 画面 (ShapeOverlay) には表示中の <img> から作ったものを渡し、書き出し (renderComposite) は
+  // 自分で読み込んだ画像から同じ関数で作る。元の画素も縮め方も同じなので答えは一致する
+  let lumaMap = $state.raw<LumaMap | null>(null);
+
+  function buildLumaMap(source: HTMLImageElement): LumaMap | null {
+    const imageWidth = source.naturalWidth;
+    const imageHeight = source.naturalHeight;
+    if (imageWidth <= 0 || imageHeight <= 0) return null;
+    const { width, height } = lumaMapSize(imageWidth, imageHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, width, height);
+    return lumaMapFromRgba(ctx.getImageData(0, 0, width, height).data, width, height, imageWidth, imageHeight);
+  }
+
+  // imageRevision はデコード完了後に進むので、その時点の <img> は新しい画像を描ける。
+  // 蛍光ペンが 1 つも無い間は作らない (撮影のたびに全画像を縮小して読む必要は無い)
+  let hasHighlight = $derived(shapes.some((s) => s.type === "highlight"));
+  let highlightToolActive = $derived(shapeToolActive && shapeSettings.type === "highlight");
+  $effect(() => {
+    imageRevision;
+    if (!imgEl || !imageUrl || !(hasHighlight || highlightToolActive)) {
+      lumaMap = null;
+      return;
+    }
+    lumaMap = untrack(() => buildLumaMap(imgEl!));
+  });
 
   // CSS scale to fit the natural-size wrapper into the viewport
   let displayScale = $derived(
@@ -463,6 +721,12 @@
       captureScreen(event.payload === "take_screenshot_timer" ? "take_screenshot_timer" : undefined);
     });
 
+    // メニューの「New Image from Clipboard」(macOS の File メニュー / メニューバー常駐のメニュー)。
+    // Rust はフロントの描画後にしか送らないので、frontend-ready の預かり対象ではない
+    const unlistenNewFromClipboard = listen("new-image-from-clipboard", () => {
+      newImageFromClipboard();
+    });
+
     // 範囲選択完了で録画が開始された: アプリ内タイマーを動かす
     const unlistenRecStart = listen("recording-started", () => {
       isRecording = true;
@@ -519,6 +783,10 @@
     });
 
     function handleKeydown(e: KeyboardEvent) {
+      const historyAction = historyActionForKey(
+        { key: e.key, mod: isModKey(e), shift: e.shiftKey, alt: e.altKey },
+        isWindows,
+      );
       if (e.key === "Escape") {
         e.preventDefault();
         if (isRecording) {
@@ -551,17 +819,36 @@
       } else if (isModKey(e) && e.key === "c") {
         e.preventDefault();
         copyPath();
+      } else if (isDuplicateKey(e, e.target as HTMLElement | null, isWindows)) {
+        // ⌘D / Ctrl+D: 選択中の注釈を右下にずらして複製する。文字入力中などは isDuplicateKey が弾く
+        e.preventDefault();
+        if (imageUrl != null && !videoMode && !isCapturing && !isRecording) duplicateSelection();
       } else if (isModKey(e) && e.key === "s") {
         e.preventDefault();
         saveImage();
-      } else if (isModKey(e) && e.key === "z") {
+      } else if (historyAction) {
+        // 文字入力欄にいる間は入力欄自身の Undo / Redo (WebView / macOS の Edit メニュー) に
+        // 任せる。ここで横取りすると、打ち間違いを戻すつもりの ⌘Z で注釈が消える
+        if (isTextEntryTarget(e.target as HTMLElement | null)) return;
         e.preventDefault();
-        undo();
+        if (historyAction === "undo") undo();
+        else redo();
       } else if (isWindows && isModKey(e) && e.key === ",") {
         // macOS はアプリメニューの Preferences... (⌘,) が受ける。Windows には
         // アプリメニューを置かないので (lib.rs の set_app_menu)、ここで開く
         e.preventDefault();
         invoke("open_preferences").catch((err) => console.error("Failed to open Preferences:", err));
+      } else {
+        // 修飾キー無しの 1 文字でツールを切り替える (A / R / E / H / N / T / M / C)。
+        // 入力欄・IME の変換中・撮影中などは toolForKey が弾く (src/lib/toolShortcuts.ts)
+        const tool = toolForKey(e, e.target as HTMLElement | null, {
+          hasImage: imageUrl != null && !videoMode,
+          busy: isCapturing || isRecording,
+        });
+        if (tool) {
+          e.preventDefault();
+          toggleToolByShortcut(tool);
+        }
       }
     }
     window.addEventListener("keydown", handleKeydown);
@@ -572,6 +859,7 @@
       unlisten.then((fn) => fn());
       unlistenDoCapture.then((fn) => fn());
       unlistenRecStart.then((fn) => fn());
+      unlistenNewFromClipboard.then((fn) => fn());
       unlistenOpenFile.then((fn) => fn());
       unlistenDragDrop.then((fn) => fn());
       stopRecordTimer();
@@ -598,8 +886,12 @@
     }
     const shape = config[SHAPE_SETTINGS_KEY];
     if (isRecord(shape)) {
-      shapeSettings.type = pick(shape, "type", shapeSettings.type);
+      // 種別は typeof だけでは足りない (知らない文字列を弾く)。無ければ今の値のまま
+      if ("type" in shape) shapeSettings.type = parseShapeType(shape.type);
       shapeSettings.color = pick(shape, "color", shapeSettings.color);
+      shapeSettings.highlightColor = pick(shape, "highlightColor", shapeSettings.highlightColor);
+      // 暗さは範囲 (0 より大きく 1 以下) まで検める。無ければ今の値のまま
+      if ("spotlightDarkness" in shape) shapeSettings.spotlightDarkness = parseSpotlightDarkness(shape.spotlightDarkness);
       shapeSettings.thickness = pick(shape, "thickness", shapeSettings.thickness);
       shapeSettings.whiteStroke = pick(shape, "whiteStroke", shapeSettings.whiteStroke);
       shapeSettings.dropShadow = pick(shape, "dropShadow", shapeSettings.dropShadow);
@@ -643,9 +935,9 @@
   });
 
   $effect(() => {
-    const { type, color, thickness, whiteStroke, dropShadow } = shapeSettings;
+    const { type, color, highlightColor, spotlightDarkness, thickness, whiteStroke, dropShadow } = shapeSettings;
     if (!configLoaded) return;
-    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, thickness, whiteStroke, dropShadow });
+    setConfigDebounced(SHAPE_SETTINGS_KEY, { type, color, highlightColor, spotlightDarkness, thickness, whiteStroke, dropShadow });
   });
 
   $effect(() => {
@@ -698,16 +990,27 @@
   }
 
 
-  // テキスト属性変更時、編集中/選択中のテキストにも反映する
-  function updateTextSetting<K extends keyof TextSettings>(key: K, value: TextSettings[K]) {
-    textSettings[key] = value;
-    textOverlayRef?.updateActiveAttribute(key, value);
+  // テキストの属性の変更。選んだ (入力中ではない) テキストがあればそれだけを書き換える
+  // (restyle、Undo に積む)。入力中は従来どおり設定と入力中のテキストの両方に効かせる
+  // (新しく書いている途中のテキストは「次に描く注釈」の続きなので)
+  function updateTextSetting<K extends keyof TextSettings>(key: K, value: TextSettings[K], continuous = false) {
+    const sel = selectedText;
+    if (!sel) {
+      textSettings[key] = value;
+      textOverlayRef?.updateActiveAttribute(key, value);
+      return;
+    }
+    restyle("text", sel, { [key]: value } as Partial<TextAnnotation>, (u) => (textAnnotations = textAnnotations.map((t) => (t.id === u.id ? u : t))), continuous);
   }
 
-  // ステップの属性変更時、選択中のバッジにも反映する (テキストと同じ)
-  function updateStepSetting<K extends keyof StepSettings>(key: K, value: StepSettings[K]) {
-    stepSettings[key] = value;
-    stepOverlayRef?.updateActiveAttribute(key, value);
+  // ステップの属性の変更。選択中のバッジがあればそれだけを書き換える (restyle、Undo に積む)
+  function updateStepSetting<K extends keyof StepSettings>(key: K, value: StepSettings[K], continuous = false) {
+    const sel = selectedStep;
+    if (!sel) {
+      stepSettings[key] = value;
+      return;
+    }
+    restyle("step", sel, { [key]: value } as Partial<Step>, (u) => (steps = steps.map((st) => (st.id === u.id ? u : st))), continuous);
   }
 
   // ScreenshotResult を画面に反映し、注釈・履歴・寸法キャッシュをリセットする
@@ -727,7 +1030,7 @@
     shapes = [];
     textAnnotations = [];
     steps = [];
-    undoHistory = [];
+    clearEditHistory(editHistory);
     naturalWidth = 0;
     naturalHeight = 0;
     cropToolActive = false;
@@ -762,39 +1065,100 @@
     }
 
     try {
-      const [rgba, size] = await Promise.all([
-        clipboardImage.rgba(),
-        clipboardImage.size(),
-      ]);
-
-      // RGBA → PNG (Canvas 経由)
-      const canvas = document.createElement("canvas");
-      canvas.width = size.width;
-      canvas.height = size.height;
-      const ctx = canvas.getContext("2d")!;
-      const imageData = new ImageData(
-        new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
-        size.width,
-        size.height
-      );
-      ctx.putImageData(imageData, 0, 0);
-
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b!), "image/png");
-      });
-      const pngBytes = new Uint8Array(await blob.arrayBuffer());
-      const base64 = uint8ToBase64(pngBytes);
-
-      const result = await invoke<ScreenshotResult>("save_pasted_image", {
-        dataBase64: base64,
-        width: size.width,
-        height: size.height,
-      });
-
-      applyScreenshotResult(result, "paste");
+      applyScreenshotResult(await storeClipboardImage(clipboardImage), "paste");
     } catch (e) {
       console.error("Failed to paste image:", e);
     }
+  }
+
+  // メニューの「New Image from Clipboard」(CYBERNEURA-DEV-1295。Rust の menu_bar.rs が
+  // new-image-from-clipboard を送る)。「Flashcap を新しく起動して貼り付ける」のと同じ結果にする:
+  // 今の画像は注釈・トリミングを書き戻してから捨て、確認ダイアログは出さない。
+  // ウインドウは Rust (menu_bar.rs の run) が撮影・録画・範囲選択中でないことを確かめてから出す。
+  // ここで出すと、その間に始まったメニューバーからの OCR や録画の範囲選択に写り込む
+  async function newImageFromClipboard() {
+    if (isCapturing || isRecording || isCreatingFromClipboard) return;
+    isCreatingFromClipboard = true;
+    try {
+      let clipboardImage;
+      try {
+        clipboardImage = await readImage();
+      } catch {
+        toast.error("There is no image on the clipboard");
+        return;
+      }
+
+      // 書き戻しに失敗したら差し替えない (差し替えると注釈が失われる)。
+      // 書き戻し・保存の間にも編集はできるので、openOneFromSidebar と同じく
+      // **書き戻しを始める前に editRevision を控え**、差し替える直前に変わっていたら書き戻し直す。
+      // 間に撮影・貼り付け等で画像が変わっていたら、そちらを優先して何もしない
+      // 入力中で未確定のテキストは TextOverlay の中にしか無く、注釈にも editRevision にも
+      // 入っていない。確定させてから (effect が editRevision を進めるのを待ってから) 書き戻す。
+      // 確定させないと書き戻しから漏れ、しかも差し替え後の画像に乗ってしまう
+      textOverlayRef?.deselect();
+      await tick();
+      const generation = imageGeneration;
+      let edits = editRevision;
+      if (!(await writeBackBeforeSwitching())) return;
+      if (imageGeneration !== generation) return;
+
+      let result: ScreenshotResult;
+      try {
+        result = await storeClipboardImage(clipboardImage);
+      } catch (e) {
+        console.error("Failed to create an image from the clipboard:", e);
+        toast.error("Could not read the image on the clipboard", { description: String(e) });
+        return;
+      }
+      if (imageGeneration !== generation) return;
+      // 最後の確認から applyScreenshotResult までは await を挟まない
+      for (let round = 0; editRevision !== edits; round++) {
+        if (round >= 5) {
+          toast.error("The image kept changing; it was not replaced");
+          return;
+        }
+        edits = editRevision;
+        if (!(await writeBackBeforeSwitching())) return;
+        if (imageGeneration !== generation) return;
+      }
+      applyScreenshotResult(result, "paste");
+    } finally {
+      isCreatingFromClipboard = false;
+    }
+  }
+
+  // クリップボードの画像を PNG にして保存先へ書く (表示中の画像は差し替えない)
+  async function storeClipboardImage(
+    clipboardImage: Awaited<ReturnType<typeof readImage>>
+  ): Promise<ScreenshotResult> {
+    const [rgba, size] = await Promise.all([
+      clipboardImage.rgba(),
+      clipboardImage.size(),
+    ]);
+
+    // RGBA → PNG (Canvas 経由)
+    const canvas = document.createElement("canvas");
+    canvas.width = size.width;
+    canvas.height = size.height;
+    const ctx = canvas.getContext("2d")!;
+    const imageData = new ImageData(
+      new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+      size.width,
+      size.height
+    );
+    ctx.putImageData(imageData, 0, 0);
+
+    const blob = await new Promise<Blob>((resolve) => {
+      canvas.toBlob((b) => resolve(b!), "image/png");
+    });
+    const pngBytes = new Uint8Array(await blob.arrayBuffer());
+    const base64 = uint8ToBase64(pngBytes);
+
+    return await invoke<ScreenshotResult>("save_pasted_image", {
+      dataBase64: base64,
+      width: size.width,
+      height: size.height,
+    });
   }
 
   async function captureScreen(command: string = "take_screenshot_interactive") {
@@ -865,7 +1229,7 @@
       shapes = [];
       textAnnotations = [];
       steps = [];
-      undoHistory = [];
+      clearEditHistory(editHistory);
       deactivateAllTools();
       imageGeneration++;
       videoPath = result.file_path;
@@ -976,6 +1340,52 @@
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0);
+
+        // 蛍光ペンは画像のすぐ上 (他の注釈より下) に重ねる。矢印や文字を覆わないため。
+        // 乗算か半透明かは画面と同じ highlightPaint で決める (地図も同じ作り方)。
+        // **マスクの範囲には描かない** (画面でも HighlightLayer がマスクの範囲をくり抜く)。
+        // ここで描いてしまうと、後のモザイク / ぼかしが蛍光ペンの色を拾う。蛍光ペン 1 つごとに小さなレイヤーへ描き、
+        // マスクの矩形をくり抜いてから重ねる
+        const highlightShapes = shapes.filter((s) => s.type === "highlight");
+        if (highlightShapes.length > 0) {
+          const map = buildLumaMap(img);
+          for (const shape of highlightShapes) {
+            const bx = Math.floor(shape.x);
+            const by = Math.floor(shape.y);
+            const bw = Math.ceil(shape.x + shape.width) - bx;
+            const bh = Math.ceil(shape.y + shape.height) - by;
+            if (bw <= 0 || bh <= 0) continue;
+            const layer = document.createElement("canvas");
+            layer.width = bw;
+            layer.height = bh;
+            const layerCtx = layer.getContext("2d")!;
+            layerCtx.fillStyle = shape.color;
+            layerCtx.fillRect(shape.x - bx, shape.y - by, shape.width, shape.height);
+            for (const mask of masks) {
+              // 下のマスクの描画と同じ丸め。画面 (HighlightLayer の clip-path) も同じ矩形をくり抜く
+              const hole = roundedMaskRect(mask);
+              if (hole) layerCtx.clearRect(hole.x - bx, hole.y - by, hole.width, hole.height);
+            }
+            const paint = highlightPaint(map, shape);
+            ctx.save();
+            ctx.globalCompositeOperation = paint.blend === "multiply" ? "multiply" : "source-over";
+            ctx.globalAlpha = paint.opacity;
+            ctx.drawImage(layer, bx, by);
+            ctx.restore();
+          }
+        }
+
+        // スポットライト: 外側を半透明の黒で暗くする。蛍光ペンの上・他の注釈の下 (画面の
+        // SpotlightLayer と同じ重ね順)。暗くする範囲は画面と同じ spotlightDarkRects で、
+        // 互いに重ならない整数の矩形なので、塗り重ねで濃くなる所も継ぎ目も出ない。
+        // マスクの範囲は暗くしない (画面と同じくマスクを優先する)
+        const darkRects = spotlightDarkRects(canvas.width, canvas.height, shapes, masks);
+        if (darkRects.length > 0) {
+          ctx.save();
+          ctx.fillStyle = `rgba(0, 0, 0, ${shapeSettings.spotlightDarkness})`;
+          for (const r of darkRects) ctx.fillRect(r.x, r.y, r.width, r.height);
+          ctx.restore();
+        }
 
         // Coords are already in natural pixels, no scale conversion needed.
         // 太さ・文字・影は Retina の撮影なら 2 倍で描く (オーバーレイと同じ倍率)
@@ -1135,8 +1545,9 @@
           }
         }
 
-        // Shapes (rect / ellipse)
+        // Shapes (rect / ellipse)。蛍光ペンとスポットライトは上で描いてある
         for (const shape of shapes) {
+          if (shape.type === "highlight" || shape.type === "spotlight") continue;
           function drawShapeWhiteStroke(c: CanvasRenderingContext2D) {
             if (shape.type === "rect") {
               c.strokeStyle = "white";
@@ -1550,12 +1961,27 @@
     maskToolActive = !wasActive;
   }
 
-  function toggleShapeTool(type: "rect" | "ellipse") {
+  function toggleShapeTool(type: ShapeType) {
     const wasActive = shapeToolActive && shapeSettings.type === type;
     deactivateAllTools();
     if (!wasActive) {
       shapeToolActive = true;
       shapeSettings.type = type;
+    }
+  }
+
+  /** 1 文字のキーからの切り替え。ツールバーのボタンと同じトグルを呼ぶ */
+  function toggleToolByShortcut(tool: ShortcutTool) {
+    switch (tool) {
+      case "arrow": toggleArrowTool(); break;
+      case "rect":
+      case "ellipse":
+      case "highlight":
+      case "spotlight": toggleShapeTool(tool); break;
+      case "step": toggleStepTool(); break;
+      case "text": toggleTextTool(); break;
+      case "mask": toggleMaskTool(); break;
+      case "crop": toggleCropTool(); break;
     }
   }
 
@@ -1837,11 +2263,13 @@
     onApplyCrop={applyCrop}
     onResetCrop={resetCropRect}
     onCancelCrop={cancelCrop}
-    {arrowSettings}
-    {maskSettings}
-    {shapeSettings}
-    {textSettings}
-    {stepSettings}
+    arrowSettings={arrowPanel}
+    maskSettings={maskPanel}
+    shapeSettings={shapePanel}
+    textSettings={textPanel}
+    stepSettings={stepPanel}
+    {selectionKind}
+    selectedShapeType={selectedShape?.type ?? null}
     {filePath}
     {copyPathSuccess}
     {copyImageSuccess}
@@ -1866,8 +2294,12 @@
     onCaptureVideo={captureVideo}
     {videoMode}
     onDragFile={handleDragFile}
+    onUpdateArrowSetting={updateArrowSetting}
+    onUpdateShapeSetting={updateShapeSetting}
+    onUpdateMaskSetting={updateMaskSetting}
     onUpdateTextSetting={updateTextSetting}
     onUpdateStepSetting={updateStepSetting}
+    onEndStyleEdit={endStyleEdit}
     {highlightCapture}
     onHighlightEnd={() => highlightCapture = false}
     {autoCopyMode}
@@ -1931,8 +2363,17 @@
           draggable="false"
           onload={onImageLoad}
         />
+        <HighlightLayer {shapes} {masks} {lumaMap} />
+        <SpotlightLayer
+          shapes={shapeDraft?.type === "spotlight" ? [...shapes, shapeDraft] : shapes}
+          {masks}
+          imageWidth={naturalWidth}
+          imageHeight={naturalHeight}
+          darkness={shapeSettings.spotlightDarkness}
+        />
         <MaskOverlay
           bind:this={maskOverlayRef}
+          bind:selectedId={maskSelectedId}
           {masks}
           settings={maskSettings}
           toolActive={maskToolActive}
@@ -1944,17 +2385,22 @@
         />
         <ShapeOverlay
           bind:this={shapeOverlayRef}
+          bind:selectedId={shapeSelectedId}
           {shapes}
           settings={shapeSettings}
           toolActive={shapeToolActive}
           interactive={shapeToolActive || (noToolActive && shapes.length > 0)}
           scale={displayScale}
           {annotationScale}
+          {lumaMap}
           onBeforeMutate={pushUndo}
           onShapesChange={(newShapes) => (shapes = newShapes)}
+          onDraftChange={(shape) => (shapeDraft = shape)}
         />
         <TextOverlay
           bind:this={textOverlayRef}
+          bind:selectedId={textSelectedId}
+          bind:editingId={textEditingId}
           texts={textAnnotations}
           settings={textSettings}
           toolActive={textToolActive}
@@ -1966,6 +2412,7 @@
         />
         <ArrowOverlay
           bind:this={arrowOverlayRef}
+          bind:selectedId={arrowSelectedId}
           {arrows}
           settings={arrowSettings}
           toolActive={arrowToolActive}
@@ -1979,6 +2426,7 @@
              (arrows first, step badges last), so the export matches what was composed -->
         <StepOverlay
           bind:this={stepOverlayRef}
+          bind:selectedId={stepSelectedId}
           {steps}
           settings={stepSettings}
           toolActive={stepToolActive}
