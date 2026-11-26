@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)]
 
 mod auto_copy;
+mod cli_install;
 mod config;
 mod licenses;
 mod menu_bar;
@@ -1512,6 +1513,14 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
 
+    let install_cli = MenuItem::with_id(
+        handle,
+        MENU_INSTALL_CLI,
+        "Install Command Line Tools…",
+        true,
+        None::<&str>,
+    )?;
+
     let app_submenu = Submenu::with_items(
         handle,
         handle.package_info().name.clone(),
@@ -1520,6 +1529,7 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
             &PredefinedMenuItem::about(handle, None, None)?,
             &third_party_licenses,
             &check_for_updates,
+            &install_cli,
             &PredefinedMenuItem::separator(handle)?,
             &preferences,
             &PredefinedMenuItem::separator(handle)?,
@@ -1578,8 +1588,31 @@ fn set_app_menu(handle: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+const MENU_INSTALL_CLI: &str = "install_cli";
+
+/// アプリメニューの Install Command Line Tools…。管理者のパスワードを尋ねることがあるので、
+/// メニューのイベントを処理するスレッドを塞がない
+#[cfg(target_os = "macos")]
+fn install_cli(app: tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    std::thread::spawn(move || {
+        let (kind, title, message) = match cli_install::install() {
+            Ok(installed) => (MessageDialogKind::Info, "Installed the flashcap command", installed),
+            Err(e) => (MessageDialogKind::Error, "Failed to install the flashcap command", e),
+        };
+        app.dialog().message(message).title(title).kind(kind).show(|_| {});
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ターミナルから PATH の flashcap (symlink) で起動された: LaunchServices に起動させ直す
+    // (cli_install.rs)。ランチャーが叩く .app 内の実行ファイルは symlink ではないので今まで通り
+    #[cfg(target_os = "macos")]
+    if cli_install::invoked_via_symlink() {
+        std::process::exit(cli_install::run_client());
+    }
+
     tauri::Builder::default()
         .manage(video::RecordingState::default())
         .manage(FrontendHandshake::default())
@@ -1652,6 +1685,10 @@ pub fn run() {
                     let _ = licenses::open_window(app);
                 } else if event.id() == update_check::MENU_ID {
                     update_check::start(app);
+                } else if event.id() == MENU_INSTALL_CLI {
+                    // macOS のアプリメニューにしか無い (set_app_menu)
+                    #[cfg(target_os = "macos")]
+                    install_cli(app.clone());
                 } else {
                     menu_bar::handle_menu_event(app, event.id().as_ref());
                 }
