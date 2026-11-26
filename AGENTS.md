@@ -1,6 +1,6 @@
 # Flashcap - Project Guide
 
-> **アプリ名の表記はユーザーに見える箇所では「Flashcap」に統一する** (CYBERNEURA-DEV-1126。`productName` = macOS の `.app` 名 = Dock に出る名前・アプリメニュー・dmg / インストーラのファイル名、ウインドウタイトル、通知・トレイ・Preferences の文言)。`c` は小文字で、`FlashCap` / `flashcap` は誤り。identifier (`com.cyberneura.flashcap`)・crate / 実行バイナリ名 (`flashcap`)・設定ディレクトリ (`~/.config/flashcap`)・URL スキーム (`flashcap://`) は小文字のまま。`productName` を変えたら Homebrew cask (`cyberneura/homebrew-tap` の `Casks/flashcap.rb` の `url` / `app`) を、**新しい名前の成果物が公開されてから**追従させる。
+> **Wherever users can see the app name, write it as "Flashcap"** (CYBERNEURA-DEV-1126. This covers `productName` = the macOS `.app` name = the name shown in the Dock, the app menu, the dmg / installer file names, window titles, and the wording in notifications, the tray and Preferences). The `c` is lowercase; `FlashCap` / `flashcap` are wrong. The identifier (`com.cyberneura.flashcap`), the crate / executable name (`flashcap`), the config directory (`~/.config/flashcap`) and the URL scheme (`flashcap://`) stay lowercase. If you change `productName`, update the Homebrew cask (`url` / `app` in `Casks/flashcap.rb` of `cyberneura/homebrew-tap`) to match, **but only after artifacts with the new name have been published**.
 
 Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 added Windows).
 
@@ -10,10 +10,10 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts の単体テスト (`node --experimental-strip-types`, テストランナー非依存)
+- `pnpm test` - Unit tests for edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts (`node --experimental-strip-types`, no test runner dependency)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
-`j-menu.yaml` にも同じ操作を並べてある (`j` で選ぶ)。
+The same operations are also listed in `j-menu.yaml` (pick them with `j`).
 
 ## Architecture
 
@@ -27,11 +27,11 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
   - `src/lib/edgeSnap.ts` - Edge detection for snapping the crop frame to lines in the image
   - `src/lib/cropAspect.ts` - Aspect-ratio geometry for the crop frame (pure functions)
   - `src/lib/regionSelect.ts` - Geometry for the Windows capture-area overlay (`src/routes/capture-region/+page.svelte`)
-  - `src/lib/ThumbnailSidebar.svelte` + `src/lib/thumbnailBrowser.ts` - Saved-images sidebar (see サムネイルブラウザ)
-  - `src/lib/StepOverlay.svelte` + `src/lib/steps.ts` - Numbered step markers (see ステップ注釈)
+  - `src/lib/ThumbnailSidebar.svelte` + `src/lib/thumbnailBrowser.ts` - Saved-images sidebar (see Thumbnail browser)
+  - `src/lib/StepOverlay.svelte` + `src/lib/steps.ts` - Numbered step markers (see Step annotations)
 - **Types**: `src/lib/types.ts`
 - **Preferences**: `src/routes/preferences/+page.svelte`
-- **Third-Party Licenses**: `src/routes/licenses/+page.svelte` (see 依存ライブラリのライセンス表示)
+- **Third-Party Licenses**: `src/routes/licenses/+page.svelte` (see Third-party license notices)
 
 ## Key Details
 
@@ -45,747 +45,745 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - Mask tool: mosaic, blur, fill modes with 8-direction resize handles
 - Timer capture: `screencapture -i -T <delay>` via async Rust command (delay configurable in Preferences)
 - Clipboard copy support (image-png feature enabled)
-- Settings stored in `~/.config/flashcap/config.json` (see 設定ファイル)
-- ダークテーマ固定。`src/app.css` で html / body の背景と `color-scheme: dark` を当て
-  (スクロールの跳ね返りで白が見えないように)、ウインドウは `theme: Dark` + `backgroundColor`
-  (main は tauri.conf.json、Preferences / Licenses は WebviewWindowBuilder) で枠と描画前の下地も暗くする。
-  ウインドウを足したら同じ 2 つを付けること。
+- Settings stored in `~/.config/flashcap/config.json` (see Config file)
+- The theme is fixed to dark. `src/app.css` sets the html / body background and `color-scheme: dark`
+  (so white does not show through when scrolling bounces), and the windows use `theme: Dark` + `backgroundColor`
+  (main in tauri.conf.json, Preferences / Licenses in WebviewWindowBuilder) so the frame and the backdrop before the first paint are dark too.
+  When you add a window, give it the same two settings.
 
-## 設定ファイル (src-tauri/src/config.rs + src/lib/config.ts)
+## Config file (src-tauri/src/config.rs + src/lib/config.ts)
 
-設定はすべて `~/.config/flashcap/config.json` (macOS / Windows 共通) の 1 ファイルに、
-キーと値のフラットな JSON オブジェクトとして持つ。Preferences の項目、自動コピー、
-ツールの設定 (`arrow_settings` / `mask_settings` / `shape_settings` / `text_settings` /
-`crop_snap`)、シェルコマンド (`shell_commands`) がここに入る。tauri-plugin-store と
-localStorage は使わない。
+All settings live in a single file, `~/.config/flashcap/config.json` (shared by macOS / Windows),
+as a flat JSON object of keys and values. It holds the Preferences items, auto-copy,
+the tool settings (`arrow_settings` / `mask_settings` / `shape_settings` / `text_settings` /
+`crop_snap`) and the shell commands (`shell_commands`). tauri-plugin-store and
+localStorage are not used.
 
-- **ホームフォルダの実パスを書かない** (マシン間で共有するため)。パスはフロントが
-  `collapseHome()` (`src/lib/homePath.ts`) で `~` に畳んでから保存し、Rust の
-  `config::expand_home()` で展開する。パスを持つ設定を増やしたら両方を通すこと。
-- Rust の読み手 (`config::get`) はキャッシュせず毎回ファイルを読む。手で書き換えた内容や
-  別マシンから同期された内容をそのまま拾うため。
-- 書き込みは `config_set` の 1 キー単位で、Rust 側のロックの中で「読む → 差し替える →
-  一時ファイルに書いて rename」する。**JSON が壊れていたら書かない** (上書きすると他の
-  設定が全部消える)。config.json が symlink (dotfiles 管理) でもリンクを壊さないよう、
-  リンク先の実体の隣で rename する。
-- 書いた後に `config-changed` (payload はキー) を全ウインドウへ emit する。メインウインドウは
-  Preferences のキー (`PREFERENCE_KEYS`) だけ読み直す。
-- ツールの設定は変更のたびに `setConfigDebounced` でまとめて書く。**読み込みが終わるまで
-  (`configLoaded`) は書かない** — 起動直後の既定値で保存値を上書きしてしまうため。
+- **Do not write the real path of the home folder** (the file is shared between machines). The frontend
+  folds paths to `~` with `collapseHome()` (`src/lib/homePath.ts`) before saving, and Rust's
+  `config::expand_home()` expands them. If you add a setting that holds a path, route it through both.
+- The Rust reader (`config::get`) does not cache; it reads the file every time. This is so that hand edits and
+  content synced from another machine are picked up as they are.
+- Writes go through `config_set`, one key at a time, and inside a Rust-side lock it does "read → replace →
+  write to a temporary file and rename". **If the JSON is broken, it does not write** (overwriting would wipe
+  all the other settings). So as not to break the link when config.json is a symlink (dotfiles management),
+  it renames next to the real file the link points to.
+- After writing, it emits `config-changed` (the payload is the key) to all windows. The main window
+  only reloads the Preferences keys (`PREFERENCE_KEYS`).
+- Tool settings are written in batches with `setConfigDebounced` on every change. **Do not write until loading
+  has finished (`configLoaded`)** — otherwise the defaults present right after startup overwrite the saved values.
 
-## シェルコマンド (src-tauri/src/shell_command.rs + src/lib/ShellCommandMenu.svelte)
+## Shell commands (src-tauri/src/shell_command.rs + src/lib/ShellCommandMenu.svelte)
 
-Preferences で「名前・シェル・コマンド」を複数登録し、画像を開いている時にツールバー右端の
-ターミナルボタンから実行する。macOS のみ (Windows はボタンも設定欄も出さない)。
+In Preferences you register several "name, shell, command" entries, and while an image is open you run them from the
+terminal button at the right end of the toolbar. macOS only (on Windows neither the button nor the settings field is shown).
 
-- **画像のパスは環境変数 `IMAGE_PATH` で渡し、文字列置換しない。** コマンド中の
-  `${IMAGE_PATH}` はシェル自身が展開する。置換だと Finder から開いた `a;rm -rf ~.png` の
-  ようなファイル名がコマンドとして実行される。
-- シェルは `-l -c` (ログインシェル) で、ホームフォルダを cwd にして起動する。GUI アプリの
-  PATH には Homebrew が無いので、`~/.zprofile` 等を読ませるため。
-- フロントは id と画像のパスだけを渡し、中身は Rust が設定ファイルから引き直す。
-- 実行前に `saveCompositeToFile()` で注釈・トリミングを焼き込む (パスのコピーと同じ)。
-- ログは `$TMPDIR/flashcap/shell-logs/` に 1 実行 1 ファイル (stdout + stderr、先頭に
-  コマンドと IMAGE_PATH、末尾に終了ステータス)。シェルが起動できなかった時もログに書いて
-  失敗として返す。完了・失敗は svelte-sonner のトーストで出し、「View log」で開ける。
-  `open_shell_log` はログの置き場の直下のファイルしか開かない。
+- **Pass the image path in the environment variable `IMAGE_PATH`; do not do string substitution.** `${IMAGE_PATH}`
+  in the command is expanded by the shell itself. With substitution, a file name opened from Finder such as
+  `a;rm -rf ~.png` would be executed as a command.
+- The shell is started with `-l -c` (login shell) with the home folder as cwd. A GUI app's
+  PATH does not include Homebrew, so this makes it read `~/.zprofile` and the like.
+- The frontend passes only the id and the image path; Rust looks the contents up again from the config file.
+- Before running, `saveCompositeToFile()` burns in the annotations and cropping (same as copying the path).
+- Logs go to `$TMPDIR/flashcap/shell-logs/`, one file per run (stdout + stderr, with the
+  command and IMAGE_PATH at the top and the exit status at the end). Even when the shell cannot be started, this is written to the log and
+  returned as a failure. Completion / failure is shown with a svelte-sonner toast, and "View log" opens the log.
+  `open_shell_log` only opens files directly inside the log directory.
 
 ## Frontend Ready Handshake (src-tauri/src/lib.rs)
 
-コールド起動 (WebView 未ロード) では `app.emit()` の届け先が存在せず、イベントが黙って
-捨てられる。`FrontendHandshake` (`Mutex<{frontend_ready, capture_pending, pending_files}>`) が
-frontend-ready を待ってから emit することで、これを 1 箇所で防いでいる。預かる仕事は 2 種類:
+On a cold start (WebView not yet loaded), `app.emit()` has no recipient and events are silently
+dropped. `FrontendHandshake` (`Mutex<{frontend_ready, capture_pending, pending_files}>`) prevents this in one
+place by waiting for frontend-ready before emitting. It holds two kinds of work:
 
-- **キャプチャー開始** — 3経路 (`--capture` コールド起動 / single-instance 再起動 /
-  macOS の `flashcap://capture` URL スキーム)。`request_capture()` 経由。
-- **画像を開く** — Finder の「このアプリケーションで開く」/ Dock へのドロップ
-  (どちらも `RunEvent::Opened`)、single-instance の argv、コールド起動の argv。
-  `request_open_files()` 経由。
+- **Start capture** — three routes (`--capture` cold start / single-instance relaunch /
+  the macOS `flashcap://capture` URL scheme). Goes through `request_capture()`.
+- **Open images** — Finder's "Open With" / dropping onto the Dock
+  (both are `RunEvent::Opened`), the single-instance argv, and the cold-start argv.
+  Goes through `request_open_files()`.
 
-注意点:
+Points to watch:
 
-- **経路は `show()` しない**。`request_capture()` は `do-capture` を emit するだけ。
-  ウィンドウ表示はフロント `captureScreen()` が撮影完了後の `show()` + `setFocus()` で行う。
-  → 経路側で `show()` を足すと show→hide の点滅が起きるので追加しないこと。
-  `request_open_files()` も未 ready の時は show しない (白いウィンドウが見えるだけ。
-  こちらは点滅ではなく描画前表示が理由で、キャプチャー側とは事情が違う)。
-  **2 秒フェイルセーフも、キャプチャー予約中と画像の預かり中は表示しない。**
-  ここで出すと「未 ready なら show しない」を裏口から破ることになる。
-- **フロントは、預かり対象のリスナーが全部登録され終わってから `frontend-ready` を
-  一度だけ emit する** (`+page.svelte` の `Promise.allSettled([unlistenDoCapture,
-  unlistenOpenFile])`)。**預かるイベントを増やしたらこの配列にも足すこと。**
-  足し忘れるとコールド起動でだけ取りこぼす、再現しにくいバグに戻る。
-- Finder の「このアプリケーションで開く」は起動中でもコールド起動でも `RunEvent::Opened`
-  で来る (起動中のアプリに 2 個目のプロセスは立たない)。argv で来るのはターミナルからの
-  `flashcap foo.png` だけ。
-- **argv で `--capture` と画像を同時に渡された時は capture を優先する**
-  (`image_args_for_startup`)。single-instance 経路は `request_capture()` の後に return して
-  ファイル引数を見ないので、コールド起動だけ両方処理すると同じコマンドの結果が
-  起動状態で変わる (`loadImageFile()` と `captureScreen()` が並走して後勝ちになる)。
-- `captureScreen()` の `finally` ではガードフラグ `isCapturing` を `show()`/`setFocus()` の
-  await が**全部終わった後**に false へ戻す。先に戻すと復元中の `do-capture` が新キャプチャーを
-  開始してインターリーブする。
+- **The routes do not call `show()`**. `request_capture()` only emits `do-capture`.
+  The window is shown by the frontend's `captureScreen()` with `show()` + `setFocus()` after the capture finishes.
+  → Adding `show()` on the route side causes a show→hide flicker, so do not add it.
+  `request_open_files()` also does not show while not ready (you would only see a white window.
+  The reason here is showing before the first paint, not flicker, so the situation differs from the capture side).
+  **The 2-second failsafe also does not show the window while a capture is reserved or images are being held.**
+  Showing it there would break "do not show while not ready" through the back door.
+- **The frontend emits `frontend-ready` exactly once, after every listener for held work has been
+  registered** (`Promise.allSettled([unlistenDoCapture,
+  unlistenOpenFile])` in `+page.svelte`). **If you add an event to be held, add it to this array too.**
+  If you forget, you are back to a hard-to-reproduce bug where events are lost only on a cold start.
+- Finder's "Open With" arrives as `RunEvent::Opened` whether the app is running or cold-starting
+  (no second process starts for a running app). Only `flashcap foo.png` from a terminal
+  arrives via argv.
+- **When argv contains both `--capture` and images, capture wins**
+  (`image_args_for_startup`). The single-instance route returns after `request_capture()` and
+  does not look at file arguments, so if only a cold start processed both, the result of the same command would
+  depend on the startup state (`loadImageFile()` and `captureScreen()` would run in parallel and the last one would win).
+- In the `finally` of `captureScreen()`, the guard flag `isCapturing` is set back to false **after all** the
+  `show()`/`setFocus()` awaits have finished. Resetting it earlier lets a `do-capture` arriving during restoration start a new capture
+  and interleave.
 
 ## Crop Tool (src/lib/CropOverlay.svelte + src/routes/+page.svelte)
 
-- 適用時は `imageBase64` を切り出した PNG に差し替え、注釈は焼き込まずに切り出した原点ぶん
-  平行移動する。注釈座標は自然解像度ピクセルなので、この平行移動だけで `renderComposite()` と
-  各オーバーレイの座標系が揃う。
-- **mask だけは切り出し後の領域へクランプする**。`renderComposite()` の `getImageData` は
-  キャンバス外を transparent black で返すため、はみ出した mask を残すと blur はアルファごと
-  `putImageData` で焼き付き、mosaic は端のブロックが半透明になって**隠したはずの元画像が透ける**。
-  arrow / shape / text はキャンバスにクリップされるだけなので座標をそのまま保持してよい。
-- 同時に `imageModified` を立てる。`saveCompositeToFile()` の書き込み判定は
-  `needsFileWrite` (= 注釈がある or `imageModified`) で、ここに入れないとトリミング後の
-  ⌘C (パスのコピー) / ドラッグで**ディスク上の未トリミングの元ファイル**が相手に渡る。
-  判定を外して常に書き戻す形にはしないこと (JPEG など非可逆形式で無駄な再エンコード劣化を招く)。
-- undo スナップショット (`EditSnapshot`) は画像 base64 と寸法も持つ。ただし `imageModified` は
-  undo で戻さない — 既にファイルへ書き戻していた場合、巻き戻してもディスク上は変更済みで
-  「メモリ = ファイル」とは言えないため。
-- 画像を差し替えたら `bumpImageRevision()` を呼ぶ。MaskOverlay のモザイクは表示中の `<img>` から
-  サンプリングするので、デコード完了を待って revision を上げないと旧画像から取った絵で固まる。
-- 枠が画像いっぱいの間は内側ドラッグを「範囲の引き直し」に回す。枠の外が存在しないため、
-  move に倒すと引き直す手段が無くなる。
-- `undo()` で土台画像が差し替わったら crop ツールを閉じる。`Cmd+Z` は crop 表示中でも
-  通るため、閉じないと旧画像の座標の枠が新しい画像からはみ出したまま残る。
+- On apply, `imageBase64` is replaced with the cropped PNG, and the annotations are not burned in but translated
+  by the crop origin. Annotation coordinates are in natural-resolution pixels, so this translation alone keeps
+  `renderComposite()` and each overlay in the same coordinate system.
+- **Only masks are clamped to the cropped area**. `getImageData` in `renderComposite()` returns
+  transparent black outside the canvas, so if a mask sticking out is left as is, blur burns the alpha in too via
+  `putImageData`, and mosaic makes the edge blocks semi-transparent, so **the original image you meant to hide shows through**.
+  arrow / shape / text are only clipped by the canvas, so their coordinates can be kept as they are.
+- At the same time, set `imageModified`. `saveCompositeToFile()` decides whether to write with
+  `needsFileWrite` (= there are annotations or `imageModified`); if this is not included, after cropping,
+  ⌘C (copy path) / drag hands over **the uncropped original file on disk**.
+  Do not remove the check and always write back (it causes pointless re-encoding degradation in lossy formats such as JPEG).
+- The undo snapshot (`EditSnapshot`) also holds the image base64 and dimensions. However, `imageModified` is
+  not reverted by undo — if the file has already been written back, rolling back leaves the disk changed, so
+  "memory = file" no longer holds.
+- After replacing the image, call `bumpImageRevision()`. MaskOverlay's mosaic samples from the displayed `<img>`,
+  so unless the revision is bumped after decoding finishes, it freezes with a picture taken from the old image.
+- While the frame covers the whole image, dragging inside it is treated as "redraw the area". There is no outside of the frame,
+  so if it fell back to move there would be no way to redraw.
+- If `undo()` replaces the base image, close the crop tool. `Cmd+Z` goes through even while crop is shown,
+  so if it stays open, a frame in the old image's coordinates is left sticking out of the new image.
 
-### 境界線への吸着 (src/lib/edgeSnap.ts)
+### Snapping to edges (src/lib/edgeSnap.ts)
 
-- 画素差は **RGBA 4 チャンネル**で取るが、正規化の除数は **3 のまま**。不透明な画像
-  (スクリーンショット = 主用途) はアルファ差が常に 0 なので、3 で割る限りスコアは
-  アルファ導入前と完全に一致する。4 で割ると主用途のスコアが一律 25% 下がり、閾値の
-  意味が変わる。アルファを見ないと、透明背景の上の不透明な黒のように RGB が同一で
-  アルファだけが違う境界を 1 本も拾えない。
-- 射影プロファイル (列/行ごとの画素差の積算) で線を検出する。**絶対閾値だけでは足りない** —
-  写真やテクスチャはどこを切っても差分が出るので全列が候補になり、吸着先が実質ランダムに
-  なる。近傍平均に対する突出度 (`PROMINENCE_RATIO`) を併せて要求して切り分ける。
-- 検出結果は「線」(`EdgeSnapRun`) の列で、**1 本が start / end の 2 境界を持つ**。1px の枠線は
-  左右 2 本の境界を作り、「枠線を含めて切る」「外して切る」のどちらも正当な意図なので、
-  片方に丸めない。
-- **吸着の許容距離は画面 px 基準 (`6 / scale`)、検出は画像 px 基準**。この 2 つが噛み合うのは
-  等倍表示の時だけで、Retina のスクショを縮小表示すると 6 画面 px が 25 画像 px 以上に
-  広がり、候補が詰まって枠の辺を線以外へ置けなくなる。そのため `snapPositions()` が
-  **表示スケールを見て毎回間引く** (許容距離の 3 倍未満に隣接する線は強い方だけ残す)。
-  間引きを検出結果のキャッシュに焼き付けないこと — ウインドウのリサイズで scale が変わる。
-- draw 中は、吸着した結果が `MIN_SIZE` を割るならその軸は吸着させない。mouseup が
-  最小サイズ未満の引き直しを破棄するので、吸着が原因で選択ごと消えてしまう。
-  **終点 (`snapEndpoint`) と始点 (`drawAnchor`) の両方に要る。** 始点は mousedown 時点で
-  吸着させるが、その時はまだ引く向きが分からない。線の手前から線へ向かって引くと
-  始点が動いたぶん span が削られる (始点 96 が線 100 へ吸着 → 104 まで引いても幅 4)。
-- 検出は画像 1 枚につき 1 回で `imageRevision` に紐付ける。**メインスレッド同期処理**なので
-  (ワーカーには逃がしていない)、crop ツールが開いた見た目を描かせてから走らせる。
-- **画像を差し替えたら、キャッシュ世代 (`cropSnapLinesRevision`) も同期的に無効化する。**
-  `imageRevision` の更新はデコード待ちの後なので、その隙に crop を開き直されると
-  「世代が一致 (どちらも旧世代)」が成立して検出が空のまま早期 return し、その後 revision が
-  上がっても再検出されない (吸着が黙って効かなくなる)。
-- ON/OFF は crop ツールバーの磁石トグル。設定ファイルの `crop_snap` に持つ。
+- Pixel differences are taken over **4 RGBA channels**, but the normalization divisor **stays 3**. Opaque images
+  (screenshots = the main use) always have an alpha difference of 0, so as long as we divide by 3 the scores are
+  exactly the same as before alpha was introduced. Dividing by 4 would lower the main use's scores by 25% across the board and change what the
+  thresholds mean. Without looking at alpha, a boundary where RGB is identical and only alpha differs, such as
+  opaque black on a transparent background, would never be picked up.
+- Lines are detected with projection profiles (pixel differences summed per column/row). **An absolute threshold alone is not enough** —
+  photos and textures produce differences wherever you cut, so every column becomes a candidate and the snap target is effectively random.
+  It additionally requires prominence relative to the neighborhood average (`PROMINENCE_RATIO`) to tell them apart.
+- The detection result is a list of "lines" (`EdgeSnapRun`), and **each line has two boundaries, start / end**. A 1px border
+  creates two boundaries, left and right, and both "cut including the border" and "cut excluding it" are valid intentions,
+  so do not round to one of them.
+- **The snap tolerance is in screen px (`6 / scale`); detection is in image px**. The two only mesh at
+  100% display; when a Retina screenshot is shown scaled down, 6 screen px spread to 25+ image px,
+  candidates crowd together, and you can no longer place the frame's edges anywhere other than on lines. So `snapPositions()`
+  **thins them out every time based on the display scale** (of lines closer together than 3x the tolerance, only the stronger one is kept).
+  Do not bake the thinning into the cached detection result — the scale changes when the window is resized.
+- While drawing, if snapping would make the result smaller than `MIN_SIZE`, that axis is not snapped. mouseup
+  discards redraws smaller than the minimum size, so snapping would make the whole selection disappear.
+  **This is needed for both the end point (`snapEndpoint`) and the start point (`drawAnchor`).** The start point is snapped
+  at mousedown, but at that moment the drag direction is not yet known. When you drag from just before a line toward it,
+  the span is reduced by however far the start point moved (start 96 snaps to line 100 → dragging to 104 still gives a width of 4).
+- Detection runs once per image and is tied to `imageRevision`. It is **synchronous on the main thread**
+  (not offloaded to a worker), so it runs after the opened crop tool has been painted.
+- **When the image is replaced, also invalidate the cache generation (`cropSnapLinesRevision`) synchronously.**
+  `imageRevision` is updated only after waiting for the decode, so if crop is reopened in that gap,
+  "generations match (both old)" holds, detection returns early with nothing, and even after the revision
+  goes up it is not re-detected (snapping silently stops working).
+- ON/OFF is the magnet toggle in the crop toolbar. It is stored as `crop_snap` in the config file.
 
-### 縦横比の固定 (src/lib/cropAspect.ts)
+### Locking the aspect ratio (src/lib/cropAspect.ts)
 
-- crop ツールバーの `1:1` / `16:9` トグル。排他で、押し直すと解除。**セッションを跨いで
-  覚えない** — 次の起動でトリミングが勝手に固定されていると驚くため (吸着とは扱いが違う)。
-- 幾何計算はすべて `cropAspect.ts` の純関数 (テストは `tests/crop-aspect.test.mts`)。角ハンドルと引き直しは同じ
-  `aspectRectFromCorner()` で表せる (引き直しは「ドラッグ開始点を固定した角」)。
-- 大きい方の軸に合わせる (cover)。小さい方に合わせると、対角線から外れた方向へ
-  ポインタを動かした時に枠が縮んで追従しなくなる。
-- 辺ハンドルでは、導いた側は**余地がある間だけ枠の中心を保ち、画像の端に当たったら滑らせる**。
-  右辺を引いた時に高さを上下どちらへ伸ばすかは決めようがないので、基本は中心を保つ。
-  ただし**中心の維持を制約 (上限) にしてはいけない** — 「中心を保ったまま伸ばせる範囲」を
-  上限にすると、枠が端に接している時にそれが現在の寸法と一致して**ハンドルが完全に死ぬ**
-  (どこまで引いても元へ丸め戻される)。枠を端まで move すれば必ず踏む。
-- **吸着は縦横比に負ける**。動かす軸だけを吸着させ、もう一方は比率から導く。
-  両軸を吸着させると比率が崩れる。
-- **固定中は「引き直しが小さすぎるか」を結果の寸法で判定できない**。比率を保つために
-  枠が最小サイズまで自動で広がるので、クリックしただけでも MIN_SIZE の枠ができる。
-  `drawMoved` (生のポインタが `CLICK_SLOP` 以上動いたか) で判定する。
-  **ここで `MIN_SIZE` を閾値に流用しない** — 3px 引いただけでも画面には正当な枠が
-  出ているので、離した瞬間にそれが消えることになる。判定は吸着**前**の座標で行う
-  (吸着が終点を始点へ引き戻すと、引いているのに「動いていない」になる)。
+- The `1:1` / `16:9` toggles in the crop toolbar. They are mutually exclusive, and pressing again releases. **Not remembered
+  across sessions** — it would be surprising if cropping were locked on its own at the next launch (handled differently from snapping).
+- All geometry is pure functions in `cropAspect.ts` (tests in `tests/crop-aspect.test.mts`). Corner handles and redrawing can be expressed with the same
+  `aspectRectFromCorner()` (a redraw is "a corner with the drag start point fixed").
+- Fit to the larger axis (cover). Fitting to the smaller one makes the frame shrink and stop following when the
+  pointer moves off the diagonal.
+- With edge handles, the derived side **keeps the frame's center only while there is room, and slides once it hits the image edge**.
+  When dragging the right edge there is no way to decide whether the height should grow up or down, so the center is kept by default.
+  However, **do not make keeping the center a constraint (upper bound)** — if "the range you can grow while keeping the center"
+  is the upper bound, then when the frame touches an edge it equals the current size and **the handle is completely dead**
+  (however far you drag, it is rounded back). Moving the frame to an edge always triggers this.
+- **Snapping loses to the aspect ratio**. Only the axis being moved is snapped; the other is derived from the ratio.
+  Snapping both axes breaks the ratio.
+- **While locked, "is the redraw too small?" cannot be judged from the resulting size**. To keep the ratio,
+  the frame automatically grows to the minimum size, so even a mere click produces a MIN_SIZE frame.
+  Judge it with `drawMoved` (whether the raw pointer moved by `CLICK_SLOP` or more).
+  **Do not reuse `MIN_SIZE` as the threshold here** — even after dragging only 3px, a valid frame is shown
+  on screen, so it would vanish the moment you release. The judgement uses coordinates **before** snapping
+  (if snapping pulls the end point back to the start point, you would be "not moving" while dragging).
 
 ## Undo / Redo (src/lib/editHistory.ts + src/routes/+page.svelte)
 
-注釈とトリミングの履歴はスナップショット方式 (CYBERNEURA-DEV-1263 で Redo を追加)。
-⌘Z = Undo、⌘⇧Z = Redo (Windows は Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y)。
+The history of annotations and cropping uses snapshots (CYBERNEURA-DEV-1263 added Redo).
+⌘Z = Undo, ⌘⇧Z = Redo (on Windows Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y).
 
-- 積み方・取り出し方 (`recordEdit` / `stepUndo` / `stepRedo`)、キーの判定 (`historyActionForKey`)、
-  入力欄の判定 (`isTextEntryTarget`) は `editHistory.ts` の純関数 (`tests/edit-history.test.mts`)。
-  `+page.svelte` は `captureSnapshot()` (今の状態の複製) と `applySnapshot()` (反映。Undo / Redo で共通) だけを持つ。
-- **編集の直前に `pushUndo()` を呼ぶ**のは従来どおり。`pushUndo()` は Redo の履歴を捨てる。
-  Undo は取り出す前に今の状態を Redo 側へ積み、Redo はその逆。別の画像に替わる 2 か所
-  (撮影・貼り付け・ファイルを開く / 動画への切り替え) では `clearEditHistory` で両方を空にする。
-- **文字入力欄 (TEXTAREA / contentEditable / 文字を打つ type の INPUT) にフォーカスがある間は横取りしない。**
-  テキスト注釈の編集中の ⌘Z / ⌘⇧Z は入力欄の Undo / Redo (macOS はネイティブの Edit メニューの
-  `PredefinedMenuItem::undo` / `redo`、Windows は WebView2) として働き、注釈の履歴は動かない。
-  **色選択やスライダーの INPUT は入力欄に数えない** — 操作後もフォーカスが残るので、数えると
-  色を変えた直後の ⌘Z が効かなくなる。
-- ネイティブの Edit > Undo / Redo は WebView の文字入力にしか効かない (注釈の履歴は知らない) ので、
-  入力欄の外では JS 側だけが動き、二重には動かない。
-- **Undo に積まない編集** (入力中のテキストの色などをツールバーから変える `updateActiveAttribute`) が
-  Undo / Redo の後に挟まったら、次の Undo / Redo の前に Redo の履歴を捨てる (`dropStaleRedo`)。
-  `undo()` / `redo()` が反映直後の注釈の署名 (`annotationSignature()`) を `markApplied` で控え、次回に今の署名と比べる。
-  捨てないと Redo がその編集を黙って消す。積まない編集を足しても、注釈の配列を書き換える限りここで拾える。
-- 履歴は `$state` にしない (テンプレートから読まない。スナップショットを proxy で包まない)。
-  Undo / Redo のボタンを置くなら、件数だけを別の `$state` に持つこと。
+- Pushing and popping (`recordEdit` / `stepUndo` / `stepRedo`), key detection (`historyActionForKey`) and
+  text-field detection (`isTextEntryTarget`) are pure functions in `editHistory.ts` (`tests/edit-history.test.mts`).
+  `+page.svelte` only has `captureSnapshot()` (a copy of the current state) and `applySnapshot()` (applies it; shared by Undo / Redo).
+- **Call `pushUndo()` right before an edit**, as before. `pushUndo()` discards the Redo history.
+  Undo pushes the current state onto the Redo side before popping, and Redo does the reverse. In the two places where the image is replaced by a different one
+  (capture / paste / open file, and switching to video), `clearEditHistory` empties both.
+- **While a text-entry field (TEXTAREA / contentEditable / an INPUT of a type you type text into) has focus, do not intercept.**
+  ⌘Z / ⌘⇧Z while editing a text annotation act as the field's Undo / Redo (on macOS the native Edit menu's
+  `PredefinedMenuItem::undo` / `redo`, on Windows WebView2), and the annotation history does not move.
+  **Color pickers and slider INPUTs are not counted as text fields** — focus remains on them after use, so counting them would
+  make ⌘Z right after changing a color do nothing.
+- The native Edit > Undo / Redo only affects text entry in the WebView (it knows nothing about the annotation history), so
+  outside text fields only the JS side acts, and nothing runs twice.
+- If **an edit that is not pushed onto Undo** (`updateActiveAttribute`, which changes e.g. the color of the text being typed from the toolbar)
+  comes after an Undo / Redo, the Redo history is discarded before the next Undo / Redo (`dropStaleRedo`).
+  `undo()` / `redo()` record the annotations' signature (`annotationSignature()`) right after applying via `markApplied`, and compare it with the current signature next time.
+  Without discarding, Redo would silently erase that edit. If you add another non-pushed edit, it is caught here as long as it rewrites the annotation arrays.
+- Do not make the history `$state` (it is not read from the template; do not wrap the snapshots in proxies).
+  If you add Undo / Redo buttons, keep only the counts in a separate `$state`.
 
-## 選択中の注釈の見た目の変更 (+page.svelte の restyle、CYBERNEURA-DEV-1320)
+## Changing the look of the selected annotation (restyle in +page.svelte, CYBERNEURA-DEV-1320)
 
-置いた後の注釈を選び、ツールバーで色・太さ・白縁・影 (テキストは文字サイズ・太字・斜体、マスクはモードと塗りの色) を
-変える。選択中は**その注釈だけを書き換え、設定 (次に描く注釈の設定 = config) は変えない**。選択が無い時は従来どおり設定を変える。
+Select an annotation after placing it, and change its color, thickness, white outline and shadow from the toolbar (for text: font size, bold, italic; for masks: mode and fill color).
+While something is selected, **only that annotation is rewritten, and the settings (the settings for the next annotation drawn = config) are not changed**. With no selection, the settings change as before.
 
-- 各オーバーレイの `selectedId` (TextOverlay は `editingId` も) は `$bindable` で、`+page.svelte` が bind する。
-  **選択はオーバーレイをまたいで 1 つだけ**: どれかが選ばれたら `$effect` が他の `deselect()` を呼ぶ
-  (Delete とツールバーの変更が 2 つに効かないように)。ツールの切り替え (`deactivateAllTools`) は従来どおり全部外す。
-- ツールバーには `arrowPanel` / `shapePanel` / `maskPanel` / `textPanel` / `stepPanel` (選択中の注釈の値か設定) を渡し、
-  `selectionKind` があればツールが有効でなくてもその種類の設定を出す。図形は選択中の種別 (`selectedShapeType`) の欄を出す
-  (矩形ツールのまま蛍光ペンを選んだら蛍光ペンの欄)。**Toolbar は設定を `bind:value` で直接書き換えない** —
-  `onUpdate…Setting(key, value, continuous)` で +page.svelte に渡し、選択の有無で振り分ける。
-- **Undo は 1 変更 1 手**。色ピッカーのドラッグ (`oninput` の連続) は `styleEditKey` (注釈の種類:id:属性) が同じ間は積まず、
-  ピッカーの `change`・別の属性 / 注釈・別の編集 (`pushUndo`)・Undo / Redo で区切る。値が変わらない変更は積まない。
-- 例外: **入力中のテキスト** (新規・ダブルクリックで再編集中) は従来どおり設定と入力中のテキストの両方に効かせる
-  (`updateActiveAttribute`。書いている途中のテキストは「次に描く注釈」の続きなので)。**スポットライトの暗さ**は
-  全部のスポットライトで 1 つの値なので、選択中でも設定を変える。マスクのモードを塗りから変えるかは利用者の判断
-  (秘密の自動マスクの節)。蛍光ペンの色は図形の `color` に入る (ツールバーでは highlightColor の欄)。
-- 描いた直後の注釈は選択状態なので、続けてツールバーを触るとその注釈だけが変わる (次の注釈の設定は変わらない)。
-  ステップは以前「選択中のバッジと設定の両方」に効いていたが、他の注釈と揃えた。
+- Each overlay's `selectedId` (and `editingId` for TextOverlay) is `$bindable`, and `+page.svelte` binds it.
+  **There is only one selection across all overlays**: when one is selected, an `$effect` calls `deselect()` on the others
+  (so that Delete and toolbar changes do not apply to two). Switching tools (`deactivateAllTools`) clears all of them as before.
+- The toolbar is given `arrowPanel` / `shapePanel` / `maskPanel` / `textPanel` / `stepPanel` (the selected annotation's values or the settings),
+  and if `selectionKind` is set it shows that kind's settings even if the tool is not active. For shapes it shows the fields for the selected type (`selectedShapeType`)
+  (select a highlighter while the rectangle tool is active and you get the highlighter's fields). **Toolbar does not rewrite the settings directly with `bind:value`** —
+  it passes changes to +page.svelte via `onUpdate…Setting(key, value, continuous)`, which routes them depending on whether something is selected.
+- **Undo is one step per change**. Dragging the color picker (a stream of `oninput`) is not pushed while `styleEditKey` (annotation kind:id:attribute) stays the same,
+  and is split by the picker's `change`, a different attribute / annotation, a different edit (`pushUndo`), or Undo / Redo. Changes that do not change the value are not pushed.
+- Exceptions: **text being typed** (new, or being re-edited after a double-click) affects both the settings and the text being typed, as before
+  (`updateActiveAttribute`; text in the middle of being written is a continuation of "the next annotation drawn"). **Spotlight darkness** is
+  a single value for all spotlights, so it changes the setting even while something is selected. Whether to switch a mask's mode away from fill is up to the user
+  (see the section on automatic redaction of secrets). The highlighter color goes into the shape's `color` (the highlightColor field in the toolbar).
+- An annotation just drawn is selected, so touching the toolbar right afterwards changes only that annotation (the settings for the next annotation do not change).
+  Steps used to affect "both the selected badge and the settings", but this was aligned with the other annotations.
 
-## 注釈の複製 (src/lib/duplicate.ts、CYBERNEURA-DEV-1321)
+## Duplicating annotations (src/lib/duplicate.ts, CYBERNEURA-DEV-1321)
 
-- **⌘D / Ctrl+D** (`+page.svelte` の `handleKeydown` → `duplicateSelection`): 選択中の注釈 (「選択中の注釈の見た目の変更」の
-  `selectedArrow` 等) を右下に `DUPLICATE_OFFSET` (16 画像 px x `annotationScale`) ずらして末尾に足し、複製を選ぶ。
-  `pushUndo` 1 回。判定 `isDuplicateKey` は OS の主キー 1 つだけ (⌘⇧D 等は別)、フォーム部品・IME の変換中・自動リピートでは
-  反応しない (`toolForKey` と同じ `isFormControlTarget`)。⌘C / ⌘⇧C はパス / 画像のコピーのままで、注釈のコピー&ペーストは無い。
-- **Option / Alt+ドラッグ** (各オーバーレイの `handleMouseDown` の先頭): Option を押して注釈を押すと `dragging = "duplicate"` で待ち、
-  `exceedsDragSlop` を超えて動いた最初の 1 回で `onBeforeMutate` → 複製を足して選び、以後は複製を普通の移動で動かす
-  (複製と移動で Undo 1 手)。動かさずに離したら複製せず元を選ぶ。選択済みかは問わない (押した注釈が複製元)。
-  **矢印は複製時だけ丸ごと動かす** (`move-all`。普段の矢印のドラッグは端点だけ)。テキストは入力中は対象外。
-- ステップの複製は `stepsWithDuplicate` (末尾に足して `renumber`)。複製は次の番号になり、元の番号は変わらない。
-- テストは `tests/duplicate.test.mts` (キー判定、ずらし、ステップの番号: 複製 → 削除 → Undo)。
+- **⌘D / Ctrl+D** (`handleKeydown` → `duplicateSelection` in `+page.svelte`): appends a copy of the selected annotation (`selectedArrow` etc. from
+  "Changing the look of the selected annotation") shifted down-right by `DUPLICATE_OFFSET` (16 image px x `annotationScale`), and selects the copy.
+  One `pushUndo`. The check `isDuplicateKey` accepts only the OS primary modifier alone (⌘⇧D etc. are different), and it does not react on form controls,
+  during IME composition, or on key auto-repeat (the same `isFormControlTarget` as `toolForKey`). ⌘C / ⌘⇧C remain copy path / copy image; there is no copy & paste of annotations.
+- **Option / Alt+drag** (at the start of each overlay's `handleMouseDown`): pressing an annotation while holding Option waits with `dragging = "duplicate"`,
+  and on the first movement beyond `exceedsDragSlop` it calls `onBeforeMutate` → adds a copy and selects it; from then on the copy moves as a normal move
+  (duplicate plus move is one Undo step). Releasing without moving does not duplicate and selects the original. It does not matter whether it was already selected (the pressed annotation is the source).
+  **Arrows move as a whole only when duplicating** (`move-all`; a normal arrow drag moves only an end point). Text is excluded while being typed.
+- Duplicating a step uses `stepsWithDuplicate` (appends and calls `renumber`). The copy gets the next number, and the original's number does not change.
+- Tests are in `tests/duplicate.test.mts` (key detection, offset, step numbers: duplicate → delete → Undo).
 
-## ツールの 1 文字キー (src/lib/toolShortcuts.ts)
+## Single-letter tool keys (src/lib/toolShortcuts.ts)
 
-修飾キー無しの 1 文字で注釈ツールを切り替える (CYBERNEURA-DEV-1265)。`A` 矢印 / `R` 矩形 / `E` 楕円 /
-`H` 蛍光ペン / `S` スポットライト / `N` ステップ / `T` テキスト / `M` マスク / `C` トリミング。macOS も Windows も同じキー。
-アプリ全体のグローバルホットキーではなく、ウインドウにフォーカスがある時の keydown だけ。
+A single letter with no modifier switches the annotation tool (CYBERNEURA-DEV-1265). `A` arrow / `R` rectangle / `E` ellipse /
+`H` highlighter / `S` spotlight / `N` step / `T` text / `M` mask / `C` crop. Same keys on macOS and Windows.
+These are not app-wide global hotkeys, only keydown while the window has focus.
 
-- 対応表 `TOOL_SHORTCUTS` と判定 `toolForKey` は純関数 (`tests/tool-shortcuts.test.mts`)。`+page.svelte` の
-  `handleKeydown` の最後の分岐が呼び、`toggleToolByShortcut` が**ツールバーのボタンと同じ `toggle…Tool`** を呼ぶ
-  (もう一度押すと解除)。ツールチップのキーの表記も同じ表から出す (`toolShortcutLabel`)。
-- **反応しない条件**: 修飾キー (⌘ / Ctrl / Alt / Shift) 付き (⌘C などを素通しする)、フォーカスが
-  INPUT / TEXTAREA / SELECT / contentEditable (テキスト注釈の入力中、パス欄、太さの select — select は文字キーで
-  選択肢へ飛ぶので、反応すると両方に効く)、IME の変換中 (`isComposing` / `key === "Process"`)、キーの自動リピート、
-  画像が無い・動画モード、撮影中・録画中。
-- **ツールを足したらキーも足す。** 既存の ⌘ 付きショートカット (C / V / S / Z / Y) と同じ文字でも、修飾キー無しなら
-  衝突しない (`C` はトリミングに使っている)。Esc / Enter / Delete は他の分岐と各オーバーレイが使うので割り当てない。
-- Undo / Redo の `isTextEntryTarget` (`editHistory.ts`) とは判定が違う: あちらは色選択やスライダーにフォーカスが
-  残っていても効かせたいので文字入力欄だけを見る。こちらはフォーム部品すべてで止める。
+- The table `TOOL_SHORTCUTS` and the check `toolForKey` are pure functions (`tests/tool-shortcuts.test.mts`). The last branch of
+  `handleKeydown` in `+page.svelte` calls it, and `toggleToolByShortcut` calls **the same `toggle…Tool` as the toolbar button**
+  (pressing again turns it off). The key labels in the tooltips come from the same table (`toolShortcutLabel`).
+- **Conditions where it does not react**: with a modifier (⌘ / Ctrl / Alt / Shift) (to let ⌘C and friends through), when focus is on
+  INPUT / TEXTAREA / SELECT / contentEditable (while typing a text annotation, the path field, the thickness select — a select jumps
+  to options on letter keys, so reacting would affect both), during IME composition (`isComposing` / `key === "Process"`), on key auto-repeat,
+  when there is no image or in video mode, and while capturing or recording.
+- **If you add a tool, add a key too.** Even the same letter as an existing ⌘ shortcut (C / V / S / Z / Y) does not
+  conflict without the modifier (`C` is used for crop). Esc / Enter / Delete are used by other branches and by each overlay, so do not assign them.
+- The check differs from Undo / Redo's `isTextEntryTarget` (`editHistory.ts`): that one only looks at text-entry fields because it should still work
+  when focus remains on a color picker or slider. This one stops on all form controls.
 
-## テキスト注釈 (src/lib/TextOverlay.svelte + src/lib/textHit.ts)
+## Text annotations (src/lib/TextOverlay.svelte + src/lib/textHit.ts)
 
-- **1 クリックは「選ぶ」「動かす」で、再編集はダブルクリック** (CYBERNEURA-DEV-695)。
-  選択済みのものを押すと移動が始まるので、mousedown で編集に入る分岐は書いても
-  到達しない (以前そうなっていた: 分岐は残っていたが、その手前の移動開始が return
-  していた)。編集の入口は `ondblclick` ひとつだけにしてある。
-- **`onBeforeMutate` (= undo の push) は、押した時ではなく実際に動いた最初の 1 回で呼ぶ。**
-  押下で呼ぶと、選び直しやダブルクリックのたびに「何も変わっていない」状態が
-  undo に積まれる。動いたかどうかは `exceedsDragSlop` で、`CropOverlay` の
-  `CLICK_SLOP` と同じ 2px。完全一致 (dx === 0) では足りない —
-  ダブルクリックの 2 回目の押下も移動の開始なので、指が 1px 揺れれば文字がずれる。
-- **書き換えの undo も、最初の 1 入力で 1 つだけ積む。** `handleEditInput` は 1 打鍵ごとに
-  `onTextsChange` を呼ぶので、そこで毎回積むと undo が打鍵の巻き戻しになる。
-  逆に一度も積まないと、書き換えた直後の ⌘Z が**別の操作**を巻き戻す。新規作成ぶんは
-  `handleMouseDown` で既に積んであるので、ここで積むのは既にある注釈の書き換えだけ。
-- 当たり判定と箱は `textHit.ts`。どれを選ぶか、どれを編集するか、カーソルを何にするかが
-  すべてこの箱で決まるので、DOM もマウスも要らない形にしてテスト (`tests/text-hit.test.mts`)
-  から直接呼べるようにしてある。**実際に描かれた字面は測らない** — `getBBox()` は
-  レンダリング後にしか答えず、マウスが動くたびに呼ぶとレイアウトの再計算が毎フレーム入る。
+- **A single click "selects" / "moves"; re-editing is a double-click** (CYBERNEURA-DEV-695).
+  Pressing an already-selected one starts a move, so a branch that enters editing on mousedown would
+  never be reached even if written (that used to be the case: the branch remained, but the move start before it
+  returned). The only entry point to editing is `ondblclick`.
+- **Call `onBeforeMutate` (= push undo) on the first actual movement, not on press.**
+  Calling it on press pushes a "nothing changed" state onto undo every time you re-select or double-click.
+  Whether it moved is decided by `exceedsDragSlop`, 2px, the same as `CLICK_SLOP` in
+  `CropOverlay`. Exact equality (dx === 0) is not enough —
+  the second press of a double-click also starts a move, so if the finger wobbles 1px the text shifts.
+- **Undo for rewriting text is also pushed only once, on the first input.** `handleEditInput` calls
+  `onTextsChange` on every keystroke, so pushing there each time would make undo roll back keystroke by keystroke.
+  Conversely, if nothing is ever pushed, ⌘Z right after rewriting rolls back **a different operation**. Newly created ones
+  are already pushed in `handleMouseDown`, so only rewrites of existing annotations are pushed here.
+- Hit testing and boxes are in `textHit.ts`. Which one to select, which one to edit and which cursor to show are
+  all decided by these boxes, so they are written in a form that needs neither the DOM nor a mouse, and can be called directly from the tests (`tests/text-hit.test.mts`).
+  **Do not measure the actually rendered glyphs** — `getBBox()` only answers after rendering, and calling it on every mouse move would trigger a layout recalculation every frame.
 
-## ツールバーのアイコン (src/lib/Toolbar.svelte)
+## Toolbar icons (src/lib/Toolbar.svelte)
 
-アイコンは Bootstrap Icons (`bootstrap-icons` パッケージ、`app.css` で CSS フォントを import) で統一する
-(CYBERNEURA-DEV-1215 で「直感的でない」ものを差し替えた。自作せず既存ライブラリを使う方針)。
-対応は次のとおりで、**似た図柄を別の意味に使い回さない** (eye-slash = 隠す、incognito = 秘密を自動で隠す、
-images = 保存した画像、image = この画像)。
+Icons are unified on Bootstrap Icons (the `bootstrap-icons` package, with the CSS font imported in `app.css`)
+(CYBERNEURA-DEV-1215 replaced the ones that were "not intuitive". The policy is to use an existing library rather than drawing our own).
+The mapping is as follows, and **do not reuse a similar glyph for a different meaning** (eye-slash = hide, incognito = automatically hide secrets,
+images = saved images, image = this image).
 
-| ボタン | アイコン | 意味 |
+| Button | Icon | Meaning |
 |---|---|---|
-| サムネイルブラウザ | `bi-images` | 保存した画像の一覧 |
-| 矢印 / 矩形 / 楕円 / ステップ / テキスト | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | 描くものの形そのもの |
-| 蛍光ペン | `bi-highlighter` | 文字列を目立たせる半透明の塗り (矩形 / 楕円と同じ shape ツールの種別) |
-| スポットライト | `bi-brightness-high` | 範囲の外側を暗くする (shape ツールの種別)。暗さの選択は `bi-moon` |
-| 白縁 / 影 | `bi-border-outer` / `bi-shadows` | 縁取り / 影 (4 つのツールで共通) |
-| 太字 / 斜体 | `bi-type-bold` / `bi-type-italic` | |
-| マスク | `bi-eye-slash` | 隠す。モードは `bi-grid-3x3-gap-fill` (モザイク) / `bi-droplet-half` (ぼかし) / `bi-paint-bucket` (塗り) |
-| Redact sensitive text | `bi-incognito` | 秘密を自動で隠す (macOS) |
-| トリミング / 吸着 | `bi-crop` / `bi-magnet` | |
-| 保存先を開く | `bi-folder2-open` | |
-| ドラッグで渡す | `bi-box-arrow-up` | 共有 (macOS の共有と同じ矢印) |
-| パスをコピー / 画像をコピー | `bi-link-45deg` / `bi-clipboard` | パス (参照) / 画像をクリップボードへ (`bi-image` は絵柄が「この画像」と紛らわしいので使わない。CYBERNEURA-DEV-1309) |
-| OCR: 画像全体 / 範囲を選んで / 画面を撮って | `bi-body-text` / `bi-textarea-t` / `bi-bounding-box` | 文字 / 画像の中の範囲 / 画面上の範囲 |
-| タイマー撮影 / 撮影 / 録画 | `bi-stopwatch` / `bi-camera` / `bi-record-circle` | |
+| Thumbnail browser | `bi-images` | List of saved images |
+| Arrow / rectangle / ellipse / step / text | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | The shape of the thing being drawn |
+| Highlighter | `bi-highlighter` | Semi-transparent fill that makes text stand out (a type of the shape tool, like rectangle / ellipse) |
+| Spotlight | `bi-brightness-high` | Darkens outside the area (a type of the shape tool). The darkness picker is `bi-moon` |
+| White outline / shadow | `bi-border-outer` / `bi-shadows` | Outline / shadow (shared by the four tools) |
+| Bold / italic | `bi-type-bold` / `bi-type-italic` | |
+| Mask | `bi-eye-slash` | Hide. Modes are `bi-grid-3x3-gap-fill` (mosaic) / `bi-droplet-half` (blur) / `bi-paint-bucket` (fill) |
+| Redact sensitive text | `bi-incognito` | Automatically hide secrets (macOS) |
+| Crop / snap | `bi-crop` / `bi-magnet` | |
+| Open save location | `bi-folder2-open` | |
+| Drag to hand over | `bi-box-arrow-up` | Share (the same arrow as macOS sharing) |
+| Copy path / copy image | `bi-link-45deg` / `bi-clipboard` | Path (reference) / image to the clipboard (`bi-image` is not used because its picture is easily confused with "this image". CYBERNEURA-DEV-1309) |
+| OCR: whole image / select an area / capture the screen | `bi-body-text` / `bi-textarea-t` / `bi-bounding-box` | Text / an area within the image / an area on screen |
+| Timer capture / capture / record | `bi-stopwatch` / `bi-camera` / `bi-record-circle` | |
 
-成功の一時表示は `bi-check-lg`、処理中は `bi-arrow-repeat` (回転)。
+The temporary success indicator is `bi-check-lg`, and in-progress is `bi-arrow-repeat` (spinning).
 
-## 蛍光ペン (src/lib/highlight.ts + src/lib/ShapeOverlay.svelte)
+## Highlighter (src/lib/highlight.ts + src/lib/ShapeOverlay.svelte)
 
-文字列や行を目立たせる半透明の塗りの矩形 (CYBERNEURA-DEV-1264)。`ShapeType` の 3 つ目の種別 `highlight` で、
-置く・動かす・リサイズ・Delete・Undo は矩形のものをそのまま使う (`shapes` に入る)。ツールバーは楕円の隣の
-`bi-highlighter`。文字の認識に頼るスマートハイライトは入れていない。
+A semi-transparent filled rectangle that makes text or lines stand out (CYBERNEURA-DEV-1264). It is the third `ShapeType`, `highlight`, and
+placing, moving, resizing, Delete and Undo reuse the rectangle's behavior as is (it goes into `shapes`). In the toolbar it is
+`bi-highlighter`, next to the ellipse. No smart highlighting that relies on text recognition has been added.
 
-- **色は `shape_settings.highlightColor`** (既定 `#ffe600`)。枠線の色 (`color`) と分けてあるのは、赤い枠の設定のまま
-  蛍光ペンが赤くならないため。太さ・白縁・影は蛍光ペンでは出さず、置く時に `whiteStroke` / `dropShadow` を false にする。
-- **重ね方は `highlightPaint()` が範囲ごとに決める**: 明るい地は乗算 (地が色付き、黒い文字はそのまま)、
-  平均輝度が `DARK_LUMA_THRESHOLD` 未満の暗い地 (ダークモードの画面) は不透明度 0.4 の通常合成
-  (乗算だと地がさらに暗くなるだけで色が出ない)。平均輝度は、画像を長辺 256 升に縮めた `LumaMap` から取る。
-  **画面 (`ShapeOverlay` の `lumaMap` prop) と書き出し (`renderComposite`) の両方が同じ関数・同じ作り方の地図
-  (`buildLumaMap`) を通る。** 片方だけ判定を変えると見た目と保存した画像が食い違う。
-  地図は蛍光ペンがあるか蛍光ペンツールが有効な間だけ作る。
-- **画面では svg ではなく `<div>` に `mix-blend-mode` を当てて描く** (`src/lib/HighlightLayer.svelte`。表示だけで、
-  操作は ShapeOverlay の svg が受ける。svg には選択枠とハンドルだけを描く)。svg の中の要素に当てた mix-blend-mode が
-  svg の外の `<img>` と混ざるかは描画エンジン次第なので頼らない (Chrome では混ざった。WKWebView は未確認)。
-  div 方式は「transform + overflow-hidden の入れ物の中の img の上に div を重ねる」構成を Chrome で描かせ、同じ絵を
-  キャンバスの `multiply` / `globalAlpha` で描いたものと一致することを確かめてある (明るい地の乗算、暗い地の 0.4。
-  暗い地の乗算は色が出ないことも)。
-- **重ね順は画像のすぐ上で、マスクより下。マスクの範囲には蛍光ペンを出さない。** `HighlightLayer` は `<img>` と
-  `MaskOverlay` の間に置き (矩形・楕円・文字・矢印・ステップは更に上)、マスクの矩形を `clip-path` でくり抜く
-  (`highlightClipPath` → `subtractRects`)。下に置くだけでは足りない: 塗りとモザイクは上から覆うが、**ぼかしの
-  プレビューは `backdrop-filter`** で下の絵をそのままぼかすので、蛍光ペンが残っていると色が混ざる。
-  **書き出しも同じ矩形 (`roundedMaskRect`) をくり抜く**: `drawImage` の直後に、蛍光ペン 1 つごとに小さなレイヤーへ
-  塗ってマスクの矩形を `clearRect` してから重ねる。くり抜かずに描くと、後のモザイク / ぼかしが蛍光ペンの色を拾う。
-  引いている途中の 1 つだけは ShapeOverlay が自分で描く (確定するまでの間だけマスクの上に見える)。
-- 当たり判定は内側のどこでも (`hitsHighlight`)。枠線の近くだけに反応する矩形と違う。
-- 設定の `type` は `parseShapeType` で検め、知らない値は `rect` に戻す (`pick` は typeof しか見ない)。
-- テストは `tests/highlight.test.mts` (種別の検証、地図、平均輝度、重ね方の切り替え、当たり判定)。
+- **The color is `shape_settings.highlightColor`** (default `#ffe600`). It is separate from the stroke color (`color`) so that
+  the highlighter does not turn red while the frame setting is red. Thickness, white outline and shadow are not shown for the highlighter, and `whiteStroke` / `dropShadow` are set to false when placing.
+- **How it is composited is decided per area by `highlightPaint()`**: on a light background, multiply (the background gets colored, black text stays as is);
+  on a dark background whose average luminance is below `DARK_LUMA_THRESHOLD` (dark-mode screens), normal compositing at opacity 0.4
+  (with multiply the background just gets darker and no color shows). The average luminance is taken from a `LumaMap`, the image shrunk to 256 cells on its long side.
+  **The screen (`lumaMap` prop of `ShapeOverlay`) and the export (`renderComposite`) both go through the same function and a map built the same way
+  (`buildLumaMap`).** Changing the decision on only one side makes what you see and the saved image disagree.
+  The map is only built while there is a highlighter or the highlighter tool is active.
+- **On screen it is drawn not in the svg but as a `<div>` with `mix-blend-mode`** (`src/lib/HighlightLayer.svelte`. Display only;
+  interaction is received by ShapeOverlay's svg, which draws only the selection frame and handles). Whether mix-blend-mode applied to an element inside an svg
+  blends with an `<img>` outside the svg depends on the rendering engine, so we do not rely on it (it blended in Chrome; WKWebView is unverified).
+  For the div approach, the structure "a div layered over an img inside a container with transform + overflow-hidden" was rendered in Chrome and confirmed to match the same picture
+  drawn on a canvas with `multiply` / `globalAlpha` (multiply on a light background, 0.4 on a dark background,
+  and also that multiply on a dark background shows no color).
+- **The stacking order is just above the image and below masks. The highlighter is not shown in mask areas.** `HighlightLayer` sits between `<img>` and
+  `MaskOverlay` (rectangle, ellipse, text, arrow and step are higher still), and cuts out the mask rectangles with `clip-path`
+  (`highlightClipPath` → `subtractRects`). Placing it underneath is not enough: fill and mosaic cover from above, but **the blur
+  preview uses `backdrop-filter`**, which blurs the picture below as is, so a remaining highlighter would mix its color in.
+  **The export cuts out the same rectangles (`roundedMaskRect`) too**: right after `drawImage`, each highlighter is painted onto a small layer,
+  the mask rectangles are `clearRect`ed, and then it is composited. Drawing without cutting out would let the later mosaic / blur pick up the highlighter's color.
+  Only the one being drawn is drawn by ShapeOverlay itself (it appears above masks only until it is committed).
+- Hit testing is anywhere inside (`hitsHighlight`). Unlike the rectangle, which only reacts near its stroke.
+- The `type` in the settings is checked with `parseShapeType`, and unknown values fall back to `rect` (`pick` only checks typeof).
+- Tests are in `tests/highlight.test.mts` (type validation, the map, average luminance, switching the compositing, hit testing).
 
-## スポットライト (src/lib/spotlight.ts + src/lib/SpotlightLayer.svelte)
+## Spotlight (src/lib/spotlight.ts + src/lib/SpotlightLayer.svelte)
 
-囲んだ範囲の外側を暗くする (CYBERNEURA-DEV-1322)。`ShapeType` の 4 つ目の種別 `spotlight` で、置く・動かす・
-リサイズ・Delete・Undo は矩形のものをそのまま使う (`shapes` に入る)。ツールバーは蛍光ペンの隣の
-`bi-brightness-high`、1 文字キーは `S` (修飾キー付きの ⌘S / Ctrl+S は保存のまま)。
+Darkens outside the enclosed area (CYBERNEURA-DEV-1322). It is the fourth `ShapeType`, `spotlight`, and placing, moving,
+resizing, Delete and Undo reuse the rectangle's behavior as is (it goes into `shapes`). In the toolbar it is
+`bi-brightness-high`, next to the highlighter, and the single-letter key is `S` (⌘S / Ctrl+S with the modifier remain save).
 
-- **暗さは `shape_settings.spotlightDarkness` の 1 つの値** (既定 0.5、ツールバーで 30 / 50 / 70 / 85%)。図形ごとには
-  持たない (暗い部分は全部のスポットライトで 1 枚なので)。変えると置いてあるスポットライトにも効き、Undo には積まない。
-  設定ファイルの値は `parseSpotlightDarkness` で 0 < x <= 1 に検める。色・太さ・白縁・影は使わない (置く時に false)。
-- **暗くする範囲は `spotlightDarkRects()` が「画像全体 − (スポットライトの和集合 ∪ マスク)」を互いに重ならない
-  整数の矩形で返す** (`subtractRects` の流用)。画面 (`SpotlightLayer` の clip-path) と書き出し (`renderComposite` の
-  fillRect) の両方がこの関数を通る。clip-path の evenodd で穴を開ける方式にしないこと — 重なった 2 つの穴の
-  重なりが暗く戻る。整数に丸めるのは隣り合う矩形の継ぎ目 (アンチエイリアスの薄い線) を出さないため。
-- **重ね順は蛍光ペンの上・マスクより下。矢印・枠・文字・ステップは暗くしない** (`SpotlightLayer` は
-  `HighlightLayer` と `MaskOverlay` の間、書き出しは蛍光ペンの直後)。マスクの範囲は暗くしない (蛍光ペンと同じく
-  マスクを優先する。ぼかしのプレビューは backdrop-filter なので、暗い部分が残ると書き出しと食い違う)。
-- 引いている途中の 1 つは `ShapeOverlay` の `onDraftChange` で `+page.svelte` の `shapeDraft` に渡し、
-  `SpotlightLayer` に加える (暗い部分は全部のスポットライトをまとめて計算するため、ShapeOverlay 単独では描けない)。
-- 当たり判定は内側のどこでも (`hitsHighlight` を流用)。座標は自然解像度 px で太さを持たないので、Retina の
-  `annotationScale` は関係しない。
-- **`src/lib` の `.ts` モジュールの中で**別の `.ts` モジュールから値を import する時は、`./highlight.ts` のように
-  拡張子付きで書く (tests が `node --experimental-strip-types` で直接読み、node は拡張子を補わないため。tsconfig の
-  `allowImportingTsExtensions`)。`.svelte` からの import は vite が解決し node は読まないので、従来どおり拡張子なし
-  (`./spotlight` / `$lib/spotlight`) でよい。テストは `tests/spotlight.test.mts`。
+- **The darkness is a single value, `shape_settings.spotlightDarkness`** (default 0.5; 30 / 50 / 70 / 85% in the toolbar). It is not
+  stored per shape (the dark area is one layer for all spotlights). Changing it also affects spotlights already placed, and it is not pushed onto Undo.
+  The value from the config file is checked to 0 < x <= 1 with `parseSpotlightDarkness`. Color, thickness, white outline and shadow are not used (false when placing).
+- **The area to darken is returned by `spotlightDarkRects()` as "the whole image − (union of spotlights ∪ masks)", as non-overlapping
+  integer rectangles** (reusing `subtractRects`). The screen (`SpotlightLayer`'s clip-path) and the export (`renderComposite`'s
+  fillRect) both go through this function. Do not switch to punching holes with clip-path evenodd — where two holes
+  overlap, the overlap goes dark again. Rounding to integers avoids seams between adjacent rectangles (thin anti-aliased lines).
+- **The stacking order is above the highlighter and below masks. Arrows, frames, text and steps are not darkened** (`SpotlightLayer` sits between
+  `HighlightLayer` and `MaskOverlay`; in the export it comes right after the highlighter). Mask areas are not darkened (like the highlighter,
+  masks take priority. The blur preview uses backdrop-filter, so a remaining dark area would disagree with the export).
+- The one being drawn is passed to `shapeDraft` in `+page.svelte` via `ShapeOverlay`'s `onDraftChange` and
+  added to `SpotlightLayer` (the dark area is computed from all spotlights together, so ShapeOverlay cannot draw it alone).
+- Hit testing is anywhere inside (reusing `hitsHighlight`). Coordinates are natural-resolution px with no thickness, so Retina's
+  `annotationScale` is irrelevant.
+- **Inside the `.ts` modules in `src/lib`**, when importing values from another `.ts` module, write the extension, as in `./highlight.ts`
+  (tests load them directly with `node --experimental-strip-types`, and node does not add extensions; see tsconfig's
+  `allowImportingTsExtensions`). Imports from `.svelte` files are resolved by vite and never read by node, so they can stay extensionless as before
+  (`./spotlight` / `$lib/spotlight`). Tests are in `tests/spotlight.test.mts`.
 
-## 秘密の自動マスク (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
+## Automatic redaction of secrets (src/lib/sensitiveText.ts + src-tauri/src/ocr_lines.rs)
 
-ツールバーのマスクツールの隣の「Redact sensitive text」(`bi-incognito`、OCR と同じく macOS だけ。
-CYBERNEURA-DEV-1210)。`ocr_image_boxes` コマンド (`ocr.rs`) が `ocr.swift --json` で認識した行ごとの
-`{ text, box: [x, y, w, h] }` (画像ピクセル、左上原点) を返し、フロントの `findSensitive` が
-メール / IPv4 / 接頭辞付きトークン (`sk-` `ghp_` `gho_` `xox[abp]-` `AKIA`) / JWT 風 / 16 文字以上の
-英数字 (数字と英字の両方を含むもの。普通の長い単語や数字だけの ID は拾わない) / Luhn の通るカード番号を
-含む行を選び、その箱を上下左右 2px 広げた `MaskRect` を `masks` に足す (`pushUndo` 対象)。0 件なら
-toast で知らせる。
+"Redact sensitive text" next to the mask tool in the toolbar (`bi-incognito`; macOS only, like OCR.
+CYBERNEURA-DEV-1210). The `ocr_image_boxes` command (`ocr.rs`) returns, per line recognized by `ocr.swift --json`,
+`{ text, box: [x, y, w, h] }` (image pixels, top-left origin), and the frontend's `findSensitive` picks lines containing
+emails / IPv4 / prefixed tokens (`sk-` `ghp_` `gho_` `xox[abp]-` `AKIA`) / JWT-like strings / alphanumeric strings of 16+ characters
+(containing both digits and letters; ordinary long words and digit-only IDs are not picked up) / card numbers passing Luhn,
+and adds a `MaskRect` with that box expanded by 2px on every side to `masks` (subject to `pushUndo`). If there are none,
+a toast says so.
 
-- **自動マスクの mode はマスク設定に関係なく常に `fill`** (`redactMaskStyle`、CYBERNEURA-DEV-1253)。
-  モザイクはマスクに annotationScale を掛けないので Retina では 7px ブロック = 論理 3.5px まで細かくなり、
-  等幅のトークンは Depix 系の手法で復元できる余地がある。ぼかしも半径次第で読める。「秘密を自動で隠す」
-  機能が可逆なマスクを置くと、隠せたと思って共有した人を裏切る。色はマスク設定の色だが、不透明な
-  `#rgb` / `#rrggbb` でなければ黒 (config.json を手で書くと `transparent` 等も入りうる)。置いた後で
-  個々のマスクのモードを手で変えるのは利用者の判断に任せる。
+- **The mode of automatic masks is always `fill`, regardless of the mask settings** (`redactMaskStyle`, CYBERNEURA-DEV-1253).
+  Mosaic does not apply annotationScale to masks, so on Retina it gets as fine as 7px blocks = 3.5 logical px, and
+  monospaced tokens could potentially be recovered with Depix-style techniques. Blur can also be readable depending on the radius. If a feature that
+  "automatically hides secrets" placed reversible masks, it would betray people who share thinking they were hidden. The color is the mask setting's color, but if it is not an opaque
+  `#rgb` / `#rrggbb`, black is used (hand-editing config.json could put `transparent` etc. in there). Changing the mode of
+  individual masks by hand after they are placed is left to the user.
 
-- `ocr.swift --json` は `--region` と併用しない (領域付きの boundingBox は領域基準になる)。Rust 側は常に
-  画像全体で呼ぶ。`--json` 無しの出力 (改行区切りの文字列) は変えていない。
-- 出力の形は `ocr_lines.rs` の `parse_ocr_lines` のテストで固定する (Swift はこのホストで実行できない)。
-  形を変える時は Swift と Rust のテストを一緒に直す。
-- OCR の入力は注釈の無い土台画像 (`imageBase64`)。マスクで隠した文字も拾うので、2 度押すと同じ所に
-  マスクが重なる (隠れている分には害は無い)。
-- IPC コマンド `ocr_image_boxes` は `build.rs` の `APP_COMMANDS` と `capabilities/default.json` に登録。
+- `ocr.swift --json` is not combined with `--region` (with a region, the boundingBox is relative to the region). The Rust side always
+  calls it on the whole image. The output without `--json` (newline-separated strings) is unchanged.
+- The output format is pinned by the tests of `parse_ocr_lines` in `ocr_lines.rs` (Swift cannot run on this host).
+  When changing the format, fix the Swift and the Rust tests together.
+- The OCR input is the base image without annotations (`imageBase64`). It also picks up text already hidden by masks, so pressing twice stacks
+  masks in the same place (harmless as long as it stays hidden).
+- The IPC command `ocr_image_boxes` is registered in `APP_COMMANDS` in `build.rs` and in `capabilities/default.json`.
 
-## Retina の撮影の注釈 (`annotationScale`、CYBERNEURA-DEV-1237)
+## Annotations on Retina captures (`annotationScale`, CYBERNEURA-DEV-1237)
 
-注釈の座標は画像の自然解像度 px なので、そのままだと Retina の撮影では線も文字も見た目が半分になる。
-撮影で得た画像は `ScreenshotResult.annotation_scale` (2 か 1) を持ち、`+page.svelte` の
-`annotationScale` が **描画の時にだけ** 太さ・白枠・影・文字・ステップの大きさに掛ける。
+Annotation coordinates are in the image's natural-resolution px, so as is, lines and text would look half-size on Retina captures.
+A captured image carries `ScreenshotResult.annotation_scale` (2 or 1), and `annotationScale` in `+page.svelte`
+multiplies the thickness, white outline, shadow, text and step size by it **only when drawing**.
 
-- **`thickness` / `fontSize` / `size` の値はツールバーの値のまま持つ。** 注釈に掛けた値を保存すると
-  ツールバーとの同期 (選択中の注釈の属性変更) で倍率が消えたり重なったりする。
-- **描画は `renderComposite` と各オーバーレイの 2 系統あり、両方に掛ける。** 当たり判定
-  (`textHit.ts` / `steps.ts` の `annotationScale` 引数、矢印・図形の閾値) も同じ倍率で揃える。
-- マスク (モザイクの粒度・ぼかし半径) には掛けない。線でも文字でもなく、Preferences の値が画像 px の意味を持つため。
-- 判定は `share_scale.rs` の `png_density_scale` (PNG の pHYs。macOS の screencapture は Retina で 144 dpi、
-  等倍で 72 dpi を書く) → 無ければメインウインドウのモニターの倍率 (Windows)。**モニターだけで判定しない** —
-  MacBook + 等倍の外部モニターでは撮影したモニターとウインドウのあるモニターが食い違う。
-  `should_scale_down` と違って論理サイズとの比較はしない (Retina の小さな範囲選択も 2 倍で描くため)。
-- 貼り付け / ファイル / サイドバーから開いた画像は常に 1 (撮影倍率が分からない。Flashcap が書き戻した
-  PNG は pHYs を持たないので、開き直した画像に pHYs を使っても一貫しない)。
+- **Keep the `thickness` / `fontSize` / `size` values as the toolbar values.** If the multiplied values were saved in the annotation,
+  syncing with the toolbar (changing the attributes of the selected annotation) would lose or double the scale.
+- **There are two drawing paths, `renderComposite` and each overlay, and both apply it.** Hit testing
+  (the `annotationScale` argument of `textHit.ts` / `steps.ts`, the arrow and shape thresholds) uses the same scale.
+- It is not applied to masks (mosaic granularity, blur radius). They are neither lines nor text, and the Preferences values mean image px.
+- Detection: `png_density_scale` in `share_scale.rs` (the PNG pHYs; macOS screencapture writes 144 dpi on Retina
+  and 72 dpi at 1x) → if absent, the scale of the monitor showing the main window (Windows). **Do not decide from the monitor alone** —
+  with a MacBook + a 1x external monitor, the monitor captured and the monitor holding the window disagree.
+  Unlike `should_scale_down`, it does not compare against the logical size (small Retina area selections are drawn at 2x too).
+- Images opened by paste / from a file / from the sidebar are always 1 (the capture scale is unknown. The PNGs Flashcap writes back
+  have no pHYs, so using pHYs on a reopened image would not be consistent).
 
-## 共有用の縮小 (src-tauri/src/share_image.rs + share_scale.rs)
+## Downscaling for sharing (src-tauri/src/share_image.rs + share_scale.rs)
 
-Preferences の Save Location 節の「Share at 1x」(設定ファイルの `share_scale_down`、既定 OFF。
-CYBERNEURA-DEV-1211)。ON のとき、**共有に回す画像だけ** — ⌘⇧C の画像コピー / ツールバーのドラッグ
-(`+page.svelte` の `copyImage` / `handleDragFile` → `make_share_image`) と撮影後の自動コピーの image
-モード (`auto_copy.rs` の `decode_image`) — を、Retina (倍率 2 以上) のモニターで撮った論理サイズより
-大きい画像なら 1/2 に縮める。⌘S の書き戻しとサイドバーの画像は原寸のまま。
+"Share at 1x" in the Save Location section of Preferences (`share_scale_down` in the config file, default OFF.
+CYBERNEURA-DEV-1211). When ON, **only images handed off for sharing** — ⌘⇧C image copy / drag from the toolbar
+(`copyImage` / `handleDragFile` in `+page.svelte` → `make_share_image`) and the image mode of auto-copy after capture
+(`decode_image` in `auto_copy.rs`) — are halved if they were captured on a Retina (scale 2 or higher) monitor and are larger than
+the logical size. ⌘S write-back and the sidebar images stay at full size.
 
-- 判定と縮小は `share_scale.rs` (`should_scale_down` / `maybe_scale_down`、Tauri 非依存で単体テスト可)。
-  モニターはメインウインドウのあるモニター (無ければメインモニター) の論理サイズ = `size / scale_factor`。
-- **貼り付け / ファイルから開いた画像は縮めない** (撮影倍率が分からない)。フロントが
-  `applyScreenshotResult(result, source)` で `imageFromCapture` を持ち、`make_share_image` に `captured` で渡す。
-- **コピーは今の PNG (`bytes`) を `data_base64` で渡して縮め、ファイルは読み直さない** (undo の後は
-  `needsFileWrite` が false で書き戻しが飛ぶので、ファイルには古い注釈が残っている)。ドラッグは渡すのが
-  ファイルそのものなので `path` を読む。
-- 縮めた PNG は `$TMPDIR/flashcap/share/<元の名前>.png` (`create_private_dir`、symlink を辿らない書き込み) で、
-  起動時に `cleanup_share_dir` が消す。コピーには `ShareImage.data` (base64) を返し、フロントはファイルを
-  読み直さない。縮めない時は元のパスのまま (`data` は null)。失敗しても共有は原寸で続ける。
-- IPC コマンド `make_share_image` は `build.rs` の `APP_COMMANDS` と `capabilities/default.json` の両方に登録。
+- Detection and downscaling are in `share_scale.rs` (`should_scale_down` / `maybe_scale_down`; independent of Tauri and unit-testable).
+  The monitor is the one holding the main window (or the main monitor if none), with logical size = `size / scale_factor`.
+- **Images opened by paste / from a file are not downscaled** (the capture scale is unknown). The frontend keeps
+  `imageFromCapture` via `applyScreenshotResult(result, source)` and passes it to `make_share_image` as `captured`.
+- **Copy passes the current PNG (`bytes`) as `data_base64` to be downscaled, and does not re-read the file** (after an undo,
+  `needsFileWrite` is false and the write-back is skipped, so the file still holds old annotations). Drag hands over the
+  file itself, so it reads `path`.
+- The downscaled PNG goes to `$TMPDIR/flashcap/share/<original name>.png` (`create_private_dir`, writes that do not follow symlinks), and
+  `cleanup_share_dir` deletes it at startup. For copy, `ShareImage.data` (base64) is returned, and the frontend does not
+  re-read the file. When not downscaling, the original path is kept (`data` is null). Even on failure, sharing continues at full size.
+- The IPC command `make_share_image` is registered both in `APP_COMMANDS` in `build.rs` and in `capabilities/default.json`.
 
-## ステップ注釈 (src/lib/StepOverlay.svelte + src/lib/steps.ts)
+## Step annotations (src/lib/StepOverlay.svelte + src/lib/steps.ts)
 
-番号付きステップ (カウンター) のバッジ (CYBERNEURA-DEV-1209)。ツールバーの矢印 / 図形とテキストの間の
-`1` の丸ボタン。ツールが有効な時のクリックで `steps` の末尾に `number = steps.length + 1` で足し、
-選択中のバッジはドラッグで動かし、Delete / Backspace で消す。**消したら `renumber()` で後続の番号を
-詰め直す** (undo で戻した配列も `number` を持っているので、復元後も番号は並び順どおり)。
-座標 (x, y) はバッジの中心、`size` は直径 (他の注釈と同じく自然解像度ピクセル)。
+Numbered step (counter) badges (CYBERNEURA-DEV-1209). The round `1` button in the toolbar, between arrow / shapes and text.
+While the tool is active, a click appends to `steps` with `number = steps.length + 1`;
+the selected badge is moved by dragging and removed with Delete / Backspace. **When one is removed, `renumber()` renumbers the
+following ones** (the array restored by undo also carries `number`, so after restoring the numbers follow the order).
+The coordinates (x, y) are the badge's center, and `size` is the diameter (natural-resolution pixels, like the other annotations).
 
-- 当たり判定・番号の振り直し・数字のフォントサイズは `steps.ts` の純関数 (`tests/steps.test.mts`)。
-  TextOverlay と同じく DOM もマウスも要らない形にしてある。
-- undo は TextOverlay と同じく、押した時ではなく**動いた最初の 1 回**で積む (`exceedsDragSlop`)。
-  追加と削除はその場で積む。
-- **svg 全体がポインタを受けるのはツールが有効な間だけ** (空いた所へのクリック = 追加)。それ以外の間は
-  svg は `pointer-events: none` でバッジの `<g>` だけが受ける。`StepOverlay` は `ArrowOverlay` の上に
-  あるので、svg 全体で受けると no-tool 時の矢印の選択を奪ってしまう。ドラッグ中の mousemove / mouseup は
-  window で受ける (バッジから指が外れても続ける)。**画像の上で svg の外を押したら選択を外す** (window の mousedown。ツールバーやサイドバーのクリックでは外さない — 選択中のバッジへ設定を効かせるため): 残すと
-  矢印を選んで Delete を押した時に、両方のオーバーレイの window keydown が走ってバッジまで消える
-  (`stopPropagation` は同じ window の別のリスナーを止めない)。逆向き (矢印を選んでからバッジを選ぶ) は
-  `onSelect` で親 (`+page.svelte`) が他のオーバーレイの `deselect()` を呼ぶ。
-- 書き出し (`renderComposite`) は円 (白縁は半径 +2 の白い円を下に敷く。影は白縁があればそちらに、無ければ本体に、
-  共有のオフスクリーン経由 `transferWithShadow`) + 中央の白い bold の数字。画面の SVG (`StepOverlay.svelte`)
-  と同じ幾何なので、見た目と書き出しがずれない。**重なり順も揃える**: `renderComposite` はバッジを
-  最後 (矢印の上) に描くので、テンプレートでも `StepOverlay` を `ArrowOverlay` の後ろに置く。
-- 設定は `step_settings` (color / size / whiteStroke / dropShadow)。ツールバーの変更は、選択中のバッジがあればそれだけに効く
-  (`updateStepSetting` → `restyle`。「選択中の注釈の見た目の変更」の節)。
-- IPC コマンドは増やしていないので `build.rs` の `APP_COMMANDS` と capability は触っていない。
+- Hit testing, renumbering and the digit font size are pure functions in `steps.ts` (`tests/steps.test.mts`).
+  Like TextOverlay, they are written in a form that needs neither the DOM nor a mouse.
+- As with TextOverlay, undo is pushed **on the first movement**, not on press (`exceedsDragSlop`).
+  Additions and deletions are pushed immediately.
+- **The whole svg receives pointer events only while the tool is active** (a click on empty space = add). Otherwise the
+  svg is `pointer-events: none` and only the badges' `<g>` receive them. `StepOverlay` sits above `ArrowOverlay`,
+  so receiving on the whole svg would steal arrow selection when no tool is active. mousemove / mouseup during a drag are
+  received on window (the drag continues even if the finger leaves the badge). **Pressing on the image outside the svg clears the selection** (window mousedown. Clicks on the toolbar or sidebar do not clear it — so that settings apply to the selected badge): if it stayed,
+  selecting an arrow and pressing Delete would run both overlays' window keydown handlers and delete the badge too
+  (`stopPropagation` does not stop other listeners on the same window). The reverse direction (select an arrow, then a badge) is handled by
+  the parent (`+page.svelte`) calling the other overlays' `deselect()` from `onSelect`.
+- The export (`renderComposite`) draws a circle (the white outline is a white circle of radius +2 underneath; the shadow goes on the white outline if there is one, otherwise on the body,
+  via the shared offscreen `transferWithShadow`) + a white bold number in the center. It uses the same geometry as the on-screen SVG (`StepOverlay.svelte`),
+  so the look and the export do not drift apart. **Keep the stacking order consistent too**: `renderComposite` draws the badges
+  last (above the arrows), so in the template `StepOverlay` is also placed after `ArrowOverlay`.
+- The settings are `step_settings` (color / size / whiteStroke / dropShadow). Toolbar changes apply only to the selected badge if there is one
+  (`updateStepSetting` → `restyle`; see the "Changing the look of the selected annotation" section).
+- No IPC commands were added, so `APP_COMMANDS` in `build.rs` and the capabilities were not touched.
 
-## 画像の表示サイズ (src/routes/+page.svelte + resize_window_for_image)
+## Image display size (src/routes/+page.svelte + resize_window_for_image)
 
-画像は「等倍 + 周囲 20px の余白」で表示するのが狙いで、そのために **Rust の
-`resize_window_for_image` と CSS が同じ数値を暗黙に共有している**。片方だけ動かすと等倍が崩れる。
+The goal is to display the image "at 1x + a 20px margin around it", and for that **Rust's
+`resize_window_for_image` and the CSS implicitly share the same numbers**. Moving only one of them breaks the 1x display.
 
-- `padding = 20.0` ⇔ viewport の `p-5`
-- `sidebar_w = 224.0` ⇔ `ThumbnailSidebar.svelte` の `w-56`。設定ファイルの `thumbnail_sidebar` が
-  true の間だけ足す (出し入れした瞬間にはウインドウを広げ直さず、次に画像を読み込んだ時に効く)
-- `toolbar_h = 49.0` ⇔ `Toolbar.svelte` root の `py-2` (8+8) + 最も高い子 `.tool-btn` の
-  `h-8` (32) + `border-b` (1)。root の `min-h-[40px]` は下限で効いていない。
-  **ツールバーに背の高い要素を足したらこの定数も直すこと。**
-- `displayScale` の分母は viewport の **content box**。`clientWidth` / `clientHeight` は
-  padding を含む寸法なので、引かずに使うと 40px 過大に見積もり、画像が content box を
-  はみ出して flex の中央寄せに負の余白が渡る → 「左に余白 / 右は切れる」の非対称になる。
+- `padding = 20.0` ⇔ the viewport's `p-5`
+- `sidebar_w = 224.0` ⇔ `w-56` in `ThumbnailSidebar.svelte`. Added only while `thumbnail_sidebar` in the config file is
+  true (the window is not resized at the moment the sidebar is toggled; it takes effect the next time an image is loaded)
+- `toolbar_h = 49.0` ⇔ `py-2` (8+8) on the `Toolbar.svelte` root + `h-8` (32) of the tallest child `.tool-btn`
+  + `border-b` (1). The root's `min-h-[40px]` is a lower bound and has no effect.
+  **If you add a taller element to the toolbar, fix this constant too.**
+- The denominator of `displayScale` is the viewport's **content box**. `clientWidth` / `clientHeight` are
+  dimensions including padding, so using them without subtracting overestimates by 40px, the image overflows the content box,
+  and flex centering gets a negative margin → asymmetric "margin on the left / cut off on the right".
 
-## サムネイルブラウザ (src-tauri/src/thumbnails.rs + src/lib/ThumbnailSidebar.svelte)
+## Thumbnail browser (src-tauri/src/thumbnails.rs + src/lib/ThumbnailSidebar.svelte)
 
-ツールバーの一番左のボタンで出し入れする左サイドバー (CYBERNEURA-DEV-995)。表示状態は
-設定ファイルの `thumbnail_sidebar`。保存先フォルダ (Preferences の保存先) の直下の画像を
-作成日時の新しい順に最大 300 件並べ、サムネイル・ファイル名・相対時刻・容量を出す。
-「メニューバーの一番左」という依頼だったが、メニューバー (アプリメニュー / トレイ) ではなく
-アプリ内のツールバーを指すと読んだ (自動コピーの時と同じ解釈。次の「撮影後の自動コピー」節を参照)。
+A left sidebar toggled by the leftmost toolbar button (CYBERNEURA-DEV-995). Its visibility is
+`thumbnail_sidebar` in the config file. It lists up to 300 images directly inside the save folder (the save location in Preferences),
+newest creation time first, showing the thumbnail, file name, relative time and size.
+The request said "the far left of the menu bar", but we read it as the in-app toolbar rather than the menu bar (app menu / tray)
+(the same interpretation as for auto-copy; see the "Auto-copy after capture" section below).
 
-- **サムネイルは Rust が作る** (`saved_image_thumbnail`、長辺 400px の PNG を data URL で返す)。
-  asset プロトコルで原寸を見せる形にしないのは、scope を任意の保存先へ広げることになり、
-  Retina のスクリーンショットを原寸のまま何十枚も WebView に読ませることにもなるため。
-- **`saved_image_thumbnail` は保存先の直下の通常ファイルしか読まない** (`resolve_within`)。
-  symlink・サブフォルダ・`..` 越しのパスは拒否する。一覧 (`list_saved_images`) も symlink を載せない。
-  フロントから任意のパスを渡されても、他の場所の画像を読む口にしないため。
-- **一覧のパスは実体のパス** (保存先を canonicalize してから並べる)。`load_image_file` が開いた画像の
-  パスを canonicalize するので、字句のままだと保存先が symlink / `..` を含む時に「今開いている画像」と
-  一致せず、ドラッグ前の書き戻しが飛ばされて注釈前 (マスク前) のファイルが渡る。
-  撮影 (`load_image_result`) と貼り付け (`save_pasted_image`) が返すパスも実体のパスに揃えてある。
-- **`thumbnail_sidebar` は debounce せずに書き、画像を開く前にその書き込みを待つ** (`sidebarConfigWrite`)。
-  `resize_window_for_image` が読み込みのたびに設定ファイルから読むので、出した直後のクリックで古い値を読ませない。
-  ボタンは設定を読み終えるまで押せない (読む前の切り替えは保存されず、読み込みで戻される)。
-  書き込みは順に流し、最後に頼んだ書き込みが失敗したら表示を最後に書けた値 (`sidebarPersisted`) へ戻す
-  (画面と Rust の読む値を食い違わせない)。
-- サムネイルは画面に入ったものから 2 枚ずつ頼む (IntersectionObserver。通り過ぎただけのものはキューから外す)。作ったものは
-  `thumbnailCacheKey` (パス + 更新日時 + 容量) で取り置くので、注釈を書き戻した画像は作り直される。
-- 一覧の読み直しは、画像の差し替え (`filePath` / `imageRevision`)、書き戻し (`sidebarRefresh`)、
-  保存先の変更 (`config-changed` の `save_directory`)、ウインドウのフォーカスで行う。
-- **クリックは「今の画像を書き戻してから開く」** (`openFromSidebar`)。書き戻しは
-  `saveCompositeToFile()` (`needsFileWrite` の時だけ書く) で、失敗したら開かない (開くと注釈が失われる)。
-  書き戻し・読み込みの間も編集できるので、**書き戻しを始める前に `editRevision` (画像と注釈の中身が変わるたびに
-  $effect が進める番号。undo を積まない変更 = 選択中のテキストの色など も拾う) を控え、差し替える直前に
-  変わっていたら書き戻し直す** (変わらなくなるまで。最後の確認から差し替えまで await を挟まない)。
-  間に撮影・貼り付け等で画像が変わっていたら差し替えない。判定は `imageGeneration` (差し替えのたびに進む番号)
-  で、パスでは比べない (同じ秒の撮影・貼り付けは同じ名前になる)。await のたびに見直す。
-  `saveCompositeToFile()` 自体も描画の前後で世代を比べ、変わっていたら書かない (描いた古い絵で新しい画像を上書きしない)。
-  読み込みは `load_image_file` を `deferResize: true` で呼び、差し替えると決めてから `fit_window_to_image` で
-  ウインドウを広げる (捨てる画像に合わせて広げない)。
-- **ドラッグは押してから 4px 動いたら `startDrag`** (Finder のファイルと同じく、ファイルそのものを渡す)。
-  HTML5 の drag イベントは使わない。開いている画像そのものをドラッグする時はツールバーのドラッグと
-  同じく先に書き戻す。**自分のウインドウに落とされた時はクリックと同じ扱い**
-  (`sidebarDragPath` で見分ける。素の `loadImageFile` に回すと書き戻さずに差し替わる)。
+- **Thumbnails are made by Rust** (`saved_image_thumbnail` returns a PNG with a 400px long side as a data URL).
+  We do not show full-size images via the asset protocol because that would widen the scope to an arbitrary save location,
+  and would also make the WebView load dozens of full-size Retina screenshots.
+- **`saved_image_thumbnail` only reads regular files directly inside the save location** (`resolve_within`).
+  Symlinks, subfolders and paths going through `..` are rejected. The list (`list_saved_images`) does not include symlinks either.
+  This is so that, even if the frontend passes an arbitrary path, it does not become a way to read images elsewhere.
+- **Paths in the list are real paths** (the save location is canonicalized before listing). `load_image_file` canonicalizes the path of an opened image,
+  so if the paths were kept lexically, when the save location contains a symlink / `..` they would not match "the image currently open",
+  the write-back before dragging would be skipped, and the pre-annotation (pre-mask) file would be handed over.
+  The paths returned by capture (`load_image_result`) and paste (`save_pasted_image`) are also real paths.
+- **`thumbnail_sidebar` is written without debouncing, and opening an image waits for that write** (`sidebarConfigWrite`).
+  `resize_window_for_image` reads from the config file on every load, so a click right after showing the sidebar must not read the old value.
+  The button cannot be pressed until the setting has been read (a toggle before reading would not be saved and would be reverted by the load).
+  Writes run in order, and if the last requested write fails, the display is reverted to the last value successfully written (`sidebarPersisted`)
+  (so the screen and the value Rust reads never disagree).
+- Thumbnails are requested two at a time, starting with those that come into view (IntersectionObserver; ones merely scrolled past are removed from the queue). Finished ones are
+  kept under `thumbnailCacheKey` (path + modification time + size), so images whose annotations were written back are regenerated.
+- The list is reloaded when the image is replaced (`filePath` / `imageRevision`), on write-back (`sidebarRefresh`),
+  when the save location changes (`save_directory` in `config-changed`), and when the window gains focus.
+- **A click "writes back the current image, then opens"** (`openFromSidebar`). The write-back is
+  `saveCompositeToFile()` (it writes only when `needsFileWrite`), and if it fails, the image is not opened (opening would lose the annotations).
+  Editing remains possible during write-back and loading, so **before starting the write-back, note `editRevision` (a number that an
+  $effect advances whenever the image or annotation contents change; it also catches changes that do not push undo = e.g. the color of the selected text),
+  and if it has changed just before replacing, write back again** (until it stops changing; no await between the last check and the replacement).
+  If the image was changed in between by a capture, paste, etc., do not replace. This is judged by `imageGeneration` (a number advanced on every replacement),
+  not by path (captures / pastes in the same second get the same name). Re-check after every await.
+  `saveCompositeToFile()` itself also compares the generation before and after drawing, and does not write if it changed (so an old picture never overwrites a new image).
+  Loading calls `load_image_file` with `deferResize: true`, and only after deciding to replace does `fit_window_to_image`
+  grow the window (it does not grow for an image that will be discarded).
+- **Dragging calls `startDrag` after the pointer moves 4px from the press** (it hands over the file itself, like a file in Finder).
+  HTML5 drag events are not used. When dragging the image that is currently open, it writes back first, the same as the toolbar drag.
+  **A drop onto our own window is treated the same as a click**
+  (identified by `sidebarDragPath`. Routing it to a plain `loadImageFile` would replace the image without writing back).
 
-## 撮影後の自動コピー (src-tauri/src/auto_copy.rs + src/lib/Toolbar.svelte)
+## Auto-copy after capture (src-tauri/src/auto_copy.rs + src/lib/Toolbar.svelte)
 
-- メインウインドウのツールバー (撮影ボタンの左) のボタンで、ポップオーバーから
-  「Don't copy / Copy the image file path / Copy the image data」を選ぶ (CYBERNEURA-DEV-761)。
-  ボタンの図柄 (範囲選択の四隅 + コピーするもの) が選択に合わせて変わる。
-  **最初はメニューバーに置いていたが、依頼者の意図はアプリ内のツールバーだった**ので移した。
-  メニューバーのアイコンは下の「メニューバーへの常駐」で別の用途に使っている。
-- 選択はフロント (`+page.svelte` の `changeAutoCopyMode`) が設定ファイルの
-  `auto_copy_on_capture` (`none` / `path` / `image`) に保存し、Rust は撮影のたびに読むだけ。
-  **未設定・未知の値は `none`** (フロントの `parseAutoCopyMode` と Rust の `from_setting` の両方)
-  — この機能より前から使っている人の撮影で、いきなりクリップボードを書き換え始めないため。
-- ポップオーバーの Esc は **window のキャプチャーフェーズで拾って伝播を止める**。
-  `+page.svelte` の keydown が Esc を「ウインドウを閉じる」に割り当てているので、
-  止めないとポップオーバーを閉じるつもりの Esc でアプリが終了する。
-- ポップオーバーは普段ボタンの右端に揃えるが、ボタンがウインドウの左寄りにある時
-  (動画モードはパス欄が無く、ツールバーが左に詰まる) は左端に揃える。
-- コピーするのは撮影 (`take_screenshot_interactive` / `take_screenshot_timer`) の結果だけ。
-  貼り付け・ファイルを開く・OCR・動画は対象外。コピーと通知 (`ocr::notify` の osascript) は
-  `spawn_blocking` に逃がしてあり、撮影結果の返却 (= ウインドウの再表示) を待たせない。
-  その代わり完了順が撮影順と一致しないので、撮影ごとの通し番号 (`LATEST_CAPTURE`) を
-  書き込む直前に照合し、後の撮影に追い越されたコピーは捨てる。**照合と書き込みは
-  `CLIPBOARD_WRITE` のロックの中で一緒に行う** (照合を通った後の遅い書き込みが、
-  後の撮影の書き込みを上書きしないため)。デコードと通知はロックの外。
+- With a button in the main window's toolbar (left of the capture button), a popover offers
+  "Don't copy / Copy the image file path / Copy the image data" (CYBERNEURA-DEV-761).
+  The button's glyph (the four corners of a selection + the thing being copied) changes with the choice.
+  **It was first placed in the menu bar, but the requester meant the in-app toolbar**, so it was moved.
+  The menu bar icon is used for something else, described in "Staying in the menu bar" below.
+- The frontend (`changeAutoCopyMode` in `+page.svelte`) saves the choice to
+  `auto_copy_on_capture` (`none` / `path` / `image`) in the config file, and Rust only reads it on every capture.
+  **Unset and unknown values are `none`** (both the frontend's `parseAutoCopyMode` and Rust's `from_setting`)
+  — so that captures by people who used the app before this feature existed do not suddenly start overwriting the clipboard.
+- Esc in the popover is **caught in the window's capture phase and its propagation stopped**.
+  The keydown in `+page.svelte` maps Esc to "close the window", so without stopping it,
+  an Esc meant to close the popover would quit the app.
+- The popover is normally aligned to the button's right edge, but when the button is toward the left of the window
+  (video mode has no path field, so the toolbar is packed to the left) it is aligned to the left edge.
+- Only the results of captures (`take_screenshot_interactive` / `take_screenshot_timer`) are copied.
+  Paste, open file, OCR and video are excluded. Copying and the notification (osascript in `ocr::notify`) are
+  moved to `spawn_blocking`, so returning the capture result (= showing the window again) does not wait for them.
+  In exchange, completion order no longer matches capture order, so a per-capture sequence number (`LATEST_CAPTURE`) is
+  checked right before writing, and a copy overtaken by a later capture is discarded. **The check and the write
+  happen together inside the `CLIPBOARD_WRITE` lock** (so that a slow write that passed the check cannot
+  overwrite a later capture's write). Decoding and notification are outside the lock.
 
 ## New Image from Clipboard (CYBERNEURA-DEV-1295)
 
-「Flashcap を新しく起動して画像を貼り付ける」のと同じ結果を、起動したまま得るメニュー。
-macOS のアプリメニュー File > New Image from Clipboard (⌘N) と、メニューバー常駐のメニューに置く
-(Windows はアプリメニューを置かないので常駐のメニューだけ)。
+A menu item that gives the same result as "launch Flashcap fresh and paste an image", without relaunching.
+It is in the macOS app menu under File > New Image from Clipboard (⌘N) and in the menu-bar resident menu
+(Windows has no app menu, so only the resident menu).
 
-- **id は両方とも `menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID`** で、押された後は
-  `menu_bar::handle_menu_event` → `run` の振り分け (描画前・録画中・範囲選択中・撮影中は始めない) を通る。
-  Rust はウインドウを出して `new-image-from-clipboard` を main に送るだけ。
-- フロントの `newImageFromClipboard()` が「クリップボードを読む → 今の画像を書き戻す
-  (`writeBackBeforeSwitching`、失敗したら差し替えない) → `save_pasted_image` で保存 → 差し替え」を行う。
-  **⌘V の貼り付けと違い確認ダイアログは出さない** (書き戻してから捨てるので失うものが無い)。
-  書き戻し・保存の間の編集は `openOneFromSidebar` と同じく `editRevision` で拾って書き戻し直し、
-  `imageGeneration` が変わっていたら (撮影等が割り込んだら) 差し替えない。
-- **ウインドウは Rust (`run`) が emit の前に出す** (`show_main_window`)。`run` の振り分けで撮影・録画・
-  範囲選択中でないと確かめた時点なら写り込まない。フロントが処理の後に出すと、その間にメニューバーから
-  始めた OCR (`copy_text_on_screen`) や録画の範囲選択に写り込む (フロントの `isCapturing` / `isRecording` は
-  それらを知らない)。「クリップボードに画像が無い」トーストもこのウインドウに出る。
-- 書き戻しの前に `textOverlayRef.deselect()` で入力中のテキストを確定させる。未確定のテキストは
-  TextOverlay の `pendingText` にしか無く、注釈にも `editRevision` にも入っていないので、
-  そのままだと書き戻しから漏れ、差し替え後の画像に乗ってしまう。
-- **貼り付けの保存名は `unused_file_path` で空いている名前を選ぶ** (`flashcap-paste-<秒>.png`、
-  ぶつかったら `-2`, `-3` ...)。以前は同じ秒の貼り付けで上書きしていたので、直前に貼って書き戻した
-  画像をこの操作 (書き戻し → 保存 → 差し替え) が消すことがあった。⌘V の貼り付けも同じ関数を通る。
-- 描画前は Rust が送らないので、`frontend-ready` の預かり対象ではない。
+- **Both use the id `menu_bar::NEW_IMAGE_FROM_CLIPBOARD_MENU_ID`**, and once pressed they go through
+  `menu_bar::handle_menu_event` → the dispatch in `run` (it does not start before the first paint, while recording, during area selection, or while capturing).
+  Rust only shows the window and sends `new-image-from-clipboard` to main.
+- The frontend's `newImageFromClipboard()` does "read the clipboard → write back the current image
+  (`writeBackBeforeSwitching`; if it fails, do not replace) → save with `save_pasted_image` → replace".
+  **Unlike ⌘V paste, no confirmation dialog is shown** (it writes back before discarding, so nothing is lost).
+  Edits during write-back / saving are caught with `editRevision` and written back again, as in `openOneFromSidebar`,
+  and if `imageGeneration` has changed (a capture etc. cut in), the image is not replaced.
+- **The window is shown by Rust (`run`) before emitting** (`show_main_window`). At the point where `run`'s dispatch has confirmed
+  there is no capture, recording or area selection in progress, the window will not get captured. If the frontend showed it after its processing,
+  it could appear in an OCR (`copy_text_on_screen`) or recording area selection started from the menu bar in the meantime (the frontend's `isCapturing` / `isRecording` do not
+  know about those). The "no image on the clipboard" toast also appears in this window.
+- Before writing back, `textOverlayRef.deselect()` commits the text being typed. Uncommitted text exists only in
+  TextOverlay's `pendingText`, and is in neither the annotations nor `editRevision`, so
+  as is it would be left out of the write-back and end up on the replacement image.
+- **The saved name for pastes is picked with `unused_file_path` as a free name** (`flashcap-paste-<seconds>.png`,
+  and on collision `-2`, `-3` ...). Previously pastes in the same second overwrote each other, so this operation (write back → save → replace)
+  could delete an image that had just been pasted and written back. ⌘V paste goes through the same function.
+- Before the first paint Rust does not send it, so it is not something `frontend-ready` holds.
 
-## メニューバーへの常駐 (src-tauri/src/menu_bar.rs)
+## Staying in the menu bar (src-tauri/src/menu_bar.rs)
 
-- Preferences の「Keep Flashcap in the menu bar」(設定ファイルの `show_in_menu_bar`、
-  未設定は OFF) を ON にすると、メニューバーにアイコンを置く (CYBERNEURA-DEV-761)。
-  クリックで Open Flashcap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
-  New Image from Clipboard / Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap。
-  N は Preferences の Timer delay。
-- Preferences は設定ファイルに書いた後に `sync_menu_bar` を呼ぶ (Timer delay の変更でも呼ぶ。
-  メニューの秒数を追従させるため)。`sync` は「保存値を読んでアイコンの有無と文言を合わせる」
-  だけなので何度呼んでもよい。起動時は setup から呼ぶ。
-- **トレイの `TrayIconBuilder::on_menu_event` は使わない。** そこで登録したハンドラは app 全体の
-  リストに積まれ、トレイを外しても消えない。設定を OFF → ON するたびに増えて、1 回のクリックで
-  撮影が 2 回走る。イベントは lib.rs の `app.on_menu_event` から `menu_bar::handle_menu_event` に回す。
-- **常駐中はメインウインドウを閉じても終了せず隠す** (`on_window_event` の CloseRequested)。
-  閉じるとフロントの WebView ごと破棄され、メニューからの `do-capture` を受け取る相手が
-  いなくなる。Esc / ⌘W / 閉じるボタンがすべてここを通る。終了は ⌘Q かメニューの Quit。
-- 撮影は `request_capture(app, CaptureKind)` 経由でフロントの `captureScreen()` に任せる
-  (ウインドウの hide / show もあちらの仕事)。**ハンドシェイクの予約も種類ごと持つ**
-  (`capture_pending: Option<CaptureKind>`)。bool だとコールド起動直後に押された
-  タイマー付き撮影が通常の撮影に化ける。`do-capture` の payload はコマンド名で、フロントは
-  `take_screenshot_timer` 以外を通常の撮影として扱う。
-- メニューの項目は、進行中の操作と重ならないよう `menu_bar::run` の先頭で振り分ける (Quit は常に通す):
-  - **フロントの描画前 (コールド起動の直後) は撮影と Quit だけ**。撮影はハンドシェイクが預かる。
-    録画と OCR をここで始めると frontend-ready 側がメインウインドウを出してしまい、範囲選択や
-    撮影に写り込む。Open は白いウインドウが見えるだけなので無視する。
-  - **録画中 (停止後の書き出し中を含む) は何も始めずにメインウインドウを出す** (停止ボタンは
-    そこにしか無く、範囲選択を終えると `start_video_recording` が録画中のものを止めて差し替える)。
-    書き出し中の判定は `video::FINALIZING`。`stop_video_recording` は待つ前に `RecordingState` から
-    録画を取り出すので、そちらだけ見ると取り違える。**`is_recording` はロックを取ってから
-    FINALIZING を読む** (停止側がロックの中で立てるため)。
-  - **録画の範囲選択中 (タイマーのカウントダウン中を含む) は Open だけを受け付け、範囲選択を
-    やめてメインウインドウに戻す**。カウントダウン中のオーバーレイはクリックを透過するので、
-    他のアプリを触った後は Esc が届かず、ここがキャンセルの手段になる。
-  - **撮影中 / OCR 中は何もしない** (`CAPTURES_IN_PROGRESS`。撮影コマンドと
-    `screencapture_and_ocr` が `CaptureInProgress` のガードで数える。OCR は文字認識が
-    終わるまで数える — ツールバーの `ocrCaptureRegion()` は終わった後にメインウインドウを
-    戻すので、認識中に始まった撮影に写り込む)。メニューはフロントの
-    `isCapturing` を見られないので、Rust 側で数えている。
-- 録画は `video::open_region_selector(app, delay_seconds)` を直接呼ぶ。タイマー付きは範囲選択後の
-  カウントダウンを 3-2-1 の代わりにその秒数 (1 秒刻み、60 秒で頭打ち) で行う。
-  待つ間に画面を整えるためのタイマーなので、**カウントダウンに入ったら
-  `release_region_selector_for_countdown` で他のディスプレイのオーバーレイを閉じ、
-  このオーバーレイはクリックを透過させる** (画面を暗くせず、枠と残り秒数だけを描く)。
-  別のディスプレイで選び直した時は `__regionClear` がカウントダウンを止める。
-- OCR は `ocr::run_headless_ocr(app, false)`。メインウインドウが出ていれば撮影の間だけ隠し、
-  終わったらフォーカスを奪わずに戻す。
-- アイコンは `src-tauri/icons/tray/menu-bar.png` (36x36 のテンプレート画像。
-  tray-icon crate が高さ 18pt に揃えるので Retina で等倍。図柄はアプリアイコンと同じ線画の
-  カメラ)。**手で描き直さず `python3 scripts/make-tray-icons.py` で作り直す**
-  (標準ライブラリだけで動く)。
-- ヘッドレス OCR (`--capture-screen-text` のコールド起動) ではアイコンを置かない
-  (終わり次第プロセスごと終了するので、一瞬出て消えるだけになる)。
+- Turning ON "Keep Flashcap in the menu bar" in Preferences (`show_in_menu_bar` in the config file,
+  OFF when unset) puts an icon in the menu bar (CYBERNEURA-DEV-761).
+  Clicking shows Open Flashcap / Capture Screenshot / Capture Screenshot with Timer (Ns) /
+  New Image from Clipboard / Record Video / Record Video with Timer (Ns) / Copy Text on Screen (OCR) / Quit Flashcap.
+  N is the Timer delay in Preferences.
+- Preferences calls `sync_menu_bar` after writing to the config file (also on a Timer delay change,
+  so the seconds in the menu follow). `sync` only "reads the saved value and makes the icon's presence and wording match",
+  so it can be called any number of times. At startup it is called from setup.
+- **Do not use the tray's `TrayIconBuilder::on_menu_event`.** A handler registered there is added to an app-wide
+  list and is not removed when the tray is removed. Every OFF → ON of the setting adds another, and one click
+  runs the capture twice. Events are routed from `app.on_menu_event` in lib.rs to `menu_bar::handle_menu_event`.
+- **While resident, closing the main window hides it instead of quitting** (CloseRequested in `on_window_event`).
+  Closing would destroy the frontend's WebView along with it, leaving nobody to receive `do-capture` from the menu.
+  Esc / ⌘W / the close button all go through here. Quit with ⌘Q or the menu's Quit.
+- Captures are delegated to the frontend's `captureScreen()` via `request_capture(app, CaptureKind)`
+  (hiding / showing the window is its job too). **The handshake reservation also keeps the kind**
+  (`capture_pending: Option<CaptureKind>`). With a bool, a timer capture pressed right after a cold start
+  would turn into a normal capture. The `do-capture` payload is the command name, and the frontend treats
+  anything other than `take_screenshot_timer` as a normal capture.
+- Menu items are dispatched at the top of `menu_bar::run` so they do not overlap an operation in progress (Quit always goes through):
+  - **Before the frontend has painted (right after a cold start), only capture and Quit**. Captures are held by the handshake.
+    Starting recording or OCR here would make the frontend-ready side show the main window, and it would appear in the
+    area selection or capture. Open would only show a white window, so it is ignored.
+  - **While recording (including exporting after stopping), start nothing and show the main window** (the stop button
+    exists only there, and finishing an area selection makes `start_video_recording` stop the current recording and replace it).
+    Exporting is detected with `video::FINALIZING`. `stop_video_recording` takes the recording out of `RecordingState` before waiting,
+    so looking only at that would get it wrong. **`is_recording` reads FINALIZING after taking the lock**
+    (the stopping side sets it inside the lock).
+  - **During recording area selection (including the timer countdown), only Open is accepted; it cancels the area selection
+    and returns to the main window**. The overlay during the countdown passes clicks through, so
+    after touching another app Esc no longer reaches it, and this is the way to cancel.
+  - **While capturing / doing OCR, do nothing** (`CAPTURES_IN_PROGRESS`. The capture commands and
+    `screencapture_and_ocr` count with the `CaptureInProgress` guard. OCR counts until text recognition
+    has finished — the toolbar's `ocrCaptureRegion()` brings the main window back after it finishes, so
+    it would appear in a capture started during recognition). The menu cannot see the frontend's
+    `isCapturing`, so Rust counts.
+- Recording calls `video::open_region_selector(app, delay_seconds)` directly. With a timer, the countdown after area selection
+  uses that many seconds (in 1-second steps, capped at 60) instead of 3-2-1.
+  The timer is for tidying up the screen while waiting, so **once the countdown starts,
+  `release_region_selector_for_countdown` closes the overlays on the other displays,
+  and this overlay passes clicks through** (it does not darken the screen; it only draws the frame and the remaining seconds).
+  If the selection is redone on another display, `__regionClear` stops the countdown.
+- OCR is `ocr::run_headless_ocr(app, false)`. If the main window is shown, it is hidden only during the capture and
+  brought back afterwards without stealing focus.
+- The icon is `src-tauri/icons/tray/menu-bar.png` (a 36x36 template image.
+  The tray-icon crate sizes it to 18pt high, so it is 1x on Retina. The glyph is the same line-drawn
+  camera as the app icon). **Do not redraw it by hand; regenerate it with `python3 scripts/make-tray-icons.py`**
+  (it runs with the standard library only).
+- Headless OCR (a cold start with `--capture-screen-text`) does not put the icon
+  (the whole process exits as soon as it is done, so the icon would just flash and disappear).
 
-## Windows 版 (CYBERNEURA-DEV-841)
+## Windows version (CYBERNEURA-DEV-841)
 
-macOS の外部コマンド (screencapture / sips / osascript / pbcopy / swift) に頼る箇所は
-`#[cfg(target_os = "macos")]` で分け、Windows 側を別実装にしてある。
+Places that rely on macOS external commands (screencapture / sips / osascript / pbcopy / swift) are separated with
+`#[cfg(target_os = "macos")]`, and the Windows side has its own implementation.
 
-- **撮影はカーソルのあるモニターの上で矩形を選ばせる** (`capture_screen_to` の Windows 版 +
-  `src-tauri/src/region_capture.rs` + `src/routes/capture-region/+page.svelte`。CYBERNEURA-DEV-882)。
-  Windows には `screencapture -i` に当たるコマンドが無いので、先にモニター全体を xcap で撮り、
-  その静止画を枠なし・最前面のオーバーレイ (`capture-region-<n>`) にモニターの物理座標で重ねて
-  矩形を引かせ、撮ってあった画像から切り出す。離した時点で確定、Enter でモニター全体、
-  Esc / 右クリック / Alt+F4 でやめる (`"cancelled"` を含むエラー)。選べるのはカーソルのある
-  モニターだけ。hide の後 300ms 待ってから撮る (消えかけのウインドウが写り込むため)。
-  タイマーは待つだけで、カーソル位置は待った後に取る。
-  - **切り取りツール (`ms-screenclip:`) は使わない。** 結果がクリップボード経由でしか返らず
-    (ユーザーのクリップボードを上書きする)、Esc でやめたことをアプリから知る手段が無く、
-    ツール自体がアンインストールできて版ごとに挙動も変わるため。
-  - オーバーレイは非表示で作り、画像を描き終えた `capture_region_ready` で出す (先に出すと
-    WebView の白い下地がモニター全体に一瞬出る)。届かなくても 3 秒で Rust が出す
-    (出ないままだと Esc で抜ける手段が無い)。
-  - コマンド (`capture_region_*`) は **進行中の選択のラベルと一致するウインドウからしか受け付けない**。
-    ラベルに撮影ごとの番号を付けているのは、閉じかけの前回のウインドウの `Destroyed` が
-    次の選択を取り消さないため。
-  - 矩形の丸め (端数は外側へ・画像の内側に収める) はフロントの `src/lib/regionSelect.ts`
-    (表示用、`tests/region-select.test.mts`) と Rust の `crop_bounds` (切り出し用、Linux の
-    `cargo test` で走る) の両方にある。
-- **録画・OCR・通知は macOS 専用**。フロントは `src/lib/platform.ts` の `isWindows`
-  (WebView の UA で判定) でボタンを出さず、Rust もメニューバー (Windows では通知領域)
-  の項目から外し (`MenuAction::is_available`)、コマンドが呼ばれてもエラーを返す。
-  `ocr::notify` は Windows では何もしない。HEIC は開けも保存もできない (sips が無い)。
-- **アプリメニューは macOS だけ** (`set_app_menu`)。Windows ではメニューがウインドウの
-  メニューバーになり、Edit の Ctrl+C / Ctrl+V / Ctrl+Z がアクセラレーターとして
-  WebView の keydown より先に奪われる。Preferences は `+page.svelte` が Ctrl+, を拾って
-  `open_preferences` を呼ぶ。
-- **ショートカットは `isModKey`** (macOS は ⌘、Windows は Ctrl)。Shift を押した時の
-  `e.key` は Windows だと大文字になるので、Ctrl+Shift+C は小文字に揃えて比べる。
-- **ファイルの守り方が違う**。Unix の mode / uid / O_NOFOLLOW は Windows に無いので、
-  `create_private_dir` などは cfg で分けてある。Windows は %TEMP% (ユーザー専用の ACL)
-  に頼り、`write_without_following_symlinks` は symlink を先に弾いたうえで
-  `FILE_FLAG_OPEN_REPARSE_POINT` で開く。
-- **canonicalize は `dunce::canonicalize`**。std は Windows で `\\?\C:\...` を返し、
-  パス欄やコピーしたパスにそれが出る。突き合わせ (`OpenedImages` と `write_image_within`)
-  も同じ関数で揃えること。
-- `flashcap://capture` は Windows では argv で届く (`is_capture_url`)。**Windows では撮影を
-  始めず、ウインドウを前に出して撮影ボタンを点滅させるだけ** (CYBERNEURA-DEV-852)。
-  撮影中 (`is_capture_in_progress`) に届いた URL は無視する (前に出すと撮影に写り込む)。
-  当初は Windows の撮影が操作を挟まない即時撮影だったため (任意の Web ページやメールのリンクから
-  非対話で画面を撮らせられる)。0.6.0 で範囲選択が入った後も、リンクからオーバーレイを
-  画面いっぱいに出させない (Enter 1 回でモニター全体が撮れる) ためにこの挙動を残している。`--capture`
-  (`is_capture_arg`。Web からは渡せない) は従来どおり即撮影。`flashcap://ocr` は無い。
-- **`src-tauri/tauri.windows.conf.json`** が Windows のビルドでだけ重なる
-  (HEIC の関連付けと ocr.swift の同梱を外している)。
-- トレイのアイコンは Windows ではアプリのアイコン (`menu_bar::tray_icon`)。macOS の
-  テンプレート画像は黒一色なので、暗いタスクバーで見えなくなる。
-- `icons/icon.ico` は 16〜256 の 6 サイズ入りで、**余白の無いフルサイズ** (CYBERNEURA-DEV-885)。
-  マスターの `icon.png` は macOS の Dock に合わせて周囲に約 10% の透明な余白があり、
-  そのまま ico にするとタスクバーで一回り小さく見える。作り直す時は
-  `uv run scripts/make-windows-icon.py` (マスターの不透明な範囲 = 角丸の板だけを切り出して
-  ico にする。icns には触らない)。**`pnpm exec tauri icon` で ico を作り直さないこと** —
-  余白付きのマスターから作るので小さいアイコンに戻る。exe・ウインドウ・タスクバー・
-  インストーラー・通知領域 (`default_window_icon()`) はすべてこの ico を使う。
-- **Linux から Windows ターゲットを検査できる**。`rustup target add x86_64-pc-windows-msvc`
-  のうえ `cargo check --target x86_64-pc-windows-msvc`。ただし tauri-build が
-  リソースコンパイラ (`llvm-rc`) を要求して止まるので、出力ファイルを空で作るだけの
-  `llvm-rc` を PATH に置く (check はリンクしないので中身は要らない)。
-  Windows 専用のテスト (`mod windows_tests`) は CI の Windows ランナーでしか走らない。
+- **Capture lets you select a rectangle on the monitor under the cursor** (the Windows version of `capture_screen_to` +
+  `src-tauri/src/region_capture.rs` + `src/routes/capture-region/+page.svelte`. CYBERNEURA-DEV-882).
+  Windows has no command equivalent to `screencapture -i`, so it first captures the whole monitor with xcap,
+  overlays that still image in a frameless, always-on-top overlay (`capture-region-<n>`) at the monitor's physical coordinates,
+  lets you drag a rectangle, and crops it out of the captured image. It is committed on release, Enter takes the whole monitor,
+  and Esc / right-click / Alt+F4 cancel (an error containing `"cancelled"`). Only the monitor under the cursor
+  can be selected. It waits 300ms after hiding before capturing (a window that is still disappearing would get captured).
+  The timer only waits, and the cursor position is taken after waiting.
+  - **Do not use the Snipping Tool (`ms-screenclip:`).** Its result only comes back via the clipboard
+    (overwriting the user's clipboard), the app has no way to know the user cancelled with Esc,
+    and the tool itself can be uninstalled and behaves differently between versions.
+  - The overlay is created hidden and shown on `capture_region_ready`, once the image has been drawn (showing it first
+    would flash the WebView's white backdrop over the whole monitor). If that never arrives, Rust shows it after 3 seconds
+    (if it never showed, there would be no way to get out with Esc).
+  - Commands (`capture_region_*`) **are accepted only from the window whose label matches the selection in progress**.
+    The label carries a per-capture number so that the `Destroyed` of the previous, closing window does not
+    cancel the next selection.
+  - Rounding of the rectangle (fractions outward, kept inside the image) exists both in the frontend's `src/lib/regionSelect.ts`
+    (for display, `tests/region-select.test.mts`) and in Rust's `crop_bounds` (for cropping; runs in `cargo test` on Linux).
+- **Recording, OCR and notifications are macOS only**. The frontend hides the buttons using `isWindows` in `src/lib/platform.ts`
+  (decided from the WebView's UA), Rust also removes them from the menu bar (the notification area on Windows)
+  items (`MenuAction::is_available`), and the commands return an error if called.
+  `ocr::notify` does nothing on Windows. HEIC can be neither opened nor saved (there is no sips).
+- **The app menu is macOS only** (`set_app_menu`). On Windows the menu would become the window's
+  menu bar, and Edit's Ctrl+C / Ctrl+V / Ctrl+Z would be grabbed as accelerators before
+  the WebView's keydown. For Preferences, `+page.svelte` catches Ctrl+, and calls
+  `open_preferences`.
+- **Shortcuts use `isModKey`** (⌘ on macOS, Ctrl on Windows). With Shift held,
+  `e.key` is uppercase on Windows, so Ctrl+Shift+C is compared after lowercasing.
+- **Files are protected differently**. Unix mode / uid / O_NOFOLLOW do not exist on Windows, so
+  `create_private_dir` and friends are split with cfg. Windows relies on %TEMP% (a per-user ACL),
+  and `write_without_following_symlinks` rejects symlinks first and then
+  opens with `FILE_FLAG_OPEN_REPARSE_POINT`.
+- **Canonicalize with `dunce::canonicalize`**. std returns `\\?\C:\...` on Windows, and
+  that would show up in the path field and in copied paths. Matching (`OpenedImages` and `write_image_within`)
+  must use the same function.
+- On Windows, `flashcap://capture` arrives via argv (`is_capture_url`). **On Windows it does not start a capture;
+  it only brings the window to the front and flashes the capture button** (CYBERNEURA-DEV-852).
+  A URL arriving while a capture is in progress (`is_capture_in_progress`) is ignored (bringing the window forward would get it captured).
+  Originally this was because the Windows capture was an immediate capture with no interaction (any web page or email link
+  could make it capture the screen non-interactively). Even after 0.6.0 added area selection, this behavior is kept so that a link cannot
+  make the overlay fill the screen (a single Enter would capture the whole monitor). `--capture`
+  (`is_capture_arg`; cannot be passed from the web) captures immediately as before. There is no `flashcap://ocr`.
+- **`src-tauri/tauri.windows.conf.json`** is merged only for Windows builds
+  (it removes the HEIC file association and the bundling of ocr.swift).
+- The tray icon on Windows is the app icon (`menu_bar::tray_icon`). The macOS
+  template image is solid black, so it would be invisible on a dark taskbar.
+- `icons/icon.ico` contains six sizes from 16 to 256 and is **full-size with no margin** (CYBERNEURA-DEV-885).
+  The master `icon.png` has a roughly 10% transparent margin around it to suit the macOS Dock, and
+  making an ico from it as is makes it look a size smaller on the taskbar. To regenerate, use
+  `uv run scripts/make-windows-icon.py` (it crops just the opaque area of the master = the rounded plate
+  into an ico. It does not touch the icns). **Do not regenerate the ico with `pnpm exec tauri icon`** —
+  it builds from the master with the margin, so the icon goes back to being small. The exe, windows, taskbar,
+  installer and notification area (`default_window_icon()`) all use this ico.
+- **The Windows target can be checked from Linux**. After `rustup target add x86_64-pc-windows-msvc`,
+  run `cargo check --target x86_64-pc-windows-msvc`. However, tauri-build demands
+  a resource compiler (`llvm-rc`) and stops, so put an `llvm-rc` on PATH that just creates an empty output file
+  (check does not link, so the contents are not needed).
+  Windows-only tests (`mod windows_tests`) only run on the CI Windows runner.
 
-## 依存ライブラリのライセンス表示 (src-tauri/src/licenses.rs)
+## Third-party license notices (src-tauri/src/licenses.rs)
 
-`THIRD-PARTY-NOTICES.txt` は `scripts/generate-third-party-notices.sh` (`pnpm notices`) の生成物で、
-`licenses.rs` が `include_str!` で埋め込み、`licenses` ウインドウ (`src/routes/licenses/+page.svelte`)
-に出す。入口は macOS のアプリメニュー (About の直下の Third-Party Licenses...) と、Preferences の
-About 節のボタン (Windows にはアプリメニューが無いため)。**手で編集しない。**
+`THIRD-PARTY-NOTICES.txt` is generated by `scripts/generate-third-party-notices.sh` (`pnpm notices`);
+`licenses.rs` embeds it with `include_str!` and the `licenses` window (`src/routes/licenses/+page.svelte`)
+shows it. The entry points are the macOS app menu (Third-Party Licenses... directly below About) and a button in the
+About section of Preferences (since Windows has no app menu). **Do not edit it by hand.**
 
-- **依存を足す・上げる時は流し直してコミットする**。直接依存 (Cargo.toml / package.json) が
-  Cargo.lock / pnpm-lock.yaml の解決 version で載っていないと `cargo test` が落ちる
-  (Dependabot の PR も notices を更新しないので落ちる。同じブランチで再生成をコミットする)。
-- Rust 側は cargo-about (`cargo install cargo-about --locked --features cli`。`--features cli` が
-  無いとバイナリが入らない)。`src-tauri/about.toml` の `targets` で配布ターゲット
-  (macOS の aarch64 / x86_64 と Windows x64) だけに絞っている。Linux 専用の crate は載らない。
-  flashcap 自身は `publish = false` + `[private] ignore = true` で除いている。
-  `accepted` に無いライセンスの crate が入ると `--fail` で止まる。**accepted を黙って広げない**
-  (GPL / LGPL / AGPL 系は配布条件が変わるので人間に確認する)。
-- npm 側は `package.json` の `dependencies` と、スクリプトの `BUNDLED_RUNTIME`
-  (svelte / @sveltejs/kit / esm-env / tailwindcss / runed。devDependencies や推移依存だが client bundle に
-  入る)。フロントの依存を変えて bundle に入るものが増えたら `BUNDLED_RUNTIME` に足す。
-- `@crabnebula/tauri-plugin-drag` の npm パッケージは package.json に license も repository も
-  書いていないので、スクリプトの `MISSING_METADATA` で同じリポジトリの Rust crate に合わせている。
+- **When adding or upgrading dependencies, regenerate it and commit**. If a direct dependency (Cargo.toml / package.json) is
+  not listed at the version resolved in Cargo.lock / pnpm-lock.yaml, `cargo test` fails
+  (Dependabot PRs do not update the notices either, so they fail. Commit the regeneration on the same branch).
+- The Rust side uses cargo-about (`cargo install cargo-about --locked --features cli`. Without `--features cli`
+  the binary is not installed). `targets` in `src-tauri/about.toml` narrows it to the distribution targets
+  (macOS aarch64 / x86_64 and Windows x64). Linux-only crates are not listed.
+  flashcap itself is excluded with `publish = false` + `[private] ignore = true`.
+  If a crate with a license not in `accepted` is added, `--fail` stops it. **Do not silently widen accepted**
+  (GPL / LGPL / AGPL-family licenses change the distribution terms, so check with a human).
+- The npm side covers `dependencies` in `package.json` plus the script's `BUNDLED_RUNTIME`
+  (svelte / @sveltejs/kit / esm-env / tailwindcss / runed: devDependencies or transitive dependencies that end up in the client bundle).
+  If you change frontend dependencies and more of them end up in the bundle, add them to `BUNDLED_RUNTIME`.
+- The `@crabnebula/tauri-plugin-drag` npm package declares neither a license nor a repository in its package.json,
+  so the script's `MISSING_METADATA` matches it to the Rust crate from the same repository.
 
-## 更新の手動チェック (src-tauri/src/update_check.rs)
+## Manual update check (src-tauri/src/update_check.rs)
 
-「Check for Updates…」(CYBERNEURA-DEV-1127)。queryfolio の `update_check.rs` (CYBERNEURA-DEV-1079) の
-移植で、共通化はしていない (直す時は両方を見る)。入口は macOS のアプリメニュー (Third-Party Licenses の
-直下) と Preferences の About 節のボタン (`check_for_updates` コマンド。Windows はこちらだけ)。
+"Check for Updates…" (CYBERNEURA-DEV-1127). A port of queryfolio's `update_check.rs` (CYBERNEURA-DEV-1079);
+the code is not shared (when fixing it, look at both). The entry points are the macOS app menu (directly below
+Third-Party Licenses) and a button in the About section of Preferences (the `check_for_updates` command; on Windows only the latter).
 
-- **選んだ時だけ** `api.github.com/repos/cyberneura/flashcap/releases/latest` を見る。起動時・定期の通信は足さない。
-- cask で入れた `.app` で動いている時だけ `brew upgrade --cask flashcap` を出す。判定は Caskroom の有無ではなく、
-  cask が置いた場所 (`brew info --cask --json=v2` の app 成果物の `target`。古い brew は
-  `Caskroom/flashcap/.metadata/config.json` の appdir + 名前) が実行中の bundle (canonicalize 済み) と
-  **大文字小文字まで一致する**か。0.8.3 で `.app` 名が `flashcap.app` → `Flashcap.app` に変わったので、緩めると
-  旧版にも brew を走らせうる。**`brew list --cask flashcap` の出力は使わない** — 成果物の一覧
-  (`/Applications/Flashcap.app (...)`) は stdout が端末の時しか出ず、パイプでは Caskroom の find 一覧になる
-  (Homebrew の `cmd/list.rb`)。queryfolio の update_check.rs はこれに頼っているので、同じ理由で brew 経路に入れていない可能性がある。
-- appdir が `HOMEBREW_CASK_OPTS` だけで決まっていた (config.json の `env` だけにある) 時は brew を勧めない。upgrade は `env` を
-  実行時の環境から取り直すので、GUI から呼ぶと `/Applications` に入れ直されて動いている場所に新版が来ない。
-- brew は `HOMEBREW_NO_ASK` / `HOMEBREW_NO_UPGRADE_QUIT_CASKS` / `HOMEBREW_AUTO_UPDATE_SECS=0` で動かし、
-  終わったら `brew list --cask --versions` で入った版を確かめてから再起動を勧める。
-- HTTP は reqwest (`default-features = false` + rustls)。webpki-roots の CDLA-Permissive-2.0 は `about.toml` の accepted に入れてある。
+- It looks at `api.github.com/repos/cyberneura/flashcap/releases/latest` **only when chosen**. Do not add network access at startup or on a schedule.
+- It offers `brew upgrade --cask flashcap` only when running from a `.app` installed by the cask. The check is not whether a Caskroom exists, but
+  whether the place the cask installed to (the `target` of the app artifact in `brew info --cask --json=v2`; for older brew,
+  the appdir + name in `Caskroom/flashcap/.metadata/config.json`) matches the running bundle (canonicalized)
+  **including letter case**. In 0.8.3 the `.app` name changed from `flashcap.app` → `Flashcap.app`, so loosening this could
+  run brew for old versions too. **Do not use the output of `brew list --cask flashcap`** — the artifact list
+  (`/Applications/Flashcap.app (...)`) is only printed when stdout is a terminal; through a pipe you get the Caskroom find listing instead
+  (Homebrew's `cmd/list.rb`). queryfolio's update_check.rs relies on it, so for the same reason it may not be entering the brew path.
+- If the appdir was determined only by `HOMEBREW_CASK_OPTS` (present only in config.json's `env`), do not recommend brew. upgrade takes `env`
+  afresh from the runtime environment, so when invoked from the GUI it would reinstall into `/Applications` and the new version would not land where the app is running.
+- brew is run with `HOMEBREW_NO_ASK` / `HOMEBREW_NO_UPGRADE_QUIT_CASKS` / `HOMEBREW_AUTO_UPDATE_SECS=0`, and
+  once done it checks the installed version with `brew list --cask --versions` before recommending a restart.
+- HTTP uses reqwest (`default-features = false` + rustls). webpki-roots' CDLA-Permissive-2.0 is in `accepted` in `about.toml`.
 
-## `flashcap` コマンドのインストール (src-tauri/src/cli_install.rs)
+## Installing the `flashcap` command (src-tauri/src/cli_install.rs)
 
-macOS のアプリメニューの `Install Command Line Tools…` (Check for Updates… の下) が
-`/usr/local/bin/flashcap` に `.app` 内の実行ファイルへの symlink を張る (dagscape / beckwell と同じ方式)。
-書けなければ `osascript` の `with administrator privileges` で管理者パスワードを訊き、その 1 操作だけを
-管理者で実行する。既存の symlink は張り替え、symlink でないファイルは上書きせずエラーにする。
-App Translocation のパス (隔離属性が付いたまま開いたアプリ) には張らない (次回の起動で場所が変わる)。
-Windows には無い。
+`Install Command Line Tools…` in the macOS app menu (below Check for Updates…)
+creates a symlink at `/usr/local/bin/flashcap` pointing to the executable inside the `.app` (the same approach as dagscape / beckwell).
+If it cannot write, it asks for the administrator password via `osascript`'s `with administrator privileges` and runs only that one operation
+as administrator. An existing symlink is replaced; a file that is not a symlink is not overwritten and results in an error.
+It does not link to an App Translocation path (an app opened while still carrying the quarantine attribute), since the location changes on the next launch.
+Not available on Windows.
 
-- **symlink 経由の起動 (`current_exe()` が symlink) は、`run()` の先頭で LaunchServices に起動させ直して
-  終わる** (`.app` の実行ファイルをターミナルから動かすと GUI がターミナルにぶら下がるため)。
-  引数が全部実在するファイルなら `open -a <bundle> <絶対パス>` (Finder の「このアプリケーションで開く」と
-  同じ `RunEvent::Opened` で届く)、`--capture` 等を含むなら `open -n <bundle> --args <引数>`
-  (新しいプロセスの single-instance が起動中のインスタンスへ渡す)。起動し直したプロセスの cwd は `/` なので、
-  実在するパスは呼び出し元の cwd で絶対パスにしてから渡す。
-- ランチャーに登録する `/Applications/Flashcap.app/Contents/MacOS/flashcap --capture` は symlink では
-  ないので、この経路を通らず今まで通り動く。
+- **A launch through the symlink (`current_exe()` is a symlink) makes LaunchServices relaunch the app at the top of `run()`
+  and then exits** (running the `.app` executable from a terminal would leave the GUI attached to the terminal).
+  If every argument is an existing file, it uses `open -a <bundle> <absolute paths>` (delivered as `RunEvent::Opened`, the same as Finder's "Open With");
+  if it contains `--capture` etc., it uses `open -n <bundle> --args <arguments>`
+  (the new process's single-instance hands them to the running instance). The relaunched process's cwd is `/`, so
+  existing paths are made absolute against the caller's cwd before being passed.
+- `/Applications/Flashcap.app/Contents/MacOS/flashcap --capture`, as registered in launchers, is not a symlink,
+  so it does not take this path and works as before.
 
-## コマンドの ACL (src-tauri/build.rs + src-tauri/capabilities/)
+## Command ACL (src-tauri/build.rs + src-tauri/capabilities/)
 
-アプリ独自のコマンド (`generate_handler!`) も、窓ごとの capability で許可したものしか呼べない
-(CYBERNEURA-DEV-971)。`build.rs` が `AppManifest::commands` で全コマンドを宣言しているので、
-Tauri はアプリ独自のコマンドにも ACL を適用する。**宣言しないと、ローカルのページの全ウインドウから
-全コマンドを無条件に呼べる** — capability を窓ごとに分けていても、絞れているのはプラグインの
-コマンドだけになる (0.7.0 までそうだった。透明オーバーレイからも `config_set` + `run_shell_command`
-でシェルコマンドを実行できた)。
+The app's own commands (`generate_handler!`) can also only be called if allowed by the per-window capability
+(CYBERNEURA-DEV-971). `build.rs` declares all commands with `AppManifest::commands`, so
+Tauri applies the ACL to the app's own commands too. **Without the declaration, every command can be called unconditionally
+from every window of the local pages** — even with capabilities split per window, only the plugin
+commands would be restricted (that was the case up to 0.7.0. Even the transparent overlay could run shell commands
+with `config_set` + `run_shell_command`).
 
-- **コマンドを足したら 2 か所に足す**: `build.rs` の `APP_COMMANDS` と、それを `invoke` するページの
-  窓の capability (`"allow-<kebab-case>"`。例: `run_shell_command` → `allow-run-shell-command`)。
-  `build.rs` に無いコマンドはどの窓からも呼べず、capability に無いコマンドはその窓から呼べない。
-  リリースビルドでは拒否の理由が出ないので、気付きにくい。
-- 窓とページと capability の対応: `main` → `default.json`、`preferences` → `preferences.json`、
-  `licenses` → `licenses.json`、`region-selector-*` (録画の範囲選択) → `region-selector.json`、
-  `capture-region-*` (Windows の撮影範囲選択) → `capture-region.json`。
-  **使っていないコマンドは許可しない** (透明オーバーレイに設定の書き換えやシェルの実行を渡さない)。
-  **1 つの capability に複数の窓を載せない** — 許可はその和集合になって全部の窓に渡る
-  (以前は main と Preferences が同居していて、Preferences から `config_set` + `run_shell_command`
-  に届いた)。同じ窓を複数の capability に載せるのも同じ理由でしない。
-- 検査は 2 つ。`cargo test` (`app_command_acl_tests`) が `APP_COMMANDS` と `generate_handler!` の
-  一致と、`generate_context!` が埋め込む実際の ACL で「窓 x コマンド」の可否が capability どおりかを
-  見る (capability のファイルを足したら `expected_access` の `include_str!` にも足す)。
-  `pnpm test` (`tests/capabilities.test.mts`) は「各窓の capability の `allow-*` = その窓のページから
-  import を辿って見つかる `invoke` のコマンド」を窓ごとに見る (過不足どちらも落ちる)。
-  コマンド名を変数で渡す `invoke` は名前を読めないので、テストの `DYNAMIC_INVOKES` に
-  取りうる値を書く。ウインドウを足したら `WINDOW_PAGES` にも足す。
-- capability に存在しない permission を書くと `tauri-build` がビルド時に落とす。
-- 自動生成された permission は `src-tauri/permissions/autogenerated/` に出る (gitignore 済み)。
+- **When you add a command, add it in two places**: `APP_COMMANDS` in `build.rs`, and the capability of the window
+  whose page `invoke`s it (`"allow-<kebab-case>"`, e.g. `run_shell_command` → `allow-run-shell-command`).
+  A command missing from `build.rs` cannot be called from any window, and a command missing from a capability cannot be called from that window.
+  Release builds do not show why a call was denied, so this is easy to miss.
+- Mapping of windows, pages and capabilities: `main` → `default.json`, `preferences` → `preferences.json`,
+  `licenses` → `licenses.json`, `region-selector-*` (recording area selection) → `region-selector.json`,
+  `capture-region-*` (Windows capture area selection) → `capture-region.json`.
+  **Do not allow commands that are not used** (do not hand config rewriting or shell execution to a transparent overlay).
+  **Do not put several windows in one capability** — the permissions become their union and are granted to all of the windows
+  (main and Preferences used to share one, and Preferences could reach `config_set` + `run_shell_command`).
+  For the same reason, do not put the same window in several capabilities.
+- There are two checks. `cargo test` (`app_command_acl_tests`) verifies that `APP_COMMANDS` matches `generate_handler!`,
+  and, using the actual ACL embedded by `generate_context!`, that "window x command" access is as the capabilities say
+  (if you add a capability file, also add it to the `include_str!` in `expected_access`).
+  `pnpm test` (`tests/capabilities.test.mts`) checks per window that "the `allow-*` in each window's capability = the `invoke`
+  commands found by following imports from that window's page" (both missing and extra ones fail).
+  An `invoke` that passes the command name in a variable cannot be read, so write the possible values in the test's `DYNAMIC_INVOKES`.
+  If you add a window, add it to `WINDOW_PAGES` too.
+- Writing a permission that does not exist into a capability makes `tauri-build` fail at build time.
+- Autogenerated permissions are output to `src-tauri/permissions/autogenerated/` (gitignored).
 
 ## Rust Commands (src-tauri/src/lib.rs)
 
@@ -794,10 +792,10 @@ Tauri はアプリ独自のコマンドにも ACL を適用する。**宣言し�
 - `write_image_to_file` - Save annotated image (path restricted to the save directory, plus the
   files the user opened themselves in this session). `load_image_file` records each opened file's
   canonical path in `OpenedImages`, which is what allows Cmd+S to overwrite an image that lives
-  outside the save directory. 許可されるのは実体が一致するそのファイルだけで、
-  そのフォルダは開放しない。書き込み直前に `encode_for_target_format` が上書き先の拡張子へ
-  合わせて詰め直す (JPEG などは image crate、HEIC は sips)。変換先が無い拡張子は
-  **書かずにエラー** — PNG のまま書くと拡張子と中身が食い違い、上書きなので原本も戻せない
+  outside the save directory. Only that file, with a matching real path, is allowed;
+  its folder is not opened up. Right before writing, `encode_for_target_format` re-encodes to match the
+  extension of the file being overwritten (the image crate for JPEG etc., sips for HEIC). For extensions with no encoder,
+  it **does not write and returns an error** — writing it as PNG would make the extension and contents disagree, and since it overwrites, the original could not be recovered either
 - Common result loading: `load_screenshot_result()` shared by both capture commands
 
 ## Build & Check
@@ -807,108 +805,108 @@ Tauri はアプリ独自のコマンドにも ACL を適用する。**宣言し�
 - `pnpm check` for Svelte/TypeScript check
 - `pnpm test` for the frontend unit tests (`tests/*.test.mts`)
 - Run all four before committing
-- GUI の確認をインストール版の Flashcap と並べて行うには、identifier と HOME を分ける
-  (single-instance の socket は identifier から決まり、同じだとインストール版に引き渡されて終わる)。
-  mise (や asdf) の node shim は HOME に依存するので、node の実体を PATH の先頭に置く:
-  `PATH="<node の実体のディレクトリ>:$PATH" CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup HOME=<scratch> ./node_modules/.bin/tauri dev --config '{"identifier":"com.cyberneura.flashcap.devtest"}' -- -- <画像>`
-  (設定は `<scratch>/.config/flashcap/config.json` になる)。プロジェクト直下のファイル
-  (`flashcap.code-workspace` など) が書き換わると vite が全体をリロードし、起動引数で開いた画像が消える。
-  その時は同じ HOME で `target/debug/flashcap <画像>` をもう一度起動すれば single-instance 経由で開き直せる
+- To check the GUI side by side with an installed Flashcap, use a separate identifier and HOME
+  (the single-instance socket is derived from the identifier; if it is the same, the launch is handed to the installed app and ends there).
+  mise (and asdf) node shims depend on HOME, so put the real node binary first on PATH:
+  `PATH="<directory of the real node binary>:$PATH" CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup HOME=<scratch> ./node_modules/.bin/tauri dev --config '{"identifier":"com.cyberneura.flashcap.devtest"}' -- -- <image>`
+  (the settings go to `<scratch>/.config/flashcap/config.json`). When files directly in the project root
+  (such as `flashcap.code-workspace`) are rewritten, vite reloads everything and the image opened via the launch arguments disappears.
+  In that case, launching `target/debug/flashcap <image>` again with the same HOME reopens it through single-instance
 - Production build: `cargo build --release` in `src-tauri/` (run before push)
 
 ## Release (.github/workflows/release.yml + scripts/release.sh)
 
-配布は GitHub Release。**main の `tauri.conf.json` の version が未リリースなら、main への push で
-Actions が走り、署名+公証済み universal dmg が公開される**。`pnpm release [patch|minor|major]` は
-version を採番して main へ push し、その run を watch するだけ。PR の中で version を上げて
-マージしても同じくリリースされる。Homebrew cask (`cyberneura/homebrew-tap`) は tap 側が
-1 時間ごとに最新 Release を見て追従するので、こちらからは何もしない。
+Distribution is via GitHub Releases. **If the version in `tauri.conf.json` on main is unreleased, a push to main
+runs Actions and publishes a signed + notarized universal dmg**. `pnpm release [patch|minor|major]` only
+bumps the version, pushes to main and watches that run. Bumping the version inside a PR and
+merging it releases the same way. The Homebrew cask (`cyberneura/homebrew-tap`) follows on its own, since the tap
+checks the latest Release every hour, so nothing needs to be done from this side.
 
-- **起動は `push: main`、判定は `plan` ジョブ** (中身は `scripts/release-decide.sh`)。
-  `releases/tags/v<version>` が 404 ならリリース (draft は 404 になる。念のため 200 でも `.draft` が true なら未リリース扱い)、
-  200 なら何もしない、それ以外 (rate limit・障害) は失敗させる。障害を「未リリース」と読むと
-  公開済み version を二重に出しにいくため。diff ではなく version で決めるので、squash / rebase /
-  直 push のどれでも結果が同じになる (path フィルターも付けない)。
-- **未リリースでも、公開中の最新 Release より古い version は出さない** (`sort -V` で比較し、warning を
-  出して skip)。publish は `--latest` を付けるので、出すと最新が巻き戻って tap もダウングレードする。
-  version を上げた commit の revert (一度も出していない 0.2.0 に戻る等) と、pending の run が push 順と
-  逆に消化された時 (GitHub は順序を保証しない) に起きる。後者で飛ばされた version は、それを追い越した
-  新しい version に含まれているので出し直さない。比較のため version は X.Y.Z に限る。
-- **publish も公開直前に `release-decide.sh` をやり直す**。「Re-run failed jobs」は成功済みの `plan` を
-  再実行せず当時の `release=true` を使い回すので、その間に新しい version が出ていると巻き戻すため。
-  止めた場合は失敗させ、draft を残す。
-- **main への push でも、その version がリリース済みなら ubuntu の `plan` 1 本で終わる**。
-  「version を変えていないから何も起きない」ではない点に注意。build 失敗で draft が残っている間は
-  その version が未リリースなので、無関係な commit を push しても、その commit でビルド・公開される。
-  `test` は PR か「リリースする」判定の時だけ走る (`!cancelled()` で plan の skipped 連鎖を外している)。
-  `build` / `publish` は `needs.plan.outputs.release == 'true'` で止める。
-- **`workflow_dispatch` は失敗した run の再実行用に残してある**。`plan` を通るので公開済み version は
-  出せず、main 以外の ref からの dispatch は `plan` が拒否する。
-- **macOS と Windows をビルドする** (build の matrix)。macOS は
-  `--target universal-apple-darwin --bundles dmg` の `Flashcap_<version>_universal.dmg`
-  (x86_64 + arm64、署名 + 公証)。Windows は `--bundles nsis` の
-  `Flashcap_<version>_x64-setup.exe` (署名なし)。test も同じ 2 OS の matrix で走る。
-  Apple の Secret は macOS のステップにだけ渡す。
-- **macOS は tauri-action を使わず、build → dmg の公証 → upload を別ステップにしている**。
-  tauri CLI は `.app` を署名・公証・staple し、dmg には署名だけをする。dmg を公証しないと、
-  ダウンロードした dmg が `spctl -a -t open --context context:primary-signature` で
-  `rejected / Unnotarized Developer ID` になる。tauri-action は build と upload を 1 ステップで
-  行うので間に公証を挟めない。dmg は `xcrun notarytool submit --wait` (exit code と
-  `status == Accepted` の両方で判定。失敗時は `notarytool log` を出す) → `stapler staple` →
-  `stapler validate` → `spctl` で確かめ、draft の release ID 宛てに `gh api` (uploads.github.com)
-  で上げる (まだ draft かを先に確かめ、同名の asset は消してから上げる)。Windows は従来どおり
-  tauri-action が build と upload を行う。
-- **draft Release はビルド前の `draft` ジョブが 1 つ作り、tauri-action (Windows) と macOS の upload には ID で渡す**
-  (queryfolio と同じ構成)。tagName 方式だと、macOS と Windows がほぼ同時に終わった時に
-  両方が「無い」と判断して同じ tag の draft を 2 つ作る。失敗した run が残した draft は
-  再利用し、target をその run の commit に直す。
-- **draft → build → publish の構成**。build が全プラットフォーム成功した後に、publish ジョブが
-  `gh release edit --draft=false --latest` で公開する。失敗時は draft のまま残る。
-- **リリース済みの version は二度と出ない**。`plan` が公開済みの version を build へ行かせない。
-  macOS の upload ステップは上げる前に release がまだ draft かを確かめて止めるが、Windows の
-  tauri-action は公開状態を見ずに同名の asset を差し替えるので、そちらは `plan` の判定だけが頼り。
-  build 失敗で残った draft (tag がまだ無いので `plan` からは 404 に見える) は、次の push か
-  dispatch で同じ version のまま埋め直される (`draft` ジョブが一覧から探して再利用し、
-  tauri-action と macOS の upload ステップが同名 asset を差し替える)。
-- **publish の `--target "${GITHUB_SHA}"` は消さない**。`draft` ジョブも target を直しているが、
-  tag は公開時に target へ作られるので、公開の直前にもう一度合わせておく。ずれると tag と
-  成果物の中身が別の commit を指すことになる。
-- **`tauriScript: pnpm exec tauri` (Windows) と macOS の `pnpm exec tauri build` を `pnpm tauri` にしない**。
-  tauri-action は省略すると pnpm プロジェクトに対して `pnpm tauri build` を実行する。`pnpm tauri` だと
-  `package.json` の `tauri` スクリプトが持つインラインの `APPLE_SIGNING_IDENTITY=...` が workflow の env を上書きしてしまう (シェルのインライン代入は
-  継承 env より強い)。その結果 CI が Secret ではなくローカル用にハードコードした identity で
-  署名しようとする。`pnpm exec tauri` はスクリプトを経由しないので Secret が効く。
-- **`tauri.conf.json` の `signingIdentity: "-"` は消さない**。tauri-cli は
-  `APPLE_SIGNING_IDENTITY` env があればそれを優先する (env > config)。CI は Secret の
-  Developer ID で署名、env の無い素のローカルビルドは ad-hoc 署名、という両立のための設定。
-  `pnpm tauri` スクリプトは env を渡しているのでローカルも Developer ID で署名される。
-- **`uses:` はすべて commit SHA 固定**。Apple の秘密鍵入り証明書を keychain に置くジョブなので、
-  可変タグ (`@v0` / `@v4` / `@stable`) だと差し替え1つで証明書を抜かれうる。tauri-action だけ
-  固定しても、先行ステップの action が改変されれば同じことなので全部固定する。更新時は行末の
-  `# v4` コメントを頼りに、新しい SHA を調べて置き換えること。
-- **checkout は `persist-credentials: false`**。write 権限の `GITHUB_TOKEN` を `.git/config` に
-  残さない。Release 操作に必要な token は各ステップに env で明示的に渡している。
-- **証明書は一時 keychain に import し、`list-keychains` で検索リストにも入れる**。codesign は
-  default keychain ではなく検索リストから identity を引く。直後の `find-identity | grep` は
-  「identity 0 件でも exit 0」という仕様を潰すためのアサーションで、証明書が引けない状態を
-  ビルドの奥ではなくこのステップで落とす。
-- **`cancel-in-progress: false` + `queue: max` の両方を書く**。run 単位で直列にするので、後続 run の
-  `plan` は先行 run の publish 後に走り、同じ version を二重にビルドしない。既定の `queue: single` は
-  pending を 1 件しか保持せず、新しい run が既存 pending を置き換える。`queue: max` は 100 件まで積む。
-  PR の run は commit ごとの別グループなので、この直列化に巻き込まない。
-- **`dtolnay/rust-toolchain` の SHA は master 履歴から選ぶ**。`@stable` の指す SHA は生成ブランチ
-  stable の先端で、それを pin すると stable が進んだ時に commit が GC され、以降の run が Rust
-  セットアップ前に落ちる。master 履歴の SHA を pin し、ref から toolchain を推測できなくなる分
-  `toolchain: stable` を明示する。
-- **`pnpm publish` は使えない** (pnpm 組み込みコマンドで scripts から上書き不可)。
-  コマンド名は必ず `release`。
-- **`package.json` の version は飾り**だが、見た目の一貫性のため release.sh が
-  `tauri.conf.json` と同期させている。tauri-action が読むのは `tauri.conf.json` の方。
-- **弱点**: `pnpm release` は main へ直接 push する。ブランチ保護 (PR 必須) を掛けるとこのスクリプトは
-  使えなくなるが、PR で `tauri.conf.json` / `package.json` の version を上げてマージすれば同じくリリースされる。
-- 必要な GitHub Secrets (登録済み): `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` /
-  `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`。
-  `APPLE_PASSWORD` は App 用パスワード (通常の Apple ID パスワードでは公証が通らない)。
+- **Triggered by `push: main`, decided by the `plan` job** (implemented in `scripts/release-decide.sh`).
+  If `releases/tags/v<version>` is 404 it releases (a draft returns 404; to be safe, a 200 with `.draft` true is also treated as unreleased),
+  if 200 it does nothing, and anything else (rate limit, outage) fails the job. Reading an outage as "unreleased" would
+  try to publish an already-published version a second time. Because it decides by version rather than by diff, squash / rebase /
+  direct push all give the same result (no path filter is attached either).
+- **Even if unreleased, a version older than the latest published Release is not published** (compared with `sort -V`; it
+  prints a warning and skips). publish uses `--latest`, so publishing it would roll the latest back and downgrade the tap too.
+  This happens with a revert of a version-bump commit (going back to a never-published 0.2.0, etc.) and when pending runs are processed in the
+  reverse of push order (GitHub does not guarantee ordering). A version skipped in the latter case is included in the newer
+  version that overtook it, so it is not republished. For the comparison, versions are limited to X.Y.Z.
+- **publish also reruns `release-decide.sh` right before publishing**. "Re-run failed jobs" does not rerun the successful `plan`
+  and reuses the `release=true` from back then, so if a newer version was published in the meantime it would roll back.
+  If it stops, it fails and leaves the draft.
+- **Even on a push to main, if that version is already released it ends with a single ubuntu `plan` job**.
+  Note that this is not "nothing happens because the version did not change". While a draft remains after a build failure,
+  that version is unreleased, so pushing an unrelated commit builds and publishes from that commit.
+  `test` runs only for PRs or when the decision is "release" (`!cancelled()` removes the skipped chain from plan).
+  `build` / `publish` are gated by `needs.plan.outputs.release == 'true'`.
+- **`workflow_dispatch` is kept for rerunning failed runs**. It goes through `plan`, so it cannot publish an already-published version,
+  and `plan` rejects dispatches from refs other than main.
+- **Builds macOS and Windows** (the build matrix). macOS is
+  `Flashcap_<version>_universal.dmg` from `--target universal-apple-darwin --bundles dmg`
+  (x86_64 + arm64, signed + notarized). Windows is
+  `Flashcap_<version>_x64-setup.exe` from `--bundles nsis` (unsigned). test also runs on the same two-OS matrix.
+  The Apple secrets are passed only to the macOS steps.
+- **macOS does not use tauri-action; build → dmg notarization → upload are separate steps**.
+  The tauri CLI signs, notarizes and staples the `.app`, but only signs the dmg. Without notarizing the dmg,
+  a downloaded dmg is `rejected / Unnotarized Developer ID` by
+  `spctl -a -t open --context context:primary-signature`. tauri-action does build and upload in a single step,
+  so notarization cannot be inserted in between. The dmg goes through `xcrun notarytool submit --wait` (judged both by the exit code and by
+  `status == Accepted`; on failure it prints `notarytool log`) → `stapler staple` →
+  `stapler validate` → `spctl` checks, then is uploaded with `gh api` (uploads.github.com) to the draft's release ID
+  (it first checks that it is still a draft, and deletes any asset with the same name before uploading). Windows, as before, has
+  tauri-action do build and upload.
+- **A single `draft` job before the builds creates the draft Release, and its ID is passed to tauri-action (Windows) and the macOS upload**
+  (the same setup as queryfolio). With the tagName approach, when macOS and Windows finish almost simultaneously,
+  both decide "it does not exist" and create two drafts for the same tag. A draft left by a failed run is
+  reused, and its target is corrected to that run's commit.
+- **The structure is draft → build → publish**. After build succeeds on all platforms, the publish job
+  publishes with `gh release edit --draft=false --latest`. On failure it remains a draft.
+- **A released version is never published again**. `plan` does not let a published version go to build.
+  The macOS upload step checks that the release is still a draft before uploading and stops otherwise, but the Windows
+  tauri-action replaces same-named assets without looking at the publication state, so there only the `plan` decision protects it.
+  A draft left by a build failure (there is no tag yet, so it looks like 404 to `plan`) is refilled with the same version
+  on the next push or dispatch (the `draft` job finds it in the list and reuses it, and
+  tauri-action and the macOS upload step replace the same-named assets).
+- **Do not remove `--target "${GITHUB_SHA}"` from publish**. The `draft` job also corrects the target, but
+  the tag is created at the target on publication, so it is aligned once more right before publishing. If they drift, the tag and
+  the artifacts' contents point to different commits.
+- **Do not change `tauriScript: pnpm exec tauri` (Windows) or the macOS `pnpm exec tauri build` to `pnpm tauri`**.
+  If omitted, tauri-action runs `pnpm tauri build` for pnpm projects. With `pnpm tauri`, the inline
+  `APPLE_SIGNING_IDENTITY=...` in the `tauri` script of `package.json` overrides the workflow's env (an inline shell assignment is
+  stronger than the inherited env). As a result CI would try to sign with the identity hard-coded for local use instead of the secret.
+  `pnpm exec tauri` does not go through the script, so the secret takes effect.
+- **Do not remove `signingIdentity: "-"` from `tauri.conf.json`**. tauri-cli prefers the
+  `APPLE_SIGNING_IDENTITY` env if present (env > config). This setting lets CI sign with the secret's
+  Developer ID while a plain local build without the env gets an ad-hoc signature.
+  The `pnpm tauri` script passes the env, so local builds are also signed with the Developer ID.
+- **Every `uses:` is pinned to a commit SHA**. This job places a certificate containing the Apple private key in the keychain,
+  so with mutable tags (`@v0` / `@v4` / `@stable`) a single swap could steal the certificate. Pinning only tauri-action
+  is not enough: if an action in an earlier step were tampered with, the result would be the same, so pin all of them. When updating, use the
+  `# v4` comment at the end of the line as a guide, look up the new SHA and replace it.
+- **checkout uses `persist-credentials: false`**. Do not leave the write-permission `GITHUB_TOKEN` in `.git/config`.
+  The token needed for Release operations is passed explicitly to each step via env.
+- **The certificate is imported into a temporary keychain, which is also added to the search list with `list-keychains`**. codesign
+  looks up identities from the search list, not the default keychain. The `find-identity | grep` right after is an
+  assertion that defeats the behavior of "exit 0 even with 0 identities", so a state where the certificate cannot be found fails
+  at this step rather than deep inside the build.
+- **Write both `cancel-in-progress: false` and `queue: max`**. Runs are serialized, so a later run's
+  `plan` runs after the earlier run's publish, and the same version is not built twice. The default `queue: single`
+  keeps only one pending run, and a new run replaces the existing pending one. `queue: max` queues up to 100.
+  PR runs are in a separate group per commit, so they are not caught up in this serialization.
+- **Pick the `dtolnay/rust-toolchain` SHA from the master history**. The SHA that `@stable` points to is the tip of the generated branch
+  stable; if you pin it, when stable moves on that commit gets GCed and subsequent runs fail before Rust
+  setup. Pin a SHA from the master history, and since the toolchain can no longer be inferred from the ref,
+  state `toolchain: stable` explicitly.
+- **`pnpm publish` cannot be used** (it is a pnpm built-in command and cannot be overridden by scripts).
+  The command name must be `release`.
+- **The version in `package.json` is decorative**, but for visual consistency release.sh keeps it in sync with
+  `tauri.conf.json`. tauri-action reads the one in `tauri.conf.json`.
+- **Weakness**: `pnpm release` pushes directly to main. If branch protection (PR required) is enabled this script
+  can no longer be used, but bumping the version in `tauri.conf.json` / `package.json` in a PR and merging it releases the same way.
+- Required GitHub Secrets (registered): `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` /
+  `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`.
+  `APPLE_PASSWORD` is an app-specific password (notarization does not pass with the normal Apple ID password).
 
 ## Framework Note
 

@@ -9,7 +9,7 @@
     toolActive: boolean;
     interactive: boolean;
     scale: number;
-    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Retina の撮影」) */
+    /** 線の太さ・文字の大きさに掛ける倍率。Retina の撮影なら 2 (AGENTS.md の「Annotations on Retina captures」) */
     annotationScale?: number;
     /** 画像の明るさの地図。蛍光ペンを乗算で重ねるか半透明で重ねるかの判定に使う (highlight.ts) */
     lumaMap?: LumaMap | null;
