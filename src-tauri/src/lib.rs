@@ -2224,6 +2224,56 @@ mod tests {
         chmod(tmp.path(), 0o700);
     }
 
+    /// `base/share/` に通常ファイルを 1 つ置いて、そのパスを返す
+    fn put_share_file(base: &Path) -> std::path::PathBuf {
+        let share = base.join("share");
+        create_private_dir(&share).unwrap();
+        let file = share.join("flashcap-share-1.png");
+        std::fs::write(&file, b"png").unwrap();
+        file
+    }
+
+    #[test]
+    fn cleanup_share_dir_removes_files_when_the_workdir_is_trusted() {
+        let tmp = TempDir::new("share-ok");
+        let base = tmp.path().join("flashcap");
+        let file = put_share_file(&base);
+        share_image::cleanup_share_dir_with(|| Ok(base.clone()));
+        assert!(!file.exists(), "信頼できる作業ディレクトリなら掃除する");
+    }
+
+    #[test]
+    fn cleanup_share_dir_leaves_files_when_an_ancestor_is_writable_by_others() {
+        // 書き込み側 (share_dir) が拒否する状態 = 祖先が他人に書ける時は、掃除もしない
+        let tmp = TempDir::new("share-meddle");
+        let base = tmp.path().join("flashcap");
+        let file = put_share_file(&base);
+
+        chmod(tmp.path(), 0o777);
+        share_image::cleanup_share_dir_with(|| {
+            reject_if_others_can_meddle(&base).map(|()| base.clone())
+        });
+        chmod(tmp.path(), 0o700);
+
+        assert!(
+            file.exists(),
+            "検査に落ちた作業ディレクトリの中を消してはいけない"
+        );
+    }
+
+    #[test]
+    fn cleanup_share_dir_does_not_follow_a_symlinked_share_dir() {
+        let tmp = TempDir::new("share-link");
+        let elsewhere = tmp.path().join("elsewhere");
+        let victim = put_share_file(&elsewhere);
+        let base = tmp.path().join("flashcap");
+        create_private_dir(&base).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("share"), base.join("share")).unwrap();
+
+        share_image::cleanup_share_dir_with(|| Ok(base.clone()));
+        assert!(victim.exists(), "share が symlink ならリンク先を消さない");
+    }
+
     #[test]
     fn rejects_a_group_writable_ancestor_even_without_other_bit() {
         // 0o020 だけでも拒否する (0o022 のうち片方しか立っていないケース)
