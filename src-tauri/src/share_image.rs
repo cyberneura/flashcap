@@ -70,17 +70,37 @@ fn share_dir() -> Result<PathBuf, String> {
 }
 
 /// 起動時に前回の縮小画像を消す (best-effort)。共有に渡した後は要らないので溜めない。
-/// **symlink は辿らない**: `share` 自体が symlink なら (別の場所を指しているなら) 中を列挙せず、
-/// 中の項目も `symlink_metadata` で通常ファイルのものだけ消す (リンク先を消さない)
+///
+/// **掃除の前に、書き込み側 (`share_dir`) と同じ `ensure_private_flashcap_dir()` を通す。**
+/// 末尾の `share` を symlink_metadata で見るだけでは、親の `$TMPDIR/flashcap` や一時ディレクトリ
+/// そのものが他人に差し替えられている場合を防げない (TMPDIR が無く `/tmp` に落ちた起動で、
+/// 他のユーザーが `/tmp/flashcap` を symlink にすると、別の場所の `share` 直下のファイルを
+/// 消させられる)。書き込み側はこの状態を拒否して止まるので、掃除も同じ条件で何もしない
 pub(crate) fn cleanup_share_dir() {
-    let dir = crate::flashcap_temp_dir().join("share");
-    let Ok(meta) = std::fs::symlink_metadata(&dir) else {
+    cleanup_share_dir_with(crate::ensure_private_flashcap_dir);
+}
+
+/// `cleanup_share_dir` の本体。作業ディレクトリの用意 (検査) を差し替えられるようにしてある
+/// (テストで `ensure_private_flashcap_dir` の代わりに使うため。あちらは `std::env::temp_dir()`
+/// を見るので、テストから祖先の権限を作り分けられない)。用意に失敗したら何も消さない
+pub(crate) fn cleanup_share_dir_with(prepare: impl FnOnce() -> std::io::Result<PathBuf>) {
+    let Ok(base) = prepare() else {
+        return;
+    };
+    remove_regular_files_in(&base.join("share"));
+}
+
+/// `dir` 直下の通常ファイルを消す。**symlink は辿らない**: `dir` 自体が symlink なら
+/// (別の場所を指しているなら) 中を列挙せず、中の項目も `symlink_metadata` で通常ファイルの
+/// ものだけ消す (リンク先を消さない)
+fn remove_regular_files_in(dir: &Path) {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
         return;
     };
     if !meta.is_dir() {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
