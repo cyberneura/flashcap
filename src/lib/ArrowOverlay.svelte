@@ -28,6 +28,8 @@
   /** 丸ごと動かしている複製の、動かし始めの位置 */
   let moveOrig: Arrow | null = null;
   let drawingArrow = $state<Arrow | null>(null);
+  /** 端点の移動中に一度でもポインターが動いたか。動かずに離したら mouseup で座標を書き換えない */
+  let endpointMoved = false;
   let hoverCursor = $state<string>("default");
 
   function headSize(thickness: number): number {
@@ -209,6 +211,7 @@
       const moved = offsetArrowCopy(moveOrig, pt.x - duplicateStart.x, pt.y - duplicateStart.y, moveOrig.id);
       onArrowsChange(arrows.map((a) => (a.id === selectedId ? moved : a)));
     } else {
+      if (dragging === "move-start" || dragging === "move-end") endpointMoved = true;
       applyEndpointDrag(pt, e.shiftKey);
     }
   }
@@ -241,10 +244,12 @@
   }
 
   function handleMouseUp(e: MouseEvent) {
-    if (dragging === "draw" || dragging === "move-start" || dragging === "move-end") {
+    // 端点は実際に動かした時だけ (ハンドルを押して離しただけで、押した位置へ端点がずれないように)
+    if (dragging === "draw" || ((dragging === "move-start" || dragging === "move-end") && endpointMoved)) {
       const pt = getSvgCoords(e);
       if (pt) applyEndpointDrag(pt, e.shiftKey);
     }
+    endpointMoved = false;
     // Option / Alt を押して離しただけ: 複製せずに選ぶ
     if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
     duplicateSource = null;
