@@ -93,6 +93,9 @@ fails, install them with `xcode-select --install`.
 - Timer capture (configurable delay: 3/5/10 seconds)
 - Arrow annotation tool (color, thickness, white stroke, drop shadow), with a Line shape (no arrowhead)
   for underlines, separators and dimension lines; hold Shift to snap to 0 / 45 / 90 degrees
+- Pen tool: draw freehand to circle or underline things that do not fit a rectangle. The line is
+  smoothed and uses the arrow tool's color, thickness, white stroke and drop shadow; select a line
+  to move, restyle, duplicate or delete it
 - Rectangle and ellipse tools (color, thickness, white stroke, drop shadow; hold Shift for a
   square / circle) with resize/move handles
 - Highlighter tool: drag a translucent rectangle over a line of text to make it stand out
@@ -130,7 +133,7 @@ fails, install them with `xcode-select --install`.
   file from Finder
 - Screen recording (macOS only)
 - Configurable save location (tmp / OS default / custom folder)
-- Restyle placed annotations: select an arrow, shape, highlighter, text, step marker or mask and
+- Restyle placed annotations: select an arrow, pen line, shape, highlighter, text, step marker or mask and
   change its color, thickness, white border, shadow (text: size, bold, italic; mask: mode, fill
   color) from the toolbar. The change applies to that annotation only (one undo step; dragging
   the color picker counts as one) and does not change the settings for the next annotation
@@ -140,7 +143,7 @@ fails, install them with `xcode-select --install`.
 - Keyboard shortcuts (ESC to quit, Delete to remove selected annotation, ⌘Z to undo, ⌘⇧Z to redo,
   ⌘V to paste an image, ⌘C / ⌘⇧C to copy the file path / image, ⌘S to save, ⌘D to duplicate the selected annotation; Ctrl instead of ⌘ on
   Windows, where Ctrl+Y also redoes)
-- Single-key tool shortcuts while an image is open: `A` arrow, `L` line, `R` rectangle, `E` ellipse,
+- Single-key tool shortcuts while an image is open: `A` arrow, `L` line, `P` pen, `R` rectangle, `E` ellipse,
   `H` highlighter, `S` spotlight, `N` step marker, `T` text, `M` mask, `C` crop (press again to leave the tool;
   ignored while typing in a text annotation or any other field)
 - Shell commands (macOS only): register commands in Preferences and run them on the open image

@@ -18,6 +18,7 @@
 
   let {
     arrowToolActive,
+    penToolActive,
     maskToolActive,
     shapeToolActive,
     textToolActive,
@@ -44,6 +45,7 @@
     isCapturing,
     timerDelay,
     onToggleArrowTool,
+    onTogglePenTool,
     onToggleMaskTool,
     onRedactSensitiveText,
     redactBusy,
@@ -82,6 +84,7 @@
     onToggleSidebar,
   }: {
     arrowToolActive: boolean;
+    penToolActive: boolean;
     maskToolActive: boolean;
     shapeToolActive: boolean;
     textToolActive: boolean;
@@ -108,6 +111,7 @@
     isCapturing: boolean;
     timerDelay: number;
     onToggleArrowTool: () => void;
+    onTogglePenTool: () => void;
     onToggleMaskTool: () => void;
     /** OCR でメール / IP / トークン等を見つけて自動でマスクを置く (macOS のみ) */
     onRedactSensitiveText: () => void;
@@ -140,7 +144,7 @@
      * 選択中の注釈の種類。あればツールが有効でなくてもその種類の設定を出し、値は選択中の注釈のもの
      * (`arrowSettings` などは +page.svelte が選択中の注釈の値に差し替えて渡す)
      */
-    selectionKind: "arrow" | "shape" | "mask" | "text" | "step" | null;
+    selectionKind: "arrow" | "stroke" | "shape" | "mask" | "text" | "step" | null;
     /** 選択中の図形の種別 (矩形・楕円・蛍光ペン・スポットライトで出す設定が違う) */
     selectedShapeType: ShapeType | null;
     highlightCapture: boolean;
@@ -248,27 +252,41 @@
     <i class="bi bi-arrow-up-right"></i>
   </button>
 
-  {#if arrowToolActive || selectionKind === "arrow"}
+  <!-- Freehand pen (CYBERNEURA-DEV-1401). It uses the arrow tool's color / thickness / white border / shadow -->
+  <button
+    class="tool-btn"
+    class:active={penToolActive}
+    onclick={onTogglePenTool}
+    aria-label="Pen tool"
+    data-tooltip="Pen tool ({toolShortcutLabel('pen')})"
+  >
+    <i class="bi bi-pencil"></i>
+  </button>
+
+  {#if arrowToolActive || penToolActive || selectionKind === "arrow" || selectionKind === "stroke"}
+    {@const isPen = selectionKind === "stroke" || (penToolActive && selectionKind !== "arrow")}
     <div class="tool-settings">
-      <!-- 形: 矢印 (頭あり) / 直線 (頭なし)。選択中の矢印なら形だけ変わる (CYBERNEURA-DEV-1402) -->
-      <button
-        class="tool-btn"
-        class:active={arrowSettings.head !== "none"}
-        onclick={() => onUpdateArrowSetting("head", "start")}
-        aria-label="Arrow shape"
-        data-tooltip="Arrow ({toolShortcutLabel('arrow')})"
-      >
-        <i class="bi bi-arrow-up-right"></i>
-      </button>
-      <button
-        class="tool-btn"
-        class:active={arrowSettings.head === "none"}
-        onclick={() => onUpdateArrowSetting("head", "none")}
-        aria-label="Line shape"
-        data-tooltip="Line ({toolShortcutLabel('line')})"
-      >
-        <i class="bi bi-slash-lg"></i>
-      </button>
+      {#if !isPen}
+        <!-- 形: 矢印 (頭あり) / 直線 (頭なし)。選択中の矢印なら形だけ変わる (CYBERNEURA-DEV-1402) -->
+        <button
+          class="tool-btn"
+          class:active={arrowSettings.head !== "none"}
+          onclick={() => onUpdateArrowSetting("head", "start")}
+          aria-label="Arrow shape"
+          data-tooltip="Arrow ({toolShortcutLabel('arrow')})"
+        >
+          <i class="bi bi-arrow-up-right"></i>
+        </button>
+        <button
+          class="tool-btn"
+          class:active={arrowSettings.head === "none"}
+          onclick={() => onUpdateArrowSetting("head", "none")}
+          aria-label="Line shape"
+          data-tooltip="Line ({toolShortcutLabel('line')})"
+        >
+          <i class="bi bi-slash-lg"></i>
+        </button>
+      {/if}
 
       <input
         type="color"
@@ -276,14 +294,14 @@
         value={arrowSettings.color}
         oninput={(e) => onUpdateArrowSetting("color", colorOf(e), true)}
         onchange={onEndStyleEdit}
-        data-tooltip="Arrow color"
+        data-tooltip={isPen ? "Pen color" : "Arrow color"}
       />
 
       <select
         class="bg-neutral-700 text-neutral-300 border border-neutral-600 rounded px-1.5 py-1 text-xs cursor-pointer"
         value={arrowSettings.thickness}
         onchange={(e) => onUpdateArrowSetting("thickness", numberOf(e))}
-        data-tooltip="Arrow thickness"
+        data-tooltip={isPen ? "Pen thickness" : "Arrow thickness"}
       >
         <option value={2}>Thin</option>
         <option value={4}>Medium</option>
