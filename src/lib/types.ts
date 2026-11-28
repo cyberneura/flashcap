@@ -1,3 +1,6 @@
+/** 矢印の形。`start` = 始点側に頭 (Skitch 式)、`none` = 頭なしの直線 (CYBERNEURA-DEV-1402) */
+export type ArrowHead = "start" | "none";
+
 export interface Arrow {
   id: string;
   startX: number;
@@ -8,6 +11,7 @@ export interface Arrow {
   thickness: number;
   whiteStroke: boolean;
   dropShadow: boolean;
+  head: ArrowHead;
 }
 
 export interface ArrowSettings {
@@ -15,6 +19,7 @@ export interface ArrowSettings {
   thickness: number;
   whiteStroke: boolean;
   dropShadow: boolean;
+  head: ArrowHead;
 }
 
 export type MaskMode = "mosaic" | "blur" | "fill";

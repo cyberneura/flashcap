@@ -71,7 +71,7 @@ check("text copies keep their text", () => {
 });
 
 check("offsetArrowCopy moves both ends", () => {
-  const a: Arrow = { id: "a", startX: 1, startY: 2, endX: 30, endY: 40, color: "#f00", thickness: 4, whiteStroke: true, dropShadow: false };
+  const a: Arrow = { id: "a", startX: 1, startY: 2, endX: 30, endY: 40, color: "#f00", thickness: 4, whiteStroke: true, dropShadow: false, head: "none" };
   const c = offsetArrowCopy(a, 5, -3, "b");
   assert.deepEqual([c.id, c.startX, c.startY, c.endX, c.endY], ["b", 6, -1, 35, 37]);
   assert.equal(c.thickness, 4);
