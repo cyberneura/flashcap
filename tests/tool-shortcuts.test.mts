@@ -36,6 +36,7 @@ check("each key selects its tool", () => {
   assert.equal(toolForKey(key("a"), body, ready), "arrow");
   assert.equal(toolForKey(key("l"), body, ready), "line");
   assert.equal(toolForKey(key("L"), body, ready), "line"); // CapsLock
+  assert.equal(toolForKey(key("p"), body, ready), "pen");
   assert.equal(toolForKey(key("r"), body, ready), "rect");
   assert.equal(toolForKey(key("e"), body, ready), "ellipse");
   assert.equal(toolForKey(key("h"), body, ready), "highlight");
@@ -123,6 +124,7 @@ check("toolShortcutLabel gives the uppercase key for tooltips", () => {
   assert.equal(toolShortcutLabel("text"), "T");
   assert.equal(toolShortcutLabel("mask"), "M");
   assert.equal(toolShortcutLabel("crop"), "C");
+  assert.equal(toolShortcutLabel("pen"), "P");
 });
 
 if (failures > 0) {

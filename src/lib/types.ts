@@ -22,6 +22,25 @@ export interface ArrowSettings {
   head: ArrowHead;
 }
 
+export interface StrokePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Freehand pen stroke (CYBERNEURA-DEV-1401). `points` are in image natural-resolution px.
+ * Color, thickness, white border and shadow come from the arrow tool's settings (`ArrowSettings`)
+ * at the time it is drawn; there are no pen-specific settings.
+ */
+export interface Stroke {
+  id: string;
+  points: StrokePoint[];
+  color: string;
+  thickness: number;
+  whiteStroke: boolean;
+  dropShadow: boolean;
+}
+
 export type MaskMode = "mosaic" | "blur" | "fill";
 
 export interface MaskRect {

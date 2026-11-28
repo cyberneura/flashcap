@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Unit tests for edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts / arrow-shape (`node --experimental-strip-types`, no test runner dependency)
+- `pnpm test` - Unit tests for edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts / arrow-shape / stroke (`node --experimental-strip-types`, no test runner dependency)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 The same operations are also listed in `j-menu.yaml` (pick them with `j`).
@@ -277,9 +277,36 @@ restyle and `annotationScale` are all the arrow's.
 - Shift while drawing or dragging an end point snaps to 0 / 45 / 90 degrees around the other end (`snapEndpoint`; for both shapes).
 - Tests are in `tests/arrow-shape.test.mts`.
 
+## Freehand pen (src/lib/stroke.ts + src/lib/StrokeOverlay.svelte, CYBERNEURA-DEV-1401)
+
+A dragged line kept as `Stroke.points` (image natural-resolution px) in its own array, `strokes` in `+page.svelte`.
+The toolbar button is `bi-pencil`, right after the arrow, and the key is `P`.
+
+- **The pen has no settings of its own.** It is drawn with the arrow tool's `color` / `thickness` / `whiteStroke` / `dropShadow`
+  (`arrow_settings`), and the toolbar shows the arrow settings without the arrow / line shape buttons while the pen is active or a stroke is selected.
+  With a stroke selected, `updateArrowSetting` restyles only that stroke (selection kind `"stroke"`; `head` is ignored).
+- **Thinning and smoothing**: while drawing, a point closer than `STROKE_MIN_STEP` screen px to the last kept point is dropped
+  (`appendStrokePoint`), and the release position is always added (`finishStrokePoints`). A stroke shorter than 5 image px is discarded (like the arrow).
+  `strokePath` turns the points into SVG path data with midpoint-smoothed quadratic Béziers that start and end on the real points.
+- **The screen and the export draw the same path string**: `<path d>` in `StrokeOverlay.svelte` and `new Path2D(strokePath(...))` in
+  `renderComposite`. Round caps and joins in both; thickness, white border (+4) and shadow are multiplied by `annotationScale` like the arrow,
+  and the shadow goes on the white border if there is one, otherwise on the body (the shared offscreen `transferWithShadow`).
+- **Stacking order**: `StrokeOverlay` sits right above `ArrowOverlay`, and the export draws strokes right after the arrows.
+- **Pointer handling is StepOverlay's**: the whole svg takes the pointer only while the pen tool is active; otherwise only invisible hit paths
+  (`pointer-events="stroke"`, width = drawn width x 2 + 12 screen px, the same tolerance as `hitsStroke`) do, so this overlay does not steal
+  presses meant for the arrows below. Move / up are received on window, and a press on the image outside the svg clears the selection.
+- Pressing a stroke selects it; dragging it moves the whole stroke, with `pushUndo` on the first movement beyond `exceedsDragSlop` (not on press).
+  Option / Alt+drag duplicates, ⌘D duplicates (`offsetStrokeCopy`), Delete / Backspace removes. Cropping translates the points (not clamped, like arrows).
+- Hit testing is the distance to the drawn curve (`distToStroke` over `strokeCurvePoints`, the quadratics flattened at 8 steps), with the arrow's
+  tolerance (drawn thickness x `annotationScale` + 6 screen px). **Not to the polyline through the kept points** — at a sharp corner the smoothed curve
+  cuts inside by half a segment, so a press on the visible line could miss.
+- **Undo is pushed when a new stroke is committed (mouseup), not on press** (a click that draws nothing must not add an empty step or drop Redo).
+- When the image is replaced (`applyScreenshotResult`), `cancelGesture()` drops a line being drawn so it does not land on the new image.
+- Tests are in `tests/stroke.test.mts`.
+
 ## Single-letter tool keys (src/lib/toolShortcuts.ts)
 
-A single letter with no modifier switches the annotation tool (CYBERNEURA-DEV-1265). `A` arrow / `L` line (the arrow tool with the line shape) / `R` rectangle / `E` ellipse /
+A single letter with no modifier switches the annotation tool (CYBERNEURA-DEV-1265). `A` arrow / `L` line (the arrow tool with the line shape) / `P` pen / `R` rectangle / `E` ellipse /
 `H` highlighter / `S` spotlight / `N` step / `T` text / `M` mask / `C` crop. Same keys on macOS and Windows.
 These are not app-wide global hotkeys, only keydown while the window has focus.
 
@@ -326,6 +353,7 @@ images = saved images, image = this image).
 | Thumbnail browser | `bi-images` | List of saved images |
 | Arrow / rectangle / ellipse / step / text | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | The shape of the thing being drawn |
 | Arrow shape: arrow / line | `bi-arrow-up-right` / `bi-slash-lg` | In the arrow tool's settings (with an arrowhead / a plain line) |
+| Pen | `bi-pencil` | Freehand line (next to the arrow) |
 | Highlighter | `bi-highlighter` | Semi-transparent fill that makes text stand out (a type of the shape tool, like rectangle / ellipse) |
 | Spotlight | `bi-brightness-high` | Darkens outside the area (a type of the shape tool). The darkness picker is `bi-moon` |
 | White outline / shadow | `bi-border-outer` / `bi-shadows` | Outline / shadow (shared by the four tools) |

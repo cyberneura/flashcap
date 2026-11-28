@@ -10,6 +10,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import ArrowOverlay from "$lib/ArrowOverlay.svelte";
+  import StrokeOverlay from "$lib/StrokeOverlay.svelte";
   import MaskOverlay from "$lib/MaskOverlay.svelte";
   import ShapeOverlay from "$lib/ShapeOverlay.svelte";
   import HighlightLayer from "$lib/HighlightLayer.svelte";
@@ -29,6 +30,7 @@
   import { isModKey, isWindows } from "$lib/platform";
   import { toolForKey, type ShortcutTool } from "$lib/toolShortcuts";
   import { DUPLICATE_OFFSET, isDuplicateKey, offsetArrowCopy, offsetCopy, stepsWithDuplicate } from "$lib/duplicate";
+  import { offsetStrokeCopy, strokePath } from "$lib/stroke";
   import {
     DEFAULT_HIGHLIGHT_COLOR,
     highlightPaint,
@@ -70,12 +72,13 @@
   } from "$lib/shellCommands";
 
   let arrowOverlayRef = $state<ReturnType<typeof ArrowOverlay> | null>(null);
+  let strokeOverlayRef = $state<ReturnType<typeof StrokeOverlay> | null>(null);
   let maskOverlayRef = $state<ReturnType<typeof MaskOverlay> | null>(null);
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
   let stepOverlayRef = $state<ReturnType<typeof StepOverlay> | null>(null);
   import { DEFAULT_ARROW_HEAD, hasArrowHead, parseArrowHead } from "$lib/arrowShape";
-  import type { Arrow, ArrowHead, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, ShapeType, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
+  import type { Arrow, ArrowHead, ArrowSettings, AutoCopyMode, Stroke, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, ShapeType, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -173,6 +176,10 @@
     dropShadow: true,
     head: DEFAULT_ARROW_HEAD,
   });
+
+  // Freehand pen (CYBERNEURA-DEV-1401). Color / thickness / white border / shadow are the arrow tool's settings
+  let penToolActive = $state(false);
+  let strokes = $state<Stroke[]>([]);
 
   // Mask tool state
   let maskToolActive = $state(false);
@@ -281,7 +288,7 @@
   let imageGeneration = 0;
   $effect(() => {
     void imageBase64;
-    JSON.stringify([arrows, masks, shapes, textAnnotations, steps]);
+    JSON.stringify([arrows, strokes, masks, shapes, textAnnotations, steps]);
     // 書き出す絵に効く設定 (renderComposite が読むもの)。Preferences から変えられる
     void maskSettings.blurRadius;
     void maskSettings.mosaicBlockSize;
@@ -307,6 +314,7 @@
   // Undo history
   interface EditSnapshot {
     arrows: Arrow[];
+    strokes: Stroke[];
     masks: MaskRect[];
     shapes: Shape[];
     texts: TextAnnotation[];
@@ -325,6 +333,7 @@
   function captureSnapshot(): EditSnapshot {
     return {
       arrows: structuredClone($state.snapshot(arrows)),
+      strokes: structuredClone($state.snapshot(strokes)),
       masks: structuredClone($state.snapshot(masks)),
       shapes: structuredClone($state.snapshot(shapes)),
       texts: structuredClone($state.snapshot(textAnnotations)),
@@ -348,29 +357,33 @@
   // ツールバーの変更はその注釈だけを書き換える (次に描く注釈の設定 = config は変えない)。
   // 選択が無い時は従来どおり設定を変える。選択はオーバーレイをまたいで 1 つだけ (下の $effect)。
   let arrowSelectedId = $state<string | null>(null);
+  let strokeSelectedId = $state<string | null>(null);
   let maskSelectedId = $state<string | null>(null);
   let shapeSelectedId = $state<string | null>(null);
   let textSelectedId = $state<string | null>(null);
   let textEditingId = $state<string | null>(null);
   let stepSelectedId = $state<string | null>(null);
 
-  type SelectionKind = "arrow" | "shape" | "mask" | "text" | "step";
+  type SelectionKind = "arrow" | "stroke" | "shape" | "mask" | "text" | "step";
 
   /** `keep` 以外のオーバーレイの選択を外す (Delete やツールバーの変更が 2 つに効かないように) */
   function deselectOthers(keep: SelectionKind) {
     if (keep !== "arrow") arrowOverlayRef?.deselect();
+    if (keep !== "stroke") strokeOverlayRef?.deselect();
     if (keep !== "mask") maskOverlayRef?.deselect();
     if (keep !== "shape") shapeOverlayRef?.deselect();
     if (keep !== "text" && textSelectedId) textOverlayRef?.deselect();
     if (keep !== "step") stepOverlayRef?.deselect();
   }
   $effect(() => { if (arrowSelectedId) untrack(() => deselectOthers("arrow")); });
+  $effect(() => { if (strokeSelectedId) untrack(() => deselectOthers("stroke")); });
   $effect(() => { if (maskSelectedId) untrack(() => deselectOthers("mask")); });
   $effect(() => { if (shapeSelectedId) untrack(() => deselectOthers("shape")); });
   $effect(() => { if (textSelectedId) untrack(() => deselectOthers("text")); });
   $effect(() => { if (stepSelectedId) untrack(() => deselectOthers("step")); });
 
   let selectedArrow = $derived(arrows.find((a) => a.id === arrowSelectedId) ?? null);
+  let selectedStroke = $derived(strokes.find((st) => st.id === strokeSelectedId) ?? null);
   let selectedMask = $derived(masks.find((m) => m.id === maskSelectedId) ?? null);
   let selectedShape = $derived(shapes.find((sh) => sh.id === shapeSelectedId) ?? null);
   // 入力中のテキストは従来どおり (設定と入力中のテキストの両方に効かせる。updateTextSetting)
@@ -379,11 +392,23 @@
   );
   let selectedStep = $derived(steps.find((st) => st.id === stepSelectedId) ?? null);
   let selectionKind = $derived<SelectionKind | null>(
-    selectedArrow ? "arrow" : selectedShape ? "shape" : selectedMask ? "mask" : selectedText ? "text" : selectedStep ? "step" : null,
+    selectedArrow ? "arrow" : selectedStroke ? "stroke" : selectedShape ? "shape" : selectedMask ? "mask" : selectedText ? "text" : selectedStep ? "step" : null,
   );
 
   // ツールバーに出す値。選択中の注釈があればその値、無ければ設定
-  let arrowPanel = $derived<ArrowSettings>(selectedArrow ?? arrowSettings);
+  // A selected pen stroke shows its values in the arrow settings (the pen has no settings of its own)
+  let arrowPanel = $derived<ArrowSettings>(
+    selectedArrow ??
+      (selectedStroke
+        ? {
+            ...arrowSettings,
+            color: selectedStroke.color,
+            thickness: selectedStroke.thickness,
+            whiteStroke: selectedStroke.whiteStroke,
+            dropShadow: selectedStroke.dropShadow,
+          }
+        : arrowSettings),
+  );
   let maskPanel = $derived<MaskSettings>(
     selectedMask ? { ...maskSettings, mode: selectedMask.mode, color: selectedMask.color } : maskSettings,
   );
@@ -446,6 +471,10 @@
       pushUndo();
       arrows = [...arrows, offsetArrowCopy(selectedArrow, d, d, id)];
       arrowSelectedId = id;
+    } else if (selectedStroke) {
+      pushUndo();
+      strokes = [...strokes, offsetStrokeCopy(selectedStroke, d, d, id)];
+      strokeSelectedId = id;
     } else if (selectedShape) {
       pushUndo();
       shapes = [...shapes, offsetCopy(selectedShape, d, d, id)];
@@ -466,6 +495,13 @@
   }
 
   function updateArrowSetting<K extends keyof ArrowSettings>(key: K, value: ArrowSettings[K], continuous = false) {
+    const stroke = selectedStroke;
+    if (stroke) {
+      // A stroke has no head (the shape buttons are not shown for the pen)
+      if (key === "head") return;
+      restyle("stroke", stroke, { [key]: value } as Partial<Stroke>, (u) => (strokes = strokes.map((st) => (st.id === u.id ? u : st))), continuous);
+      return;
+    }
     const sel = selectedArrow;
     if (!sel) {
       arrowSettings[key] = value;
@@ -502,6 +538,7 @@
   /** Undo / Redo で取り出したスナップショットを画面に反映する */
   function applySnapshot(entry: EditSnapshot) {
     arrows = entry.arrows;
+    strokes = entry.strokes;
     masks = entry.masks;
     shapes = entry.shapes;
     textAnnotations = entry.texts;
@@ -527,7 +564,7 @@
    * 土台画像は含めない (画像が変わるのはトリミングだけで、必ず pushUndo を通る)
    */
   function annotationSignature(): string {
-    return JSON.stringify([arrows, masks, shapes, textAnnotations, steps]);
+    return JSON.stringify([arrows, strokes, masks, shapes, textAnnotations, steps]);
   }
 
   function undo() {
@@ -559,12 +596,12 @@
   let viewportHeight = $state(0);
 
   let noToolActive = $derived(
-    !arrowToolActive && !maskToolActive && !shapeToolActive && !textToolActive &&
+    !arrowToolActive && !penToolActive && !maskToolActive && !shapeToolActive && !textToolActive &&
     !stepToolActive && !ocrSelectionActive && !cropToolActive
   );
 
   let hasAnnotations = $derived(
-    arrows.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0 ||
+    arrows.length > 0 || strokes.length > 0 || masks.length > 0 || shapes.length > 0 || textAnnotations.length > 0 ||
     steps.length > 0
   );
 
@@ -1029,7 +1066,10 @@
     imageBase64 = result.data;
     imageUrl = `data:image/png;base64,${result.data}`;
     filePath = result.file_path;
+    // A line being drawn on the previous image must not be committed onto this one on mouseup
+    strokeOverlayRef?.cancelGesture();
     arrows = [];
+    strokes = [];
     masks = [];
     shapes = [];
     textAnnotations = [];
@@ -1229,6 +1269,7 @@
       imageBase64 = null;
       filePath = null;
       arrows = [];
+      strokes = [];
       masks = [];
       shapes = [];
       textAnnotations = [];
@@ -1401,6 +1442,7 @@
         let offCtx: CanvasRenderingContext2D | null = null;
         const needsOffscreen =
           arrows.some((a) => a.dropShadow) ||
+          strokes.some((st) => st.dropShadow) ||
           shapes.some((s) => s.dropShadow) ||
           textAnnotations.some((t) => t.dropShadow && t.whiteStroke) ||
           steps.some((s) => s.dropShadow);
@@ -1661,6 +1703,37 @@
           }
         }
 
+        // Pen strokes (CYBERNEURA-DEV-1401): the same path string as StrokeOverlay.svelte (strokePath).
+        // Drawn after masks, shapes and text and before the step badges — the same stacking as on screen
+        // (StrokeOverlay sits above MaskOverlay / ShapeOverlay / TextOverlay / ArrowOverlay and below StepOverlay),
+        // so a line crossing a fill mask is not cut in the export. White border and shadow follow the arrow's rules
+        for (const stroke of strokes) {
+          if (stroke.points.length === 0) continue;
+          const path = new Path2D(strokePath(stroke.points));
+          const t = stroke.thickness * k;
+          const drawPath = (c: CanvasRenderingContext2D, color: string, width: number) => {
+            c.strokeStyle = color;
+            c.lineWidth = width;
+            c.lineCap = "round";
+            c.lineJoin = "round";
+            c.stroke(path);
+          };
+          if (stroke.dropShadow && offCtx) {
+            offCtx.clearRect(0, 0, offCanvas!.width, offCanvas!.height);
+            if (stroke.whiteStroke) {
+              drawPath(offCtx, "white", t + 4 * k);
+              transferWithShadow("rgba(0,0,0,0.5)", 4, 2, 2);
+              drawPath(ctx, stroke.color, t);
+            } else {
+              drawPath(offCtx, stroke.color, t);
+              transferWithShadow("rgba(0,0,0,0.5)", 4, 2, 2);
+            }
+          } else {
+            if (stroke.whiteStroke) drawPath(ctx, "white", t + 4 * k);
+            drawPath(ctx, stroke.color, t);
+          }
+        }
+
         // Step (numbered counter) badges: a filled circle (white rim when whiteStroke, shadow on
         // the outermost layer via the shared offscreen path) and the number centered in white.
         // Same geometry as StepOverlay.svelte (rim = 2px x k outside the circle)
@@ -1812,6 +1885,7 @@
 
   function deactivateAllTools() {
     arrowToolActive = false;
+    penToolActive = false;
     maskToolActive = false;
     shapeToolActive = false;
     textToolActive = false;
@@ -1820,6 +1894,7 @@
     cropToolActive = false;
     cropRect = null;
     arrowOverlayRef?.deselect();
+    strokeOverlayRef?.deselect();
     maskOverlayRef?.deselect();
     shapeOverlayRef?.deselect();
     textOverlayRef?.deselect();
@@ -1931,6 +2006,7 @@
       startX: a.startX - cropX, startY: a.startY - cropY,
       endX: a.endX - cropX, endY: a.endY - cropY,
     }));
+    strokes = strokes.map((st) => offsetStrokeCopy(st, -cropX, -cropY, st.id));
     // mask は画像の外へはみ出したままにできない。renderComposite() の getImageData は
     // キャンバス外を transparent black で返すため、blur はアルファごと putImageData で
     // 焼き付き、mosaic は端のブロックが半透明になって隠したはずの元画像が透ける。
@@ -1976,6 +2052,12 @@
     }
   }
 
+  function togglePenTool() {
+    const wasActive = penToolActive;
+    deactivateAllTools();
+    penToolActive = !wasActive;
+  }
+
   function toggleMaskTool() {
     const wasActive = maskToolActive;
     deactivateAllTools();
@@ -1996,6 +2078,7 @@
     switch (tool) {
       case "arrow": toggleArrowToolWithHead("start"); break;
       case "line": toggleArrowToolWithHead("none"); break;
+      case "pen": togglePenTool(); break;
       case "rect":
       case "ellipse":
       case "highlight":
@@ -2270,6 +2353,7 @@
   <Toaster theme="dark" position="bottom-center" richColors closeButton />
   <Toolbar
     {arrowToolActive}
+    {penToolActive}
     {maskToolActive}
     {shapeToolActive}
     {textToolActive}
@@ -2298,6 +2382,7 @@
     isCapturing={isCapturing || isRecording}
     {timerDelay}
     onToggleArrowTool={toggleArrowTool}
+    onTogglePenTool={togglePenTool}
     onToggleMaskTool={toggleMaskTool}
     onRedactSensitiveText={redactSensitiveText}
     {redactBusy}
@@ -2444,6 +2529,19 @@
           onBeforeMutate={pushUndo}
           onArrowsChange={(newArrows) => (arrows = newArrows)}
         />
+        <!-- Pen strokes sit above the arrows (and masks, shapes, text) and below the steps, the same order renderComposite draws them -->
+        <StrokeOverlay
+          bind:this={strokeOverlayRef}
+          bind:selectedId={strokeSelectedId}
+          {strokes}
+          settings={arrowSettings}
+          toolActive={penToolActive}
+          interactive={penToolActive || (noToolActive && strokes.length > 0)}
+          scale={displayScale}
+          {annotationScale}
+          onBeforeMutate={pushUndo}
+          onStrokesChange={(newStrokes) => (strokes = newStrokes)}
+        />
         <!-- Steps sit above the arrows in the preview, the same order renderComposite draws them
              (arrows first, step badges last), so the export matches what was composed -->
         <StepOverlay
@@ -2460,6 +2558,7 @@
           onSelect={() => {
             // バッジを選んだら他のオーバーレイの選択を外す (Delete が両方に効かないように)
             arrowOverlayRef?.deselect();
+            strokeOverlayRef?.deselect();
             maskOverlayRef?.deselect();
             shapeOverlayRef?.deselect();
             textOverlayRef?.deselect();

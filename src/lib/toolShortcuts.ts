@@ -4,12 +4,13 @@
 // tests/tool-shortcuts.test.mts から直接呼ぶ。実際の切り替えは +page.svelte が
 // ツールバーのボタンと同じ toggle…Tool を呼ぶ (もう一度押すと解除、というトグルのまま)。
 
-export type ShortcutTool = "arrow" | "line" | "rect" | "ellipse" | "highlight" | "spotlight" | "step" | "text" | "mask" | "crop";
+export type ShortcutTool = "arrow" | "line" | "pen" | "rect" | "ellipse" | "highlight" | "spotlight" | "step" | "text" | "mask" | "crop";
 
 /** キー (小文字) → ツール。ツールバーの並び順 */
 export const TOOL_SHORTCUTS: readonly { key: string; tool: ShortcutTool }[] = [
   { key: "a", tool: "arrow" },
   { key: "l", tool: "line" },
+  { key: "p", tool: "pen" },
   { key: "r", tool: "rect" },
   { key: "e", tool: "ellipse" },
   { key: "h", tool: "highlight" },
