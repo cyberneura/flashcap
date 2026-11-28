@@ -2,6 +2,7 @@
   import type { Arrow, ArrowSettings } from "./types";
   import { exceedsDragSlop } from "./textHit";
   import { offsetArrowCopy } from "./duplicate";
+  import { hasArrowHead, snapEndpoint } from "./arrowShape";
 
   interface Props {
     arrows: Arrow[];
@@ -35,6 +36,8 @@
 
   // Skitch style: arrowhead at drag start point (start side)
   function arrowHeadPoints(arrow: Arrow): string {
+    // 直線 (頭なし) は頭を描かない (CYBERNEURA-DEV-1402)
+    if (!hasArrowHead(arrow)) return "";
     const dx = arrow.startX - arrow.endX;
     const dy = arrow.startY - arrow.endY;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -56,6 +59,8 @@
 
   // 棒の開始点を矢印頭の内側まで延長し、影描画時のシームを防ぐ
   function lineStart(arrow: Arrow): { x: number; y: number } {
+    // 頭が無ければ線は始点から (端は stroke-linecap="round" で丸まる)
+    if (!hasArrowHead(arrow)) return { x: arrow.startX, y: arrow.startY };
     const dx = arrow.startX - arrow.endX;
     const dy = arrow.startY - arrow.endY;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -203,20 +208,43 @@
     } else if (dragging === "move-all" && selectedId && moveOrig && duplicateStart) {
       const moved = offsetArrowCopy(moveOrig, pt.x - duplicateStart.x, pt.y - duplicateStart.y, moveOrig.id);
       onArrowsChange(arrows.map((a) => (a.id === selectedId ? moved : a)));
-    } else if (dragging === "draw" && drawingArrow) {
-      drawingArrow = { ...drawingArrow, endX: pt.x, endY: pt.y };
+    } else {
+      applyEndpointDrag(pt, e.shiftKey);
+    }
+  }
+
+  /**
+   * 描画中・端点の移動中の座標を反映する。Shift を押している間は 0 / 45 / 90 度に吸着 (矢印・直線の両方)。
+   * mouseup でも呼ぶ (止まったまま Shift を押して離した時も吸着させるため)
+   */
+  function applyEndpointDrag(pt: { x: number; y: number }, shift: boolean) {
+    if (dragging === "draw" && drawingArrow) {
+      const end = shift ? snapEndpoint(drawingArrow.startX, drawingArrow.startY, pt.x, pt.y) : pt;
+      drawingArrow = { ...drawingArrow, endX: end.x, endY: end.y };
     } else if (dragging === "move-start" && selectedId) {
       onArrowsChange(
-        arrows.map((a) => (a.id === selectedId ? { ...a, startX: pt.x, startY: pt.y } : a))
+        arrows.map((a) => {
+          if (a.id !== selectedId) return a;
+          const start = shift ? snapEndpoint(a.endX, a.endY, pt.x, pt.y) : pt;
+          return { ...a, startX: start.x, startY: start.y };
+        })
       );
     } else if (dragging === "move-end" && selectedId) {
       onArrowsChange(
-        arrows.map((a) => (a.id === selectedId ? { ...a, endX: pt.x, endY: pt.y } : a))
+        arrows.map((a) => {
+          if (a.id !== selectedId) return a;
+          const end = shift ? snapEndpoint(a.startX, a.startY, pt.x, pt.y) : pt;
+          return { ...a, endX: end.x, endY: end.y };
+        })
       );
     }
   }
 
-  function handleMouseUp() {
+  function handleMouseUp(e: MouseEvent) {
+    if (dragging === "draw" || dragging === "move-start" || dragging === "move-end") {
+      const pt = getSvgCoords(e);
+      if (pt) applyEndpointDrag(pt, e.shiftKey);
+    }
     // Option / Alt を押して離しただけ: 複製せずに選ぶ
     if (dragging === "duplicate" && duplicateSource) selectedId = duplicateSource.id;
     duplicateSource = null;
@@ -264,7 +292,9 @@
   style:pointer-events={interactive ? "auto" : "none"}
 >
   <defs>
-    <filter id="arrow-shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <!-- userSpaceOnUse: 既定の objectBoundingBox だと、水平・垂直の直線 (頭なし) は高さか幅が 0 になり
+         影が描かれない (書き出しの Canvas には影が付くので見た目がずれる) -->
+    <filter id="arrow-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
       <feDropShadow dx={2 * annotationScale} dy={2 * annotationScale} stdDeviation={2 * annotationScale} flood-opacity="0.5" />
     </filter>
   </defs>
@@ -283,7 +313,7 @@
           stroke-width={(arrow.thickness + 4) * annotationScale}
           stroke-linecap="round"
         />
-        <polygon points={hp} fill="white" stroke="white" stroke-width={4 * annotationScale} stroke-linejoin="round" />
+        {#if hp}<polygon points={hp} fill="white" stroke="white" stroke-width={4 * annotationScale} stroke-linejoin="round" />{/if}
       </g>
       <!-- 本体は影なし -->
       <line
@@ -292,7 +322,7 @@
         stroke-width={arrow.thickness * annotationScale}
         stroke-linecap="round"
       />
-      <polygon points={hp} fill={arrow.color} />
+      {#if hp}<polygon points={hp} fill={arrow.color} />{/if}
     {:else if arrow.dropShadow}
       <!-- 影あり・白枠なし -->
       <g filter="url(#arrow-shadow)">
@@ -302,7 +332,7 @@
           stroke-width={arrow.thickness * annotationScale}
           stroke-linecap="round"
         />
-        <polygon points={hp} fill={arrow.color} />
+        {#if hp}<polygon points={hp} fill={arrow.color} />{/if}
       </g>
     {:else}
       <!-- 影なし -->
@@ -313,7 +343,7 @@
           stroke-width={(arrow.thickness + 4) * annotationScale}
           stroke-linecap="round"
         />
-        <polygon points={hp} fill="white" stroke="white" stroke-width={4 * annotationScale} stroke-linejoin="round" />
+        {#if hp}<polygon points={hp} fill="white" stroke="white" stroke-width={4 * annotationScale} stroke-linejoin="round" />{/if}
       {/if}
       <line
         x1={ls.x} y1={ls.y} x2={arrow.endX} y2={arrow.endY}
@@ -321,7 +351,7 @@
         stroke-width={arrow.thickness * annotationScale}
         stroke-linecap="round"
       />
-      <polygon points={hp} fill={arrow.color} />
+      {#if hp}<polygon points={hp} fill={arrow.color} />{/if}
     {/if}
 
     {#if isSelected}

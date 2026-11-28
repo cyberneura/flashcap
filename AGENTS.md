@@ -10,7 +10,7 @@ Screenshot capture & annotation app for macOS and Windows (CYBERNEURA-DEV-841 ad
 - `pnpm tauri dev` - Start development server
 - `pnpm tauri build` - Production build
 - `pnpm check` - TypeScript type check
-- `pnpm test` - Unit tests for edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts (`node --experimental-strip-types`, no test runner dependency)
+- `pnpm test` - Unit tests for edge-snap / crop-aspect / text-hit / region-select / home-path / shell-commands / thumbnail-browser / capabilities / steps / sensitive-text / edit-history / highlight / spotlight / duplicate / tool-shortcuts / arrow-shape (`node --experimental-strip-types`, no test runner dependency)
 - `pnpm release [patch|minor|major]` - Bump version and push to main (the push starts the GitHub Actions release build)
 
 The same operations are also listed in `j-menu.yaml` (pick them with `j`).
@@ -261,9 +261,25 @@ While something is selected, **only that annotation is rewritten, and the settin
 - Duplicating a step uses `stepsWithDuplicate` (appends and calls `renumber`). The copy gets the next number, and the original's number does not change.
 - Tests are in `tests/duplicate.test.mts` (key detection, offset, step numbers: duplicate → delete → Undo).
 
+## Line shape of the arrow tool (src/lib/arrowShape.ts, CYBERNEURA-DEV-1402)
+
+The arrow has a shape, `Arrow.head` / `ArrowSettings.head`: `"start"` (arrowhead at the drag start point, the Skitch style) or `"none"` (a plain line).
+There is no separate line tool; the line is the arrow tool with `head: "none"`, so hit testing, moving, ⌘D / Option+drag duplication,
+restyle and `annotationScale` are all the arrow's.
+
+- **Existing settings and arrows read as `"start"`** (`parseArrowHead` for `arrow_settings.head` in the config file; unknown values too.
+  `hasArrowHead` treats a missing field as a head).
+- The shape toggle is in the arrow tool's settings in the toolbar. With an arrow selected, it restyles only that arrow (one Undo step).
+- Key `A` selects the arrow tool with the arrow shape and `L` with the line shape (`toggleArrowToolWithHead`; pressing the key for the
+  current shape again leaves the tool). The toolbar's arrow button keeps the current shape.
+- **The screen (`ArrowOverlay.svelte`) and the export (`renderComposite`) both skip the head and start the line at the start point** when
+  `hasArrowHead` is false. The ends are round (`lineCap = "round"`) in both.
+- Shift while drawing or dragging an end point snaps to 0 / 45 / 90 degrees around the other end (`snapEndpoint`; for both shapes).
+- Tests are in `tests/arrow-shape.test.mts`.
+
 ## Single-letter tool keys (src/lib/toolShortcuts.ts)
 
-A single letter with no modifier switches the annotation tool (CYBERNEURA-DEV-1265). `A` arrow / `R` rectangle / `E` ellipse /
+A single letter with no modifier switches the annotation tool (CYBERNEURA-DEV-1265). `A` arrow / `L` line (the arrow tool with the line shape) / `R` rectangle / `E` ellipse /
 `H` highlighter / `S` spotlight / `N` step / `T` text / `M` mask / `C` crop. Same keys on macOS and Windows.
 These are not app-wide global hotkeys, only keydown while the window has focus.
 
@@ -309,6 +325,7 @@ images = saved images, image = this image).
 |---|---|---|
 | Thumbnail browser | `bi-images` | List of saved images |
 | Arrow / rectangle / ellipse / step / text | `bi-arrow-up-right` / `bi-square` / `bi-circle` / `bi-1-circle-fill` / `bi-fonts` | The shape of the thing being drawn |
+| Arrow shape: arrow / line | `bi-arrow-up-right` / `bi-slash-lg` | In the arrow tool's settings (with an arrowhead / a plain line) |
 | Highlighter | `bi-highlighter` | Semi-transparent fill that makes text stand out (a type of the shape tool, like rectangle / ellipse) |
 | Spotlight | `bi-brightness-high` | Darkens outside the area (a type of the shape tool). The darkness picker is `bi-moon` |
 | White outline / shadow | `bi-border-outer` / `bi-shadows` | Outline / shadow (shared by the four tools) |

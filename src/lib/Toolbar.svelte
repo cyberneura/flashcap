@@ -250,6 +250,26 @@
 
   {#if arrowToolActive || selectionKind === "arrow"}
     <div class="tool-settings">
+      <!-- 形: 矢印 (頭あり) / 直線 (頭なし)。選択中の矢印なら形だけ変わる (CYBERNEURA-DEV-1402) -->
+      <button
+        class="tool-btn"
+        class:active={arrowSettings.head !== "none"}
+        onclick={() => onUpdateArrowSetting("head", "start")}
+        aria-label="Arrow shape"
+        data-tooltip="Arrow ({toolShortcutLabel('arrow')})"
+      >
+        <i class="bi bi-arrow-up-right"></i>
+      </button>
+      <button
+        class="tool-btn"
+        class:active={arrowSettings.head === "none"}
+        onclick={() => onUpdateArrowSetting("head", "none")}
+        aria-label="Line shape"
+        data-tooltip="Line ({toolShortcutLabel('line')})"
+      >
+        <i class="bi bi-slash-lg"></i>
+      </button>
+
       <input
         type="color"
         class="color-picker"

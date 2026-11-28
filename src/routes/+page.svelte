@@ -74,7 +74,8 @@
   let shapeOverlayRef = $state<ReturnType<typeof ShapeOverlay> | null>(null);
   let textOverlayRef = $state<ReturnType<typeof TextOverlay> | null>(null);
   let stepOverlayRef = $state<ReturnType<typeof StepOverlay> | null>(null);
-  import type { Arrow, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, ShapeType, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
+  import { DEFAULT_ARROW_HEAD, hasArrowHead, parseArrowHead } from "$lib/arrowShape";
+  import type { Arrow, ArrowHead, ArrowSettings, AutoCopyMode, CropRect, MaskRect, MaskSettings, Shape, ShapeSettings, ShapeType, Step, StepSettings, TextAnnotation, TextSettings } from "$lib/types";
 
   interface ScreenshotResult {
     width: number;
@@ -170,6 +171,7 @@
     thickness: 4,
     whiteStroke: true,
     dropShadow: true,
+    head: DEFAULT_ARROW_HEAD,
   });
 
   // Mask tool state
@@ -878,6 +880,8 @@
       arrowSettings.thickness = pick(arrow, "thickness", arrowSettings.thickness);
       arrowSettings.whiteStroke = pick(arrow, "whiteStroke", arrowSettings.whiteStroke);
       arrowSettings.dropShadow = pick(arrow, "dropShadow", arrowSettings.dropShadow);
+      // 形は知らない値を弾く。この項目が入る前の設定ファイルは頭ありのまま
+      arrowSettings.head = parseArrowHead(arrow.head);
     }
     const mask = config[MASK_SETTINGS_KEY];
     if (isRecord(mask)) {
@@ -923,9 +927,9 @@
 
   // ツールの設定は変わるたびに設定ファイルへ (まとめて) 書く
   $effect(() => {
-    const { color, thickness, whiteStroke, dropShadow } = arrowSettings;
+    const { color, thickness, whiteStroke, dropShadow, head } = arrowSettings;
     if (!configLoaded) return;
-    setConfigDebounced(ARROW_SETTINGS_KEY, { color, thickness, whiteStroke, dropShadow });
+    setConfigDebounced(ARROW_SETTINGS_KEY, { color, thickness, whiteStroke, dropShadow, head });
   });
 
   $effect(() => {
@@ -1437,10 +1441,12 @@
 
           const ux = dx / len;
           const uy = dy / len;
+          // 直線 (頭なし) は頭を描かず、線を始点から引く (CYBERNEURA-DEV-1402。画面は ArrowOverlay.svelte)
+          const withHead = hasArrowHead(arrow);
 
           // 矢印頭の50%まで入り込ませてシームを防ぐ
-          const lsX = sx - ux * hs * 0.5;
-          const lsY = sy - uy * hs * 0.5;
+          const lsX = withHead ? sx - ux * hs * 0.5 : sx;
+          const lsY = withHead ? sy - uy * hs * 0.5 : sy;
 
           const perpX = -uy;
           const perpY = ux;
@@ -1457,6 +1463,7 @@
             c.moveTo(lsX, lsY);
             c.lineTo(ex, ey);
             c.stroke();
+            if (!withHead) return;
 
             c.fillStyle = "white";
             c.lineJoin = "round";
@@ -1479,6 +1486,7 @@
             c.moveTo(lsX, lsY);
             c.lineTo(ex, ey);
             c.stroke();
+            if (!withHead) return;
 
             c.fillStyle = arrow.color;
             c.beginPath();
@@ -1955,6 +1963,19 @@
     arrowToolActive = !wasActive;
   }
 
+  /**
+   * 1 文字キー A / L: 矢印ツールを形 (頭あり / 直線) を決めて選ぶ。同じ形で選ばれていればもう一度押すと解除
+   * (toggleShapeTool と同じ)。選択は deactivateAllTools で外れるので、形は次に描く注釈の設定に入る
+   */
+  function toggleArrowToolWithHead(head: ArrowHead) {
+    const wasActive = arrowToolActive && arrowSettings.head === head;
+    deactivateAllTools();
+    if (!wasActive) {
+      arrowToolActive = true;
+      arrowSettings.head = head;
+    }
+  }
+
   function toggleMaskTool() {
     const wasActive = maskToolActive;
     deactivateAllTools();
@@ -1973,7 +1994,8 @@
   /** 1 文字のキーからの切り替え。ツールバーのボタンと同じトグルを呼ぶ */
   function toggleToolByShortcut(tool: ShortcutTool) {
     switch (tool) {
-      case "arrow": toggleArrowTool(); break;
+      case "arrow": toggleArrowToolWithHead("start"); break;
+      case "line": toggleArrowToolWithHead("none"); break;
       case "rect":
       case "ellipse":
       case "highlight":

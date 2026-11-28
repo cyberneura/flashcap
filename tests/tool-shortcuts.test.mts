@@ -34,6 +34,8 @@ const body = { tagName: "BODY" };
 
 check("each key selects its tool", () => {
   assert.equal(toolForKey(key("a"), body, ready), "arrow");
+  assert.equal(toolForKey(key("l"), body, ready), "line");
+  assert.equal(toolForKey(key("L"), body, ready), "line"); // CapsLock
   assert.equal(toolForKey(key("r"), body, ready), "rect");
   assert.equal(toolForKey(key("e"), body, ready), "ellipse");
   assert.equal(toolForKey(key("h"), body, ready), "highlight");
@@ -113,6 +115,7 @@ check("other keys are not tool shortcuts", () => {
 
 check("toolShortcutLabel gives the uppercase key for tooltips", () => {
   assert.equal(toolShortcutLabel("arrow"), "A");
+  assert.equal(toolShortcutLabel("line"), "L");
   assert.equal(toolShortcutLabel("rect"), "R");
   assert.equal(toolShortcutLabel("ellipse"), "E");
   assert.equal(toolShortcutLabel("highlight"), "H");
